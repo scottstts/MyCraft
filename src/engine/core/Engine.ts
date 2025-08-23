@@ -1,42 +1,81 @@
 /**
  * Module: engine/core/Engine
- * Purpose: Minimal engine bootstrap with RAF loop and dt logging.
- * Callers: CanvasHost loads this module and calls start/stop.
- * Invariants: Pure TS module; no React imports anywhere under /engine.
+ * Purpose: Game engine with RAF loop, Three.js rendering, and subsystem management
+ * Callers: CanvasHost loads this module and calls start/stop
+ * Invariants: Pure TS module; no React imports anywhere under /engine
  */
 
-let rafId: number | null = null
-let lastTime = 0
-let running = false
+import * as THREE from 'three';
+import { Renderer } from '../render/Renderer';
+import { createScene, createCamera } from '../render/SceneBuilder';
 
-function tick(now: number) {
-  if (!running) return
-  const dt = lastTime === 0 ? 0 : (now - lastTime) / 1000
-  lastTime = now
-  // Temporary: log dt as acceptance criteria for A4
-  // eslint-disable-next-line no-console
-  console.log(`Engine tick dt=${dt.toFixed(4)}s`)
-  rafId = requestAnimationFrame(tick)
-}
+let rafId: number | null = null;
+let running = false;
 
-function start(canvas: HTMLCanvasElement) {
-  if (running) return
-  // canvas reference reserved for future renderer hookup
-  void canvas
-  running = true
-  lastTime = 0
-  rafId = requestAnimationFrame(tick)
-}
+// Engine subsystems
+let renderer: Renderer | null = null;
+let scene: THREE.Scene | null = null;
+let camera: THREE.PerspectiveCamera | null = null;
 
-function stop() {
-  running = false
-  if (rafId !== null) {
-    cancelAnimationFrame(rafId)
-    rafId = null
+function update() {
+  // Update subsystems here (physics, input, etc.)
+  // For now, just ensure rendering happens
+  if (renderer && scene && camera) {
+    renderer.render(scene, camera);
   }
 }
 
-export const engine = { start, stop }
-export type Engine = typeof engine
+function tick() {
+  if (!running) return;
+  
+  update();
+  
+  rafId = requestAnimationFrame(tick);
+}
+
+function start(canvas: HTMLCanvasElement) {
+  if (running) return;
+  
+  // Initialize renderer
+  renderer = new Renderer(canvas);
+  
+  // Initialize scene and camera
+  scene = createScene();
+  const aspect = canvas.clientWidth / canvas.clientHeight;
+  camera = createCamera(aspect);
+  
+  // Handle window resize
+  const handleResize = () => {
+    if (renderer && camera && canvas) {
+      renderer.onResize();
+      camera.aspect = canvas.clientWidth / canvas.clientHeight;
+      camera.updateProjectionMatrix();
+    }
+  };
+  window.addEventListener('resize', handleResize);
+  
+  running = true;
+  rafId = requestAnimationFrame(tick);
+}
+
+function stop() {
+  running = false;
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  
+  // Clean up renderer
+  if (renderer) {
+    renderer.dispose();
+    renderer = null;
+  }
+  
+  scene = null;
+  camera = null;
+}
+
+export const engine = { start, stop };
+export type Engine = typeof engine;
 
 
