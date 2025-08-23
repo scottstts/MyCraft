@@ -15,6 +15,19 @@ import { EventEmitter } from '../utils/EventEmitter.js';
 import { getBlock } from './blocks/BlockRegistry.js';
 import { ChunkPipeline } from './ChunkPipeline.js';
 
+// Type for individual block overrides within a chunk
+export interface BlockOverride {
+  lx: number;  // Local X coordinate [0, CHUNK_SIZE.x-1]
+  ly: number;  // Local Y coordinate [0, CHUNK_SIZE.y-1]
+  lz: number;  // Local Z coordinate [0, CHUNK_SIZE.z-1]
+  id: BlockId; // Block ID to set
+}
+
+// Interface for providing chunk overrides
+export interface ChunkOverrideProvider {
+  getOverrides(chunkKey: ChunkKey): BlockOverride[] | Promise<BlockOverride[]>;
+}
+
 // Define world event types
 export interface WorldEvents extends Record<string, unknown> {
   CHUNK_ADDED: { key: ChunkKey; chunk: Chunk; coords: C3 };
@@ -36,6 +49,7 @@ export class World extends EventEmitter<WorldEvents> {
   private chunks: Map<ChunkKey, Chunk> = new Map();
   public chunkPipeline: ChunkPipeline;
   private seed: number = 12345; // Default seed
+  private overrideProvider: ChunkOverrideProvider | null = null;
 
   constructor() {
     super();
@@ -51,10 +65,20 @@ export class World extends EventEmitter<WorldEvents> {
   /**
    * Handle chunk data received from the pipeline
    */
-  private handleChunkReady(key: ChunkKey, chunkData: any): void {
+  private async handleChunkReady(key: ChunkKey, chunkData: import('../../types/index.js').ChunkData): Promise<void> {
     // Create chunk from data
     const chunk = new Chunk();
     chunk.setFromData(chunkData);
+    
+    // Apply overrides if provider is available
+    if (this.overrideProvider) {
+      try {
+        const overrides = await this.overrideProvider.getOverrides(key);
+        this.applyOverrides(chunk, overrides);
+      } catch (error) {
+        console.warn(`[World] Failed to load overrides for chunk ${key}:`, error);
+      }
+    }
     
     // Parse chunk coordinates from key
     const [cxStr, cyStr, czStr] = key.split(',');
@@ -86,7 +110,7 @@ export class World extends EventEmitter<WorldEvents> {
   ensureChunk(cx: number, cy: number, cz: number): Chunk | undefined {
     const key = chunkKey(cx, cy, cz);
     
-    let chunk = this.chunks.get(key);
+    const chunk = this.chunks.get(key);
     if (!chunk) {
       // Request chunk generation
       this.chunkPipeline.requestChunk(cx, cy, cz, this.seed);
@@ -338,6 +362,37 @@ export class World extends EventEmitter<WorldEvents> {
    */
   getSeed(): number {
     return this.seed;
+  }
+
+  /**
+   * Set the chunk override provider
+   * @param provider Provider for chunk block overrides
+   */
+  setOverrideProvider(provider: ChunkOverrideProvider | null): void {
+    this.overrideProvider = provider;
+  }
+
+  /**
+   * Get the current chunk override provider
+   * @returns Current override provider or null
+   */
+  getOverrideProvider(): ChunkOverrideProvider | null {
+    return this.overrideProvider;
+  }
+
+  /**
+   * Apply block overrides to a chunk
+   * @param chunk Chunk to apply overrides to
+   * @param overrides Array of block overrides
+   */
+  private applyOverrides(chunk: Chunk, overrides: BlockOverride[]): void {
+    for (const override of overrides) {
+      try {
+        chunk.set(override.lx, override.ly, override.lz, override.id);
+      } catch (error) {
+        console.warn(`[World] Failed to apply override at (${override.lx}, ${override.ly}, ${override.lz}):`, error);
+      }
+    }
   }
 
   /**

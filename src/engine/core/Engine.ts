@@ -74,8 +74,14 @@ function start(canvas: HTMLCanvasElement) {
     }
   });
   
-  // Test: request chunk at origin (0,0,0)
-  world.ensureChunk(0, 0, 0);
+  // Request a grid of chunks around origin for testing terrain generation
+  const gridRadius = 2; // 5x5 grid of chunks
+  for (let cx = -gridRadius; cx <= gridRadius; cx++) {
+    for (let cz = -gridRadius; cz <= gridRadius; cz++) {
+      // Only request chunks at ground level (cy = 0) for now
+      world.ensureChunk(cx, 0, cz);
+    }
+  }
   
   // Handle window resize
   const handleResize = () => {
