@@ -58,7 +58,8 @@ No fluff. Just the spine you can feed to the agent.
     /workers        # worker entrypoints + message types
     /utils          # math, coords, debug helpers
   /assets
-    /textures       # your atlas image + json mapping
+    /textures       # your atlas images
+    /material_icons # the icon images for materials (shown in hotbar)
   /types            # shared TS types (DTOs for workers/UI/engine)
   /state            # Zustand stores (UI-facing)
   /config           # tunables (chunk sizes, flags)
