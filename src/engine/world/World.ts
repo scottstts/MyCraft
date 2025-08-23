@@ -8,14 +8,15 @@
  * - Thread-safe for read operations
  */
 
-import { BlockId, ChunkKey, C3 } from '../../types/index.js';
+import type { BlockId, ChunkKey, C3 } from '../../types/index.js';
 import { Chunk } from './chunk/Chunk.js';
 import { worldToChunk, chunkKey } from '../utils/coords.js';
 import { EventEmitter } from '../utils/EventEmitter.js';
 import { getBlock } from './blocks/BlockRegistry.js';
+import { ChunkPipeline } from './ChunkPipeline.js';
 
 // Define world event types
-export interface WorldEvents {
+export interface WorldEvents extends Record<string, unknown> {
   CHUNK_ADDED: { key: ChunkKey; chunk: Chunk; coords: C3 };
   CHUNK_REMOVED: { key: ChunkKey; coords: C3 };
   BLOCK_CHANGED: { 
@@ -33,33 +34,63 @@ export interface WorldEvents {
 
 export class World extends EventEmitter<WorldEvents> {
   private chunks: Map<ChunkKey, Chunk> = new Map();
+  public chunkPipeline: ChunkPipeline;
+  private seed: number = 12345; // Default seed
 
   constructor() {
     super();
+    
+    this.chunkPipeline = new ChunkPipeline();
+    
+    // Listen for chunks from the pipeline
+    this.chunkPipeline.on('CHUNK_READY', ({ key, chunkData }) => {
+      this.handleChunkReady(key, chunkData);
+    });
+  }
+
+  /**
+   * Handle chunk data received from the pipeline
+   */
+  private handleChunkReady(key: ChunkKey, chunkData: any): void {
+    // Create chunk from data
+    const chunk = new Chunk();
+    chunk.setFromData(chunkData);
+    
+    // Parse chunk coordinates from key
+    const [cxStr, cyStr, czStr] = key.split(',');
+    const cx = parseInt(cxStr, 10);
+    const cy = parseInt(cyStr, 10);
+    const cz = parseInt(czStr, 10);
+    
+    // Store the chunk
+    this.chunks.set(key, chunk);
+    
+    // Emit chunk added event
+    this.emit('CHUNK_ADDED', { 
+      key, 
+      chunk, 
+      coords: { cx, cy, cz } 
+    });
+    
+    console.log(`[World] Chunk ready: ${key}`);
   }
 
   /**
    * Ensure a chunk exists at the given chunk coordinates
-   * Creates an empty chunk if it doesn't exist
+   * Requests generation if it doesn't exist and returns undefined until ready
    * @param cx Chunk X coordinate
    * @param cy Chunk Y coordinate  
    * @param cz Chunk Z coordinate
-   * @returns The chunk at the specified coordinates
+   * @returns The chunk at the specified coordinates, or undefined if still generating
    */
-  ensureChunk(cx: number, cy: number, cz: number): Chunk {
+  ensureChunk(cx: number, cy: number, cz: number): Chunk | undefined {
     const key = chunkKey(cx, cy, cz);
     
     let chunk = this.chunks.get(key);
     if (!chunk) {
-      chunk = new Chunk(); // Create empty chunk filled with AIR
-      this.chunks.set(key, chunk);
-      
-      // Emit chunk added event
-      this.emit('CHUNK_ADDED', { 
-        key, 
-        chunk, 
-        coords: { cx, cy, cz } 
-      });
+      // Request chunk generation
+      this.chunkPipeline.requestChunk(cx, cy, cz, this.seed);
+      return undefined; // Chunk not ready yet
     }
     
     return chunk;
@@ -142,6 +173,12 @@ export class World extends EventEmitter<WorldEvents> {
     
     // Get or create the chunk
     const chunk = this.ensureChunk(cx, cy, cz);
+    
+    // If chunk is not ready yet, ignore the set operation
+    if (!chunk) {
+      console.warn(`[World] Cannot set block at (${x}, ${y}, ${z}): chunk not ready yet`);
+      return;
+    }
     
     // Get the old block ID for the event
     const oldBlockId = chunk.get(lx, ly, lz);
@@ -287,5 +324,27 @@ export class World extends EventEmitter<WorldEvents> {
       const cz = parseInt(czStr, 10);
       this.removeChunk(cx, cy, cz);
     }
+  }
+
+  /**
+   * Set the world seed for generation
+   */
+  setSeed(seed: number): void {
+    this.seed = seed;
+  }
+
+  /**
+   * Get the current world seed
+   */
+  getSeed(): number {
+    return this.seed;
+  }
+
+  /**
+   * Clean up resources
+   */
+  destroy(): void {
+    this.chunkPipeline.destroy();
+    this.clear();
   }
 }

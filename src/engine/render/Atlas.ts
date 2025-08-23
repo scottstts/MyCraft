@@ -57,17 +57,26 @@ export class Atlas {
 }
 
 // Stub implementation that creates a 1x1 white texture
-export function loadAtlas(): Promise<Atlas> {
+export function loadAtlas(): THREE.Texture {
+  // Create a 1x1 white texture as placeholder
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, 1, 1);
+  
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  
+  return texture;
+}
+
+// Future: Load full atlas with JSON configuration
+export function loadFullAtlas(): Promise<Atlas> {
   return new Promise((resolve) => {
-    // Create a 1x1 white texture as placeholder
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 1;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, 1, 1);
-    
-    const texture = new THREE.CanvasTexture(canvas);
+    const texture = loadAtlas();
     
     const config: AtlasConfig = {
       tileSize: 1,

@@ -7,7 +7,7 @@
  * - Thread-safe for read operations
  */
 
-import { BlockDef, BlockId } from '../../../types/index.js';
+import type { BlockDef, BlockId } from '../../../types/index.js';
 
 export class BlockRegistry {
   private blocks: Map<BlockId, BlockDef> = new Map();

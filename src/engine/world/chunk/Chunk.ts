@@ -8,7 +8,7 @@
  * - Coordinates are validated before array access
  */
 
-import { BlockId, ChunkData, V3i } from '../../../types/index.js';
+import type { BlockId, ChunkData, V3i } from '../../../types/index.js';
 import { CHUNK_SIZE } from '../../../config/constants.js';
 import { flattenIndex, getChunkVoxelCount, isValidLocalCoords } from './index.js';
 
@@ -85,6 +85,25 @@ export class Chunk {
       size: { ...this.size },
       voxels: new Uint8Array(this.voxels) // Create a copy
     };
+  }
+
+  /**
+   * Replace chunk data with new data
+   * @param data ChunkData to replace current chunk data with
+   */
+  setFromData(data: ChunkData): void {
+    const voxelCount = getChunkVoxelCount();
+    
+    // Validate provided data
+    if (data.voxels.length !== voxelCount) {
+      throw new Error(`Invalid chunk data: expected ${voxelCount} voxels, got ${data.voxels.length}`);
+    }
+    if (data.size.x !== CHUNK_SIZE.x || data.size.y !== CHUNK_SIZE.y || data.size.z !== CHUNK_SIZE.z) {
+      throw new Error(`Invalid chunk data: size mismatch. Expected ${CHUNK_SIZE.x}x${CHUNK_SIZE.y}x${CHUNK_SIZE.z}, got ${data.size.x}x${data.size.y}x${data.size.z}`);
+    }
+    
+    // Replace voxels array
+    this.voxels = new Uint8Array(data.voxels);
   }
 
   /**
