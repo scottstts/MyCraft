@@ -70,34 +70,37 @@ export class Atlas {
 // Create a simple programmatic atlas texture for now
 function createSimpleAtlas(): THREE.Texture {
   const tileSize = 16;
-  const atlasSize = 4; // 4 tiles in a row = 64x16 texture
+  const atlasSize = 5; // 5 tiles in a row = 80x16 texture
   const canvas = document.createElement('canvas');
-  canvas.width = atlasSize * tileSize;  // 64 pixels wide
+  canvas.width = atlasSize * tileSize;  // 80 pixels wide
   canvas.height = tileSize;              // 16 pixels tall (1 row only)
   const ctx = canvas.getContext('2d')!;
-  
+
   // Clear to black
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  
+
   // Grass top (0,0) - green
   ctx.fillStyle = '#7CB342';
   ctx.fillRect(0, 0, tileSize, tileSize);
-  
+
   // Dirt (1,0) - brown
   ctx.fillStyle = '#8B4513';
   ctx.fillRect(tileSize, 0, tileSize, tileSize);
-  
+
   // Grass side (2,0) - brown with green top stripe
   ctx.fillStyle = '#8B4513';
   ctx.fillRect(tileSize * 2, 0, tileSize, tileSize);
   ctx.fillStyle = '#7CB342';
   ctx.fillRect(tileSize * 2, 0, tileSize, 3);
-  
+
   // Stone (3,0) - gray
   ctx.fillStyle = '#696969';
   ctx.fillRect(tileSize * 3, 0, tileSize, tileSize);
-  
+
+  // Air (4,0) - transparent (leave black)
+  // ctx.fillStyle = 'transparent'; // Already black/transparent
+
   const texture = new THREE.CanvasTexture(canvas);
 
   // --- critical lines ---
@@ -110,7 +113,92 @@ function createSimpleAtlas(): THREE.Texture {
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.needsUpdate = true;
   // ----------------------
-  
+
+  return texture;
+}
+
+// Load actual texture images and create atlas
+async function loadTextureAtlas(): Promise<THREE.Texture> {
+  const textureLoader = new THREE.TextureLoader();
+  const tileSize = 16;
+  const atlasWidth = 5; // 5 tiles wide for the current blocks
+  const atlasHeight = 1; // 1 tile tall
+
+  const canvas = document.createElement('canvas');
+  canvas.width = atlasWidth * tileSize;  // 80 pixels wide
+  canvas.height = atlasHeight * tileSize; // 16 pixels tall
+  const ctx = canvas.getContext('2d')!;
+
+  // Clear to transparent (for unused areas)
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Define texture positions in the atlas - only the textures we actually use
+  const texturePositions = {
+    'grass_top': [0, 0],
+    'dirt': [1, 0],
+    'grass_side': [2, 0],
+    'stone': [3, 0]
+  };
+
+  // Load and draw each texture - grass_top and grass_side from textures directory, others from material_icons
+  const loadPromises = Object.entries(texturePositions).map(async ([textureName, [x, y]]) => {
+    try {
+      let texturePath = '';
+      if (textureName === 'grass_top' || textureName === 'grass_side') {
+        texturePath = `/src/assets/textures/${textureName}.png`;
+      } else {
+        texturePath = `/src/assets/material_icons/${textureName}.png`;
+      }
+
+      const texture = await new Promise<THREE.Texture>((resolve, reject) => {
+        textureLoader.load(
+          texturePath,
+          resolve,
+          undefined,
+          reject
+        );
+      });
+
+      const img = texture.image as HTMLImageElement;
+      ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize);
+
+      // Dispose the temporary texture
+      texture.dispose();
+    } catch (error) {
+      console.warn(`Failed to load texture ${textureName}:`, error);
+      // Draw a fallback colored rectangle
+      ctx.fillStyle = getFallbackColor(textureName);
+      ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+    }
+  });
+
+  await Promise.all(loadPromises);
+
+  const atlasTexture = new THREE.CanvasTexture(canvas);
+  return configureTexture(atlasTexture);
+}
+
+// Helper function to get fallback colors for textures that fail to load
+function getFallbackColor(textureName: string): string {
+  const fallbackColors: Record<string, string> = {
+    'grass_top': '#7CB342',
+    'dirt': '#8B4513',
+    'grass_side': '#8B4513',
+    'stone': '#696969'
+  };
+  return fallbackColors[textureName] || '#000000';
+}
+
+// Configure texture with proper pixel art settings
+function configureTexture(texture: THREE.Texture): THREE.Texture {
+  texture.flipY = true;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.needsUpdate = true;
   return texture;
 }
 
@@ -120,29 +208,27 @@ export async function loadFullAtlas(): Promise<Atlas> {
     // Load atlas configuration
     const response = await fetch('/atlas.json');
     const config: AtlasConfig = await response.json();
-    
-    // For now, use programmatic texture
-    // TODO: Later load actual image file
-    const texture = createSimpleAtlas();
-    
+
+    // Load actual texture images
+    const texture = await loadTextureAtlas();
+
     return new Atlas(texture, config);
   } catch (error) {
     console.warn('Failed to load atlas, falling back to simple atlas:', error);
-    
+
     // Fallback configuration
     const config: AtlasConfig = {
       tileSize: 16,
-      atlasSize: 4,
+      atlasSize: 5,
       tiles: {
         'grass_top': [0, 0],
-        'dirt': [1, 0], 
+        'dirt': [1, 0],
         'grass_side': [2, 0],
         'stone': [3, 0],
-        'grass_bottom': [1, 0],
-        'air': [0, 0]
+        'air': [4, 0]
       }
     };
-    
+
     const texture = createSimpleAtlas();
     return new Atlas(texture, config);
   }

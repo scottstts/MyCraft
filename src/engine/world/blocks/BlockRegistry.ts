@@ -34,7 +34,7 @@ export class BlockRegistry {
         solid: true,
         faces: {
           top: 'grass_top',
-          bottom: 'grass_bottom',
+          bottom: 'dirt',
           side: 'grass_side'
         }
       },
