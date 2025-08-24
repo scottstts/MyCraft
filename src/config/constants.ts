@@ -22,5 +22,10 @@ export const RENDER = {
   clearColor: 0x0b0d10,
 } as const;
 
+export const INTERACTION = {
+  // Maximum distance (in blocks) for block selection and interaction
+  reach: 5,
+} as const;
+
 export type ChunkSize = typeof CHUNK_SIZE;
 
