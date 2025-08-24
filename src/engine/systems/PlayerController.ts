@@ -28,6 +28,7 @@ export class PlayerController {
   private readonly walkSpeed: number = PLAYER.speed.walk; // blocks/sec
   private readonly sprintSpeed: number = PLAYER.speed.sprint; // blocks/sec
   private readonly gravity: number = PLAYER.gravity; // blocks/sec^2 (negative)
+  private readonly jumpImpulse: number = PLAYER.jump; // blocks/sec
 
   // Small epsilon to avoid sticking
   private static readonly EPS = 1e-5;
@@ -43,6 +44,12 @@ export class PlayerController {
 
   /** Update controller each frame */
   update(deltaSeconds: number): void {
+    // Jump edge-trigger: only if grounded
+    if (this.input.consumeJumpRequested() && this.grounded) {
+      this.velocityY = this.jumpImpulse;
+      this.grounded = false;
+    }
+
     // Compute intended horizontal displacement from input in camera-yaw space
     const inputXZ = this.input.getMoveInput();
     const speed = this.input.isSprinting() ? this.sprintSpeed : this.walkSpeed;

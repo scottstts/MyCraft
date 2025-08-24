@@ -29,6 +29,7 @@ export class InputSystem {
   private moveLeft: boolean = false;
   private moveRight: boolean = false;
   private sprint: boolean = false;
+  private jumpQueued: boolean = false;
 
   constructor(canvas: HTMLCanvasElement, camera: THREE.PerspectiveCamera) {
     this.canvas = canvas;
@@ -114,6 +115,8 @@ export class InputSystem {
       case 'ShiftLeft':
       case 'ShiftRight':
         this.sprint = true; break;
+      case 'Space':
+        this.jumpQueued = true; break;
       default:
         break;
     }
@@ -136,6 +139,9 @@ export class InputSystem {
       case 'ShiftLeft':
       case 'ShiftRight':
         this.sprint = false; break;
+      case 'Space':
+        // Do not unset jumpQueued here; it's consumed by controller to allow edge-trigger
+        break;
       default:
         break;
     }
@@ -161,6 +167,17 @@ export class InputSystem {
 
   isSprinting(): boolean {
     return this.sprint;
+  }
+
+  /**
+   * Edge-triggered jump request: returns true once, then clears the flag
+   */
+  consumeJumpRequested(): boolean {
+    if (this.jumpQueued) {
+      this.jumpQueued = false;
+      return true;
+    }
+    return false;
   }
 }
 
