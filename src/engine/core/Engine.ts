@@ -15,6 +15,7 @@ import { loadFullAtlas } from '../render/Atlas';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
 import { InputSystem } from '../systems/Input';
+import { PlayerController } from '../systems/PlayerController';
 
 let rafId: number | null = null;
 let running = false;
@@ -26,22 +27,30 @@ let camera: THREE.PerspectiveCamera | null = null;
 let world: World | null = null;
 let chunkRenderer: ChunkRenderer | null = null;
 let inputSystem: InputSystem | null = null;
+let playerController: PlayerController | null = null;
+let lastFrameNow: number = 0;
 
-function update() {
+function update(dtSeconds: number) {
   // Update subsystems here (physics, input, etc.)
   // For now, just ensure rendering happens
   if (inputSystem) {
     inputSystem.update();
+  }
+  if (playerController) {
+    playerController.update(dtSeconds);
   }
   if (renderer && scene && camera) {
     renderer.render(scene, camera);
   }
 }
 
-function tick() {
+function tick(now: number) {
   if (!running) return;
-  
-  update();
+  // Compute clamped delta time
+  const dtSeconds = Math.min(0.1, Math.max(0, (now - lastFrameNow) / 1000));
+  lastFrameNow = now;
+
+  update(dtSeconds);
   
   rafId = requestAnimationFrame(tick);
 }
@@ -79,6 +88,9 @@ async function start(canvas: HTMLCanvasElement) {
 
   // Input system (pointer lock + mouse look)
   inputSystem = new InputSystem(canvas, camera);
+
+  // Player controller (movement + gravity + collisions)
+  playerController = new PlayerController(camera, world, inputSystem);
   
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', (data: ChunkPipelineEvents['CHUNK_READY']) => {
@@ -113,6 +125,7 @@ async function start(canvas: HTMLCanvasElement) {
   window.addEventListener('resize', handleResize);
   
   running = true;
+  lastFrameNow = performance.now();
   rafId = requestAnimationFrame(tick);
 }
 
@@ -134,6 +147,9 @@ function stop() {
     chunkRenderer.destroy();
     chunkRenderer = null;
   }
+
+  // Clean up player controller
+  playerController = null;
   
   // Clean up world
   if (world) {

@@ -20,6 +20,15 @@ export class InputSystem {
   // Event handler references for proper removal
   private onPointerLockChangeRef: () => void;
   private onMouseMoveRef: (e: MouseEvent) => void;
+  private onKeyDownRef: (e: KeyboardEvent) => void;
+  private onKeyUpRef: (e: KeyboardEvent) => void;
+
+  // Keyboard state
+  private moveForward: boolean = false;
+  private moveBackward: boolean = false;
+  private moveLeft: boolean = false;
+  private moveRight: boolean = false;
+  private sprint: boolean = false;
 
   constructor(canvas: HTMLCanvasElement, camera: THREE.PerspectiveCamera) {
     this.canvas = canvas;
@@ -31,10 +40,14 @@ export class InputSystem {
     // Bind handlers
     this.onPointerLockChangeRef = this.onPointerLockChange.bind(this);
     this.onMouseMoveRef = this.onMouseMove.bind(this);
+    this.onKeyDownRef = this.onKeyDown.bind(this);
+    this.onKeyUpRef = this.onKeyUp.bind(this);
 
     // Register listeners
     document.addEventListener('pointerlockchange', this.onPointerLockChangeRef);
     window.addEventListener('mousemove', this.onMouseMoveRef);
+    window.addEventListener('keydown', this.onKeyDownRef);
+    window.addEventListener('keyup', this.onKeyUpRef);
   }
 
   /**
@@ -66,6 +79,8 @@ export class InputSystem {
   destroy(): void {
     document.removeEventListener('pointerlockchange', this.onPointerLockChangeRef);
     window.removeEventListener('mousemove', this.onMouseMoveRef);
+    window.removeEventListener('keydown', this.onKeyDownRef);
+    window.removeEventListener('keyup', this.onKeyUpRef);
   }
 
   private onPointerLockChange(): void {
@@ -80,6 +95,72 @@ export class InputSystem {
 
     this.yawRadians -= deltaX * this.mouseSensitivity;
     this.pitchRadians -= deltaY * this.mouseSensitivity;
+  }
+
+  private onKeyDown(e: KeyboardEvent): void {
+    switch (e.code) {
+      case 'KeyW':
+      case 'ArrowUp':
+        this.moveForward = true; break;
+      case 'KeyS':
+      case 'ArrowDown':
+        this.moveBackward = true; break;
+      case 'KeyA':
+      case 'ArrowLeft':
+        this.moveLeft = true; break;
+      case 'KeyD':
+      case 'ArrowRight':
+        this.moveRight = true; break;
+      case 'ShiftLeft':
+      case 'ShiftRight':
+        this.sprint = true; break;
+      default:
+        break;
+    }
+  }
+
+  private onKeyUp(e: KeyboardEvent): void {
+    switch (e.code) {
+      case 'KeyW':
+      case 'ArrowUp':
+        this.moveForward = false; break;
+      case 'KeyS':
+      case 'ArrowDown':
+        this.moveBackward = false; break;
+      case 'KeyA':
+      case 'ArrowLeft':
+        this.moveLeft = false; break;
+      case 'KeyD':
+      case 'ArrowRight':
+        this.moveRight = false; break;
+      case 'ShiftLeft':
+      case 'ShiftRight':
+        this.sprint = false; break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Get current movement input in local camera space (x,z), normalized to length ≤ 1
+   */
+  getMoveInput(): { x: number; z: number } {
+    let x = 0;
+    let z = 0;
+    if (this.moveForward) z -= 1;
+    if (this.moveBackward) z += 1;
+    if (this.moveLeft) x -= 1;
+    if (this.moveRight) x += 1;
+    const len = Math.hypot(x, z);
+    if (len > 0) {
+      x /= len;
+      z /= len;
+    }
+    return { x, z };
+  }
+
+  isSprinting(): boolean {
+    return this.sprint;
   }
 }
 
