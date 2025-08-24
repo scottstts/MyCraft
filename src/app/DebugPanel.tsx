@@ -30,7 +30,7 @@ export const DebugPanel: React.FC = () => {
     ssaoRadius: 0.01,
     bloomEnabled: true,
     bloomStrength: 0.4,
-    bloomThreshold: 1.0,
+    bloomThreshold: 0.3,
     exposure: 0.9,
     contrast: 1.05,
     saturation: 1.0,
@@ -244,7 +244,7 @@ export const DebugPanel: React.FC = () => {
           <input
             type="range"
             min="0"
-            max="2"
+            max="0.8"
             step="0.05"
             value={settings.bloomThreshold}
             onChange={(e) => handleSettingChange('bloomThreshold', parseFloat(e.target.value))}

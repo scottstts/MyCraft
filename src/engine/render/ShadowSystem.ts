@@ -130,93 +130,30 @@ export class ShadowSystem {
   }
 
   private updateCascadeCameras(viewCamera: THREE.Camera): void {
-    const viewMatrix = new THREE.Matrix4().copy(viewCamera.matrixWorldInverse);
-    const projMatrix = new THREE.Matrix4().copy(viewCamera.projectionMatrix);
-    
     for (let i = 0; i < this.settings.cascades; i++) {
       const camera = this.shadowCameras[i];
-      const nearDist = i === 0 ? (viewCamera as any).near : this.cascadeDistances[i - 1];
-      const farDist = this.cascadeDistances[i];
-
-      // Calculate frustum bounds for this cascade
-      const frustumBounds = this.calculateCascadeBounds(
-        viewCamera, 
-        nearDist, 
-        farDist, 
-        viewMatrix, 
-        projMatrix
-      );
-
-      // Position shadow camera to encompass the frustum
-      this.positionShadowCamera(camera, frustumBounds);
+      
+      // Simple stable shadow camera positioning
+      // Position the shadow camera to look at the player's position
+      const playerPos = viewCamera.position.clone();
+      
+      // Calculate camera size based on cascade level
+      const cascadeScale = (i + 1) * 20; // Increase size for farther cascades
+      camera.left = -cascadeScale;
+      camera.right = cascadeScale;
+      camera.top = cascadeScale;
+      camera.bottom = -cascadeScale;
+      camera.near = 0.5;
+      camera.far = this.cascadeDistances[i];
+      
+      // Position shadow camera relative to player
+      camera.position.copy(this.shadowLight.position);
+      camera.lookAt(playerPos);
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld();
     }
   }
 
-  private calculateCascadeBounds(
-    viewCamera: THREE.Camera,
-    near: number,
-    far: number,
-    viewMatrix: THREE.Matrix4,
-    _projMatrix: THREE.Matrix4
-  ): { min: THREE.Vector3; max: THREE.Vector3 } {
-    // Calculate frustum corners in world space
-    const corners = [];
-    const aspect = (viewCamera as any).aspect;
-    const fov = (viewCamera as any).fov * Math.PI / 180;
-    
-    // Near plane corners
-    const nearHeight = 2 * Math.tan(fov / 2) * near;
-    const nearWidth = nearHeight * aspect;
-    corners.push(new THREE.Vector3(-nearWidth/2, -nearHeight/2, -near));
-    corners.push(new THREE.Vector3(nearWidth/2, -nearHeight/2, -near));
-    corners.push(new THREE.Vector3(nearWidth/2, nearHeight/2, -near));
-    corners.push(new THREE.Vector3(-nearWidth/2, nearHeight/2, -near));
-    
-    // Far plane corners
-    const farHeight = 2 * Math.tan(fov / 2) * far;
-    const farWidth = farHeight * aspect;
-    corners.push(new THREE.Vector3(-farWidth/2, -farHeight/2, -far));
-    corners.push(new THREE.Vector3(farWidth/2, -farWidth/2, -far));
-    corners.push(new THREE.Vector3(farWidth/2, farHeight/2, -far));
-    corners.push(new THREE.Vector3(-farWidth/2, farHeight/2, -far));
-
-    // Transform to world space
-    const invViewMatrix = new THREE.Matrix4().copy(viewMatrix).invert();
-    corners.forEach(corner => corner.applyMatrix4(invViewMatrix));
-
-    // Find bounding box in light space
-    const lightView = new THREE.Matrix4().lookAt(
-      this.shadowLight.position,
-      this.shadowLight.target.position,
-      new THREE.Vector3(0, 1, 0)
-    );
-
-    corners.forEach(corner => corner.applyMatrix4(lightView));
-
-    const min = new THREE.Vector3(Infinity, Infinity, Infinity);
-    const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
-    
-    corners.forEach(corner => {
-      min.min(corner);
-      max.max(corner);
-    });
-
-    return { min, max };
-  }
-
-  private positionShadowCamera(camera: THREE.OrthographicCamera, bounds: { min: THREE.Vector3; max: THREE.Vector3 }): void {
-    camera.left = bounds.min.x;
-    camera.right = bounds.max.x;
-    camera.top = bounds.max.y;
-    camera.bottom = bounds.min.y;
-    camera.near = -bounds.max.z - 50; // Add padding
-    camera.far = -bounds.min.z + 50;
-
-    camera.position.copy(this.shadowLight.position);
-    camera.lookAt(this.shadowLight.target.position);
-    camera.updateProjectionMatrix();
-    camera.updateMatrixWorld();
-  }
 
   private renderShadowMaps(scene: THREE.Scene): void {
     const originalRenderTarget = this.renderer.getRenderTarget();
@@ -278,6 +215,17 @@ export class ShadowSystem {
       console.log('[ShadowSystem] Reinitializing cascades due to resolution/cascade change');
       this.dispose();
       this.initializeCascades();
+    }
+    
+    // Recalculate cascade distances if shadowDistance changed
+    else if (oldSettings.shadowDistance !== this.settings.shadowDistance) {
+      console.log('[ShadowSystem] Recalculating cascade distances due to shadowDistance change');
+      this.cascadeDistances = [];
+      for (let i = 0; i < this.settings.cascades; i++) {
+        const ratio = (i + 1) / this.settings.cascades;
+        const distance = this.settings.shadowDistance * Math.pow(ratio, 1.5);
+        this.cascadeDistances.push(distance);
+      }
     }
 
     // Update shadow light properties

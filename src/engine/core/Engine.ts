@@ -198,7 +198,7 @@ async function start(canvas: HTMLCanvasElement) {
     ssaoRadius: 0.01,
     bloomEnabled: true,
     bloomStrength: 0.4,
-    bloomThreshold: 1.0,
+    bloomThreshold: 0.3,
     exposure: 0.9,
     contrast: 1.05,
     saturation: 1.0
