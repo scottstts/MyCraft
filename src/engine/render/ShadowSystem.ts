@@ -28,10 +28,10 @@ export class ShadowSystem {
     resolution: 1024,
     cascades: 3,
     shadowDistance: 100,
-    softness: 2.0,
+    softness: 2.5,
     bias: -0.0005,
     normalBias: 0.02,
-    intensity: 0.7
+    intensity: 0.6
   };
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene) {
@@ -40,7 +40,7 @@ export class ShadowSystem {
     // Create main shadow-casting light
     this.shadowLight = new THREE.DirectionalLight(0xffffff, 1.0);
     this.shadowLight.position.set(50, 120, 50);
-    this.shadowLight.castShadow = true;
+    this.shadowLight.castShadow = this.settings.enabled;
     
     // Configure shadow properties
     this.shadowLight.shadow.mapSize.width = this.settings.resolution;
@@ -100,8 +100,15 @@ export class ShadowSystem {
    */
   update(camera: THREE.Camera, scene: THREE.Scene): void {
     if (!this.settings.enabled) {
+      // Ensure shadows are disabled
+      this.shadowLight.castShadow = false;
+      this.renderer.shadowMap.enabled = false;
       return;
     }
+
+    // Ensure shadows are enabled
+    this.shadowLight.castShadow = true;
+    this.renderer.shadowMap.enabled = true;
 
     // Update main shadow light direction based on sun position
     this.updateShadowLightPosition();
@@ -244,7 +251,7 @@ export class ShadowSystem {
     uniforms.shadowSoftness = { value: this.settings.softness };
     uniforms.shadowBias = { value: this.settings.bias };
     uniforms.shadowNormalBias = { value: this.settings.normalBias };
-    uniforms.shadowIntensity = { value: this.settings.intensity };
+    uniforms.shadowIntensity = { value: this.settings.enabled ? this.settings.intensity : 0.0 };
 
     return uniforms;
   }
@@ -276,9 +283,24 @@ export class ShadowSystem {
     this.shadowLight.shadow.mapSize.setScalar(this.settings.resolution);
     this.shadowLight.shadow.camera.far = this.settings.shadowDistance;
     
-    // Enable/disable shadow mapping
+    // Enable/disable shadow casting and mapping
+    this.shadowLight.castShadow = this.settings.enabled;
     this.renderer.shadowMap.enabled = this.settings.enabled;
+    
+    // Force update shadow maps if enabling
+    if (this.settings.enabled) {
+      this.renderer.shadowMap.needsUpdate = true;
+    }
+    
     console.log('[ShadowSystem] Shadow mapping enabled:', this.settings.enabled);
+    console.log('[ShadowSystem] Shadow light casting:', this.shadowLight.castShadow);
+    console.log('[ShadowSystem] Renderer shadow map enabled:', this.renderer.shadowMap.enabled);
+    
+    // Update shadow camera properties
+    for (let i = 0; i < this.shadowCameras.length; i++) {
+      this.shadowCameras[i].far = this.settings.shadowDistance;
+      this.shadowCameras[i].updateProjectionMatrix();
+    }
   }
 
   /**

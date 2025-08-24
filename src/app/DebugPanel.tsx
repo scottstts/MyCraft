@@ -57,8 +57,11 @@ export const DebugPanel: React.FC = () => {
         const shadowSettings = {
           enabled: settings.shadowEnabled,
           resolution: settings.shadowResolution,
+          cascades: 3,
           shadowDistance: settings.shadowDistance,
           softness: settings.shadowSoftness,
+          bias: -0.0005,
+          normalBias: 0.02,
           intensity: settings.shadowIntensity,
         };
         (window as any).updateShadowSettings(shadowSettings);
@@ -117,8 +120,11 @@ export const DebugPanel: React.FC = () => {
       const shadowSettings = {
         enabled: newSettings.shadowEnabled,
         resolution: newSettings.shadowResolution,
+        cascades: 3, // Fixed value for now
         shadowDistance: newSettings.shadowDistance,
         softness: newSettings.shadowSoftness,
+        bias: -0.0005, // Fixed value for now
+        normalBias: 0.02, // Fixed value for now
         intensity: newSettings.shadowIntensity,
       };
       (window as any).updateShadowSettings(shadowSettings);
@@ -176,7 +182,7 @@ export const DebugPanel: React.FC = () => {
           Enable SSAO
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
+        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.ssaoEnabled ? 1 : 0.5 }}>
           Intensity: {settings.ssaoIntensity.toFixed(2)}
           <input
             type="range"
@@ -185,11 +191,12 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.ssaoIntensity}
             onChange={(e) => handleSettingChange('ssaoIntensity', parseFloat(e.target.value))}
+            disabled={!settings.ssaoEnabled}
             style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
+        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.ssaoEnabled ? 1 : 0.5 }}>
           Radius: {settings.ssaoRadius.toFixed(3)}
           <input
             type="range"
@@ -198,6 +205,7 @@ export const DebugPanel: React.FC = () => {
             step="0.01"
             value={settings.ssaoRadius}
             onChange={(e) => handleSettingChange('ssaoRadius', parseFloat(e.target.value))}
+            disabled={!settings.ssaoEnabled}
             style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
@@ -217,7 +225,7 @@ export const DebugPanel: React.FC = () => {
           Enable Bloom
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
+        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.bloomEnabled ? 1 : 0.5 }}>
           Strength: {settings.bloomStrength.toFixed(2)}
           <input
             type="range"
@@ -226,11 +234,12 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.bloomStrength}
             onChange={(e) => handleSettingChange('bloomStrength', parseFloat(e.target.value))}
+            disabled={!settings.bloomEnabled}
             style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
+        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.bloomEnabled ? 1 : 0.5 }}>
           Threshold: {settings.bloomThreshold.toFixed(2)}
           <input
             type="range"
@@ -239,6 +248,7 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.bloomThreshold}
             onChange={(e) => handleSettingChange('bloomThreshold', parseFloat(e.target.value))}
+            disabled={!settings.bloomEnabled}
             style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
@@ -258,11 +268,12 @@ export const DebugPanel: React.FC = () => {
           Enable Shadows
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
+        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
           Resolution: {settings.shadowResolution}
           <select
             value={settings.shadowResolution}
             onChange={(e) => handleSettingChange('shadowResolution', parseInt(e.target.value))}
+            disabled={!settings.shadowEnabled}
             style={{ width: '100%', marginTop: '4px', padding: '2px' }}
           >
             <option value={512}>512 (Fast)</option>
@@ -272,7 +283,7 @@ export const DebugPanel: React.FC = () => {
           </select>
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
+        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
           Distance: {settings.shadowDistance}
           <input
             type="range"
@@ -281,11 +292,12 @@ export const DebugPanel: React.FC = () => {
             step="10"
             value={settings.shadowDistance}
             onChange={(e) => handleSettingChange('shadowDistance', parseFloat(e.target.value))}
+            disabled={!settings.shadowEnabled}
             style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
+        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
           Softness: {settings.shadowSoftness.toFixed(1)}
           <input
             type="range"
@@ -294,11 +306,12 @@ export const DebugPanel: React.FC = () => {
             step="0.1"
             value={settings.shadowSoftness}
             onChange={(e) => handleSettingChange('shadowSoftness', parseFloat(e.target.value))}
+            disabled={!settings.shadowEnabled}
             style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
+        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
           Intensity: {settings.shadowIntensity.toFixed(2)}
           <input
             type="range"
@@ -307,6 +320,7 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.shadowIntensity}
             onChange={(e) => handleSettingChange('shadowIntensity', parseFloat(e.target.value))}
+            disabled={!settings.shadowEnabled}
             style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
