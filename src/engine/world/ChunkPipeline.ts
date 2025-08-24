@@ -130,6 +130,27 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
     
     this.emit('CHUNK_MESH', { key, response });
   }
+
+  /**
+   * Request a re-mesh for an existing chunk given its current data.
+   * Callers: interaction systems after block edits.
+   */
+  requestRemesh(cx: number, cy: number, cz: number, chunkData: ChunkData): void {
+    if (!this.atlasConfig) {
+      throw new Error('[ChunkPipeline] Atlas config must be set before meshing');
+    }
+    const key = chunkKey(cx, cy, cz);
+    const meshRequest: MeshChunkRequest = {
+      type: 'MESH_CHUNK',
+      payload: {
+        key,
+        chunkData,
+        atlasConfig: this.atlasConfig,
+        blockRegistry: this.blockRegistry,
+      },
+    };
+    this.mesherWorker.postMessage(meshRequest);
+  }
   
   /**
    * Clean up workers

@@ -22,6 +22,7 @@ export class InputSystem {
   private onMouseMoveRef: (e: MouseEvent) => void;
   private onKeyDownRef: (e: KeyboardEvent) => void;
   private onKeyUpRef: (e: KeyboardEvent) => void;
+  private onMouseDownRef: (e: MouseEvent) => void;
 
   // Keyboard state
   private moveForward: boolean = false;
@@ -30,6 +31,8 @@ export class InputSystem {
   private moveRight: boolean = false;
   private sprint: boolean = false;
   private jumpQueued: boolean = false;
+  private leftClickQueued: boolean = false;
+  private rightClickQueued: boolean = false;
 
   constructor(canvas: HTMLCanvasElement, camera: THREE.PerspectiveCamera) {
     this.canvas = canvas;
@@ -43,12 +46,14 @@ export class InputSystem {
     this.onMouseMoveRef = this.onMouseMove.bind(this);
     this.onKeyDownRef = this.onKeyDown.bind(this);
     this.onKeyUpRef = this.onKeyUp.bind(this);
+    this.onMouseDownRef = this.onMouseDown.bind(this);
 
     // Register listeners
     document.addEventListener('pointerlockchange', this.onPointerLockChangeRef);
     window.addEventListener('mousemove', this.onMouseMoveRef);
     window.addEventListener('keydown', this.onKeyDownRef);
     window.addEventListener('keyup', this.onKeyUpRef);
+    window.addEventListener('mousedown', this.onMouseDownRef);
   }
 
   /**
@@ -82,6 +87,7 @@ export class InputSystem {
     window.removeEventListener('mousemove', this.onMouseMoveRef);
     window.removeEventListener('keydown', this.onKeyDownRef);
     window.removeEventListener('keyup', this.onKeyUpRef);
+    window.removeEventListener('mousedown', this.onMouseDownRef);
   }
 
   private onPointerLockChange(): void {
@@ -96,6 +102,15 @@ export class InputSystem {
 
     this.yawRadians -= deltaX * this.mouseSensitivity;
     this.pitchRadians -= deltaY * this.mouseSensitivity;
+  }
+
+  private onMouseDown(e: MouseEvent): void {
+    if (!this.isPointerLocked) return;
+    if (e.button === 0) {
+      this.leftClickQueued = true;
+    } else if (e.button === 2) {
+      this.rightClickQueued = true;
+    }
   }
 
   private onKeyDown(e: KeyboardEvent): void {
@@ -175,6 +190,24 @@ export class InputSystem {
   consumeJumpRequested(): boolean {
     if (this.jumpQueued) {
       this.jumpQueued = false;
+      return true;
+    }
+    return false;
+  }
+
+  /** Edge-triggered left click */
+  consumeLeftClick(): boolean {
+    if (this.leftClickQueued) {
+      this.leftClickQueued = false;
+      return true;
+    }
+    return false;
+  }
+
+  /** Edge-triggered right click */
+  consumeRightClick(): boolean {
+    if (this.rightClickQueued) {
+      this.rightClickQueued = false;
       return true;
     }
     return false;

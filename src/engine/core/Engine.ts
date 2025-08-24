@@ -17,6 +17,7 @@ import { findSpawnPosition } from '../world/TerrainGenerator';
 import { InputSystem } from '../systems/Input';
 import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
+import { InteractionSystem } from '../systems/InteractionSystem';
 
 let rafId: number | null = null;
 let running = false;
@@ -30,6 +31,7 @@ let chunkRenderer: ChunkRenderer | null = null;
 let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
+let interactionSystem: InteractionSystem | null = null;
 let lastFrameNow: number = 0;
 
 function update(dtSeconds: number) {
@@ -43,6 +45,9 @@ function update(dtSeconds: number) {
   }
   if (selectionSystem) {
     selectionSystem.update();
+  }
+  if (interactionSystem) {
+    interactionSystem.update();
   }
   if (renderer && scene && camera) {
     renderer.render(scene, camera);
@@ -99,6 +104,9 @@ async function start(canvas: HTMLCanvasElement) {
   
   // Selection system (raycast + debug outline)
   selectionSystem = new SelectionSystem(camera, world, scene);
+  
+  // Interaction system (mine/place + re-mesh)
+  interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline);
   
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', (data: ChunkPipelineEvents['CHUNK_READY']) => {
@@ -164,6 +172,9 @@ function stop() {
     selectionSystem.destroy();
     selectionSystem = null;
   }
+  
+  // Clean up interaction system
+  interactionSystem = null;
   
   // Clean up world
   if (world) {
