@@ -19,6 +19,7 @@ import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { useUIStore } from '../../state/ui';
+import { useInventory } from '../../state/inventory';
 
 let rafId: number | null = null;
 let running = false;
@@ -46,6 +47,7 @@ function update(dtSeconds: number) {
     const slot = inputSystem.consumeSelectedSlot?.();
     if (slot !== undefined && slot !== null) {
       useUIStore.getState().setSelectedSlot(slot);
+      // If the selected slot is empty, do nothing; InteractionSystem consults inventory
     }
   }
   if (playerController) {

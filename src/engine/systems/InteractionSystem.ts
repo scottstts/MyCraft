@@ -10,7 +10,7 @@ import type { World } from '../world/World';
 import { InputSystem } from './Input';
 import { SelectionSystem } from './SelectionSystem';
 import { getBlockIdByName } from '../world/blocks/BlockRegistry';
-import { getSelectedBlockId } from '../../state/ui';
+import { addToInventory, getSelectedPlacementBlockId, consumeOneFromSelected } from '../../state/inventory';
 import { CHUNK_SIZE, PLAYER } from '../../config/constants';
 import { worldToChunk } from '../utils/coords';
 import type { ChunkPipeline } from '../world/ChunkPipeline';
@@ -47,8 +47,11 @@ export class InteractionSystem {
       const sel = this.selection.getSelection();
       if (sel.hit && sel.hitCell) {
         const { x, y, z } = sel.hitCell;
-        if (this.world.getBlock(x, y, z) !== this.airId) {
+        const blockId = this.world.getBlock(x, y, z);
+        if (blockId !== this.airId) {
           this.world.setBlock(x, y, z, this.airId);
+          // Add drop to inventory
+          addToInventory(blockId, 1);
           this.remeshAffectedChunks(x, y, z);
         }
       }
@@ -60,10 +63,13 @@ export class InteractionSystem {
       if (sel.hit && sel.placeCell) {
         const { x, y, z } = sel.placeCell;
         if (this.canPlaceAt(x, y, z)) {
-          const selected = getSelectedBlockId();
-          const placeId = (selected ?? this.defaultPlaceId);
-          this.world.setBlock(x, y, z, placeId);
-          this.remeshAffectedChunks(x, y, z);
+          const placeId = getSelectedPlacementBlockId() ?? this.defaultPlaceId;
+          // Only place if selected slot has at least one (consume); if none, fallback to default but do not consume
+          const hadSelected = getSelectedPlacementBlockId() !== null;
+          if (!hadSelected || consumeOneFromSelected()) {
+            this.world.setBlock(x, y, z, placeId);
+            this.remeshAffectedChunks(x, y, z);
+          }
         }
       }
     }
