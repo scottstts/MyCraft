@@ -55,6 +55,7 @@ export interface ChunkMeshResponse {
 export type WorkerResponse = ChunkDataResponse | ChunkMeshResponse;
 
 // Type guards
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isGenerateChunkRequest(msg: any): msg is GenerateChunkRequest {
   return msg && msg.type === 'GEN_CHUNK' && msg.payload && 
          typeof msg.payload.key === 'string' &&
@@ -64,18 +65,21 @@ export function isGenerateChunkRequest(msg: any): msg is GenerateChunkRequest {
          typeof msg.payload.seed === 'number';
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isMeshChunkRequest(msg: any): msg is MeshChunkRequest {
   return msg && msg.type === 'MESH_CHUNK' && msg.payload &&
          typeof msg.payload.key === 'string' &&
          msg.payload.chunkData;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isChunkDataResponse(msg: any): msg is ChunkDataResponse {
   return msg && msg.type === 'CHUNK_DATA' &&
          typeof msg.key === 'string' &&
          msg.payload;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isChunkMeshResponse(msg: any): msg is ChunkMeshResponse {
   return msg && msg.type === 'CHUNK_MESH' &&
          typeof msg.key === 'string' &&

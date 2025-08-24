@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { Renderer } from '../render/Renderer';
 import { createScene, createCamera } from '../render/SceneBuilder';
 import { World } from '../world/World';
+import type { ChunkPipelineEvents } from '../world/ChunkPipeline';
 import { ChunkRenderer } from '../render/ChunkRenderer';
 import { loadAtlas } from '../render/Atlas';
 
@@ -62,13 +63,13 @@ function start(canvas: HTMLCanvasElement) {
   chunkRenderer = new ChunkRenderer(scene, material);
   
   // Connect world events to chunk renderer
-  world.on('CHUNK_READY', (data) => {
-    console.log(`[Engine] World chunk ready: ${(data as any).key}`);
+  world.chunkPipeline.on('CHUNK_READY', (data: ChunkPipelineEvents['CHUNK_READY']) => {
+    console.log(`[Engine] Chunk ready: ${data.key}`);
   });
   
   // Connect chunk pipeline to chunk renderer
-  world.chunkPipeline.on('CHUNK_MESH', (data) => {
-    const { response } = data as any;
+  world.chunkPipeline.on('CHUNK_MESH', (data: ChunkPipelineEvents['CHUNK_MESH']) => {
+    const { response } = data;
     if (chunkRenderer) {
       chunkRenderer.handleChunkMesh(response);
     }

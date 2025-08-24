@@ -8,7 +8,7 @@
 export type EventListener<T = unknown> = (data: T) => void;
 
 export class EventEmitter<EventMap extends Record<string, unknown> = Record<string, unknown>> {
-  private listeners: Map<keyof EventMap, Set<EventListener<any>>> = new Map();
+  private listeners: Map<keyof EventMap, Set<EventListener<EventMap[keyof EventMap]>>> = new Map();
 
   /**
    * Add an event listener
@@ -22,11 +22,11 @@ export class EventEmitter<EventMap extends Record<string, unknown> = Record<stri
     }
     
     const eventListeners = this.listeners.get(event)!;
-    eventListeners.add(listener as EventListener<any>);
+    eventListeners.add(listener as EventListener<EventMap[keyof EventMap]>);
 
     // Return unsubscribe function
     return () => {
-      eventListeners.delete(listener as EventListener<any>);
+      eventListeners.delete(listener as EventListener<EventMap[keyof EventMap]>);
       if (eventListeners.size === 0) {
         this.listeners.delete(event);
       }
@@ -55,7 +55,7 @@ export class EventEmitter<EventMap extends Record<string, unknown> = Record<stri
   off<K extends keyof EventMap>(event: K, listener: EventListener<EventMap[K]>): void {
     const eventListeners = this.listeners.get(event);
     if (eventListeners) {
-      eventListeners.delete(listener as EventListener<any>);
+      eventListeners.delete(listener as EventListener<EventMap[keyof EventMap]>);
       if (eventListeners.size === 0) {
         this.listeners.delete(event);
       }
