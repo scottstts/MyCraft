@@ -10,6 +10,7 @@ import type { World } from '../world/World';
 import { InputSystem } from './Input';
 import { SelectionSystem } from './SelectionSystem';
 import { getBlockIdByName } from '../world/blocks/BlockRegistry';
+import { getSelectedBlockId } from '../../state/ui';
 import { CHUNK_SIZE, PLAYER } from '../../config/constants';
 import { worldToChunk } from '../utils/coords';
 import type { ChunkPipeline } from '../world/ChunkPipeline';
@@ -59,7 +60,9 @@ export class InteractionSystem {
       if (sel.hit && sel.placeCell) {
         const { x, y, z } = sel.placeCell;
         if (this.canPlaceAt(x, y, z)) {
-          this.world.setBlock(x, y, z, this.defaultPlaceId);
+          const selected = getSelectedBlockId();
+          const placeId = (selected ?? this.defaultPlaceId);
+          this.world.setBlock(x, y, z, placeId);
           this.remeshAffectedChunks(x, y, z);
         }
       }

@@ -33,6 +33,7 @@ export class InputSystem {
   private jumpQueued: boolean = false;
   private leftClickQueued: boolean = false;
   private rightClickQueued: boolean = false;
+  private numSlotQueued: number | null = null;
 
   constructor(canvas: HTMLCanvasElement, camera: THREE.PerspectiveCamera) {
     this.canvas = canvas;
@@ -132,6 +133,9 @@ export class InputSystem {
         this.sprint = true; break;
       case 'Space':
         this.jumpQueued = true; break;
+      case 'Digit1': case 'Digit2': case 'Digit3': case 'Digit4': case 'Digit5':
+      case 'Digit6': case 'Digit7': case 'Digit8': case 'Digit9':
+        this.numSlotQueued = parseInt(e.code.slice(-1), 10) - 1; break;
       default:
         break;
     }
@@ -211,6 +215,13 @@ export class InputSystem {
       return true;
     }
     return false;
+  }
+
+  /** Edge-triggered number slot 0..8, or null if none queued */
+  consumeSelectedSlot(): number | null {
+    const v = this.numSlotQueued;
+    this.numSlotQueued = null;
+    return v;
   }
 }
 

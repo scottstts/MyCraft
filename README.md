@@ -1,1 +1,1 @@
-## Minecraft Clone 
+## MyCraft Project

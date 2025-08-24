@@ -18,6 +18,7 @@ import { InputSystem } from '../systems/Input';
 import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
+import { useUIStore } from '../../state/ui';
 
 let rafId: number | null = null;
 let running = false;
@@ -39,6 +40,13 @@ function update(dtSeconds: number) {
   // For now, just ensure rendering happens
   if (inputSystem) {
     inputSystem.update();
+  }
+  // Handle number key slot selection (UI side-effect is fine here)
+  if (inputSystem) {
+    const slot = inputSystem.consumeSelectedSlot?.();
+    if (slot !== undefined && slot !== null) {
+      useUIStore.getState().setSelectedSlot(slot);
+    }
   }
   if (playerController) {
     playerController.update(dtSeconds);
