@@ -27,9 +27,9 @@ export const DebugPanel: React.FC = () => {
   const [settings, setSettings] = useState<PostProcessingSettings>({
     ssaoEnabled: true,
     ssaoIntensity: 0.3,
-    ssaoRadius: 0.12,
+    ssaoRadius: 0.01,
     bloomEnabled: true,
-    bloomStrength: 0.15,
+    bloomStrength: 0.2,
     bloomThreshold: 1.0,
     exposure: 0.9,
     contrast: 1.05,

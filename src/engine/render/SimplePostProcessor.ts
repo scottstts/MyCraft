@@ -29,9 +29,9 @@ export class SimplePostProcessor {
   private settings: PostProcessorSettings = {
     ssaoEnabled: true,
     ssaoIntensity: 0.3,
-    ssaoRadius: 0.12,
+    ssaoRadius: 0.01,
     bloomEnabled: true,
-    bloomStrength: 0.15,
+    bloomStrength: 0.2,
     exposure: 0.9,
     contrast: 1.05,
     saturation: 1.0
@@ -51,11 +51,12 @@ export class SimplePostProcessor {
     this.renderer = renderer;
     this.mainScene = mainScene;
     this.camera = camera;
-    // Create render targets
+    // Create render targets with depth texture for SSAO
     this.renderTarget1 = new THREE.WebGLRenderTarget(width, height, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
-      format: THREE.RGBAFormat
+      format: THREE.RGBAFormat,
+      depthTexture: new THREE.DepthTexture(width, height, THREE.UnsignedShortType)
     });
 
     this.renderTarget2 = new THREE.WebGLRenderTarget(width, height, {
@@ -124,57 +125,71 @@ export class SimplePostProcessor {
         varying vec2 vUv;
 
         float readDepth(vec2 coord) {
-          float fragCoordZ = texture2D(tDepth, coord).x;
+          float fragCoordZ = texture2D(tDepth, coord).r;
+          if (fragCoordZ == 1.0) return cameraFar; // Handle background
           float viewZ = (cameraNear * cameraFar) / ((cameraFar - cameraNear) * fragCoordZ - cameraFar);
-          return viewZ;
+          return -viewZ; // Return positive depth
         }
 
-        // Simple SSAO implementation
+        // Conservative SSAO implementation
         float ssao(vec2 uv, vec3 position, vec3 normal) {
           if (!ssaoEnabled) return 1.0;
           
           float occlusion = 0.0;
-          float radius = ssaoRadius;
-          int samples = 8;
+          float radius = ssaoRadius * 200.0; // Reasonable screen space scaling
+          int samples = 8; // Fewer samples to reduce artifacts
+          float currentDepth = readDepth(uv);
+          
+          // Skip SSAO if depth is at far plane (background)
+          if (currentDepth >= cameraFar * 0.99) return 1.0;
           
           for (int i = 0; i < samples; i++) {
             float angle = float(i) / float(samples) * 6.28318;
             vec2 offset = vec2(cos(angle), sin(angle)) * radius;
             
             vec2 sampleUV = uv + offset / resolution;
-            if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) continue;
+            // Clamp to texture bounds instead of skipping
+            sampleUV = clamp(sampleUV, vec2(0.0), vec2(1.0));
             
             float sampleDepth = readDepth(sampleUV);
-            float currentDepth = readDepth(uv);
+            float depthDiff = sampleDepth - currentDepth;
             
-            if (sampleDepth > currentDepth + 0.1) {
+            // Only consider samples that are closer (in front)
+            if (depthDiff > 0.1 && depthDiff < 5.0) {
               occlusion += 1.0;
             }
           }
           
-          occlusion = 1.0 - (occlusion / float(samples)) * ssaoIntensity;
-          return clamp(occlusion, 0.0, 1.0);
+          occlusion = (occlusion / float(samples)) * ssaoIntensity;
+          return clamp(1.0 - occlusion * 0.5, 0.3, 1.0); // Limit darkening
         }
 
-        // Simple bloom effect
+        // Conservative bloom effect
         vec3 bloom(sampler2D tex, vec2 uv) {
           if (!bloomEnabled) return texture2D(tex, uv).rgb;
           
           vec3 color = texture2D(tex, uv).rgb;
-          vec3 bloom = vec3(0.0);
           
-          // Simple blur for bloom
-          float blur = 2.0 / min(resolution.x, resolution.y);
-          bloom += texture2D(tex, uv + vec2(blur, 0.0)).rgb;
-          bloom += texture2D(tex, uv + vec2(-blur, 0.0)).rgb;
-          bloom += texture2D(tex, uv + vec2(0.0, blur)).rgb;
-          bloom += texture2D(tex, uv + vec2(0.0, -blur)).rgb;
-          bloom /= 4.0;
+          // Only bloom very bright pixels to avoid edge artifacts
+          float brightness = dot(color, vec3(0.299, 0.587, 0.114));
+          if (brightness < 0.8) {
+            return color; // No bloom for dim areas
+          }
           
-          // Only bloom bright areas - raised threshold to reduce overexposure
-          float brightness = dot(bloom, vec3(0.299, 0.587, 0.114));
-          if (brightness > 1.0) {
-            return color + bloom * bloomStrength;
+          vec3 bloomColor = vec3(0.0);
+          float blur = 1.5 / min(resolution.x, resolution.y);
+          
+          // Simple 4-tap blur
+          bloomColor += texture2D(tex, uv + vec2(blur, 0.0)).rgb;
+          bloomColor += texture2D(tex, uv + vec2(-blur, 0.0)).rgb;
+          bloomColor += texture2D(tex, uv + vec2(0.0, blur)).rgb;
+          bloomColor += texture2D(tex, uv + vec2(0.0, -blur)).rgb;
+          bloomColor /= 4.0;
+          
+          // Only add bloom to bright areas
+          float bloomBrightness = dot(bloomColor, vec3(0.299, 0.587, 0.114));
+          if (bloomBrightness > 0.7) {
+            return color + bloomColor * bloomStrength;
           }
           
           return color;
@@ -203,15 +218,23 @@ export class SimplePostProcessor {
         }
 
         void main() {
-          vec3 color = bloom(tDiffuse, vUv);
+          vec3 color = texture2D(tDiffuse, vUv).rgb;
           
-          // Apply SSAO
+          // Apply bloom first
+          if (bloomEnabled) {
+            color = bloom(tDiffuse, vUv);
+          }
+          
+          // Apply SSAO with safety checks
           if (ssaoEnabled) {
             float depth = readDepth(vUv);
-            vec3 position = vec3(vUv * 2.0 - 1.0, depth);
-            vec3 normal = vec3(0.0, 0.0, 1.0); // Simplified normal
-            float ao = ssao(vUv, position, normal);
-            color *= ao;
+            // Only apply SSAO to valid depth values
+            if (depth > cameraNear && depth < cameraFar * 0.99) {
+              vec3 position = vec3(vUv * 2.0 - 1.0, depth);
+              vec3 normal = vec3(0.0, 0.0, 1.0); // Simplified normal
+              float ao = ssao(vUv, position, normal);
+              color *= ao;
+            }
           }
           
           // Apply exposure
@@ -286,6 +309,13 @@ export class SimplePostProcessor {
     this.renderTarget1.setSize(width, height);
     this.renderTarget2.setSize(width, height);
     this.depthTarget.setSize(width, height);
+    
+    // Ensure depth texture is properly resized
+    if (this.renderTarget1.depthTexture) {
+      this.renderTarget1.depthTexture.image.width = width;
+      this.renderTarget1.depthTexture.image.height = height;
+      this.renderTarget1.depthTexture.needsUpdate = true;
+    }
   }
 
   /**

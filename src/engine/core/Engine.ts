@@ -194,9 +194,9 @@ async function start(canvas: HTMLCanvasElement) {
   postProcessor.updateSettings({
     ssaoEnabled: true,
     ssaoIntensity: 0.3,
-    ssaoRadius: 0.12,
+    ssaoRadius: 0.01,
     bloomEnabled: true,
-    bloomStrength: 0.15,
+    bloomStrength: 0.2,
     exposure: 0.9,
     contrast: 1.05,
     saturation: 1.0
