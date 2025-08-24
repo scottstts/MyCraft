@@ -147,8 +147,8 @@ export class InputSystem {
   getMoveInput(): { x: number; z: number } {
     let x = 0;
     let z = 0;
-    if (this.moveForward) z -= 1;
-    if (this.moveBackward) z += 1;
+    if (this.moveForward) z += 1;
+    if (this.moveBackward) z -= 1;
     if (this.moveLeft) x -= 1;
     if (this.moveRight) x += 1;
     const len = Math.hypot(x, z);
