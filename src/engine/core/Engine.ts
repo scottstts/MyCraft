@@ -15,6 +15,7 @@ import { loadFullAtlas } from '../render/Atlas';
 import { Environment } from '../render/Environment';
 import { BlockMaterial } from '../render/BlockMaterial';
 import { SimplePostProcessor } from '../render/SimplePostProcessor';
+import { ShadowSystem } from '../render/ShadowSystem';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
 import { InputSystem } from '../systems/Input';
@@ -35,6 +36,7 @@ let chunkRenderer: ChunkRenderer | null = null;
 let environment: Environment | null = null;
 let blockMaterial: BlockMaterial | null = null;
 let postProcessor: SimplePostProcessor | null = null;
+let shadowSystem: ShadowSystem | null = null;
 let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
@@ -95,6 +97,17 @@ function update(dtSeconds: number) {
   // Update material uniforms
   if (blockMaterial && camera) {
     blockMaterial.updateUniforms(camera);
+  }
+
+  // Update shadow system
+  if (shadowSystem && scene && camera) {
+    shadowSystem.update(camera, scene);
+    
+    // Update block material with shadow uniforms
+    if (blockMaterial) {
+      const shadowUniforms = shadowSystem.getShadowUniforms();
+      blockMaterial.updateShadowUniforms(shadowUniforms);
+    }
   }
   
   // Update subsystems here (physics, input, etc.)
@@ -187,6 +200,21 @@ async function start(canvas: HTMLCanvasElement) {
     exposure: 1.1,
     contrast: 1.15,
     saturation: 1.1
+  });
+
+  // Initialize shadow system
+  shadowSystem = new ShadowSystem(renderer.getRenderer(), scene);
+  
+  // Configure shadows for optimal minecraft-style visuals
+  shadowSystem.updateSettings({
+    enabled: true,
+    resolution: 1024,
+    cascades: 3,
+    shadowDistance: 100,
+    softness: 2.5,
+    bias: -0.0005,
+    normalBias: 0.02,
+    intensity: 0.6
   });
   
   // Set atlas config and block registry in chunk pipeline
@@ -297,6 +325,12 @@ function stop() {
     postProcessor = null;
   }
 
+  // Clean up shadow system
+  if (shadowSystem) {
+    shadowSystem.dispose();
+    shadowSystem = null;
+  }
+
   // Clean up player controller
   playerController = null;
   
@@ -338,8 +372,16 @@ function updatePostProcessingSettings(settings: any) {
   }
 }
 
+// Global function for UI to update shadow settings
+function updateShadowSettings(settings: any) {
+  if (shadowSystem) {
+    shadowSystem.updateSettings(settings);
+  }
+}
+
 // Expose to global scope for UI communication
 (window as any).updatePostProcessingSettings = updatePostProcessingSettings;
+(window as any).updateShadowSettings = updateShadowSettings;
 
 export const engine = { start, stop };
 export type Engine = typeof engine;

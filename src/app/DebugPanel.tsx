@@ -15,6 +15,11 @@ interface PostProcessingSettings {
   exposure: number;
   contrast: number;
   saturation: number;
+  shadowEnabled: boolean;
+  shadowResolution: number;
+  shadowDistance: number;
+  shadowSoftness: number;
+  shadowIntensity: number;
 }
 
 export const DebugPanel: React.FC = () => {
@@ -29,6 +34,11 @@ export const DebugPanel: React.FC = () => {
     exposure: 1.1,
     contrast: 1.15,
     saturation: 1.1,
+    shadowEnabled: true,
+    shadowResolution: 1024,
+    shadowDistance: 100,
+    shadowSoftness: 2.5,
+    shadowIntensity: 0.6,
   });
 
   if (!debugVisible) {
@@ -63,6 +73,13 @@ export const DebugPanel: React.FC = () => {
 
     // Communicate with engine (this will be improved with proper state management)
     (window as any).updatePostProcessingSettings?.(newSettings);
+    (window as any).updateShadowSettings?.({
+      enabled: newSettings.shadowEnabled,
+      resolution: newSettings.shadowResolution,
+      shadowDistance: newSettings.shadowDistance,
+      softness: newSettings.shadowSoftness,
+      intensity: newSettings.shadowIntensity,
+    });
   };
 
   return (
@@ -176,6 +193,74 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.bloomThreshold}
             onChange={(e) => handleSettingChange('bloomThreshold', parseFloat(e.target.value))}
+            style={{ width: '100%', marginTop: '4px' }}
+          />
+        </label>
+      </div>
+
+      {/* Shadow Settings */}
+      <div style={{ marginBottom: '16px' }}>
+        <h4 style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#ccc' }}>Dynamic Shadows</h4>
+        
+        <label style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
+          <input
+            type="checkbox"
+            checked={settings.shadowEnabled}
+            onChange={(e) => handleSettingChange('shadowEnabled', e.target.checked)}
+            style={{ marginRight: '8px' }}
+          />
+          Enable Shadows
+        </label>
+
+        <label style={{ display: 'block', marginBottom: '6px' }}>
+          Resolution: {settings.shadowResolution}
+          <select
+            value={settings.shadowResolution}
+            onChange={(e) => handleSettingChange('shadowResolution', parseInt(e.target.value))}
+            style={{ width: '100%', marginTop: '4px', padding: '2px' }}
+          >
+            <option value={512}>512 (Fast)</option>
+            <option value={1024}>1024 (Balanced)</option>
+            <option value={2048}>2048 (High)</option>
+            <option value={4096}>4096 (Ultra)</option>
+          </select>
+        </label>
+
+        <label style={{ display: 'block', marginBottom: '6px' }}>
+          Distance: {settings.shadowDistance}
+          <input
+            type="range"
+            min="50"
+            max="200"
+            step="10"
+            value={settings.shadowDistance}
+            onChange={(e) => handleSettingChange('shadowDistance', parseFloat(e.target.value))}
+            style={{ width: '100%', marginTop: '4px' }}
+          />
+        </label>
+
+        <label style={{ display: 'block', marginBottom: '6px' }}>
+          Softness: {settings.shadowSoftness.toFixed(1)}
+          <input
+            type="range"
+            min="0.5"
+            max="5"
+            step="0.1"
+            value={settings.shadowSoftness}
+            onChange={(e) => handleSettingChange('shadowSoftness', parseFloat(e.target.value))}
+            style={{ width: '100%', marginTop: '4px' }}
+          />
+        </label>
+
+        <label style={{ display: 'block', marginBottom: '6px' }}>
+          Intensity: {settings.shadowIntensity.toFixed(2)}
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={settings.shadowIntensity}
+            onChange={(e) => handleSettingChange('shadowIntensity', parseFloat(e.target.value))}
             style={{ width: '100%', marginTop: '4px' }}
           />
         </label>
