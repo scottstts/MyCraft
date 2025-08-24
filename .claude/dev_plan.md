@@ -423,169 +423,392 @@ interface WorkerRes {
 
 ### Phase G — Naive meshing (visible faces)
 
-**G0. Prereqs & fixes (do first)**
+**G1. Face culling mesh builder (worker)**
 
-* In `Engine.start`, wire:
+* For each voxel:
 
-  ```ts
-  world!.chunkPipeline.on('CHUNK_MESH', ({ response }) => {
-    chunkRenderer!.handleChunkMesh(response)
-  })
-  ```
+  * Skip if `id==0`.
+  * For each of 6 faces, compare neighbor voxel:
 
-  (Your file currently stops at `world.`).&#x20;
-* In `ChunkRenderer.ts`:
+    * If neighbor is outside chunk → query neighbor chunk data if available (pass in a “neighborhood” accessor that returns AIR when missing); **v1**: treat missing as AIR (will pop as you stream neighbors).
+    * If neighbor is not opaque → emit quad.
+* Build typed arrays: positions, normals, uvs, indices.
+* UVs from atlas using block’s face tile.
+  **Acceptance:** Chunks render with proper block faces; holes appear temporarily at chunk seams until neighbor mesh arrives (acceptable v1).
 
-  * Remove the local `CHUNK_SIZE` constant and `import { CHUNK_SIZE } from '../../config/constants'`.
-  * Parse `cx,cy,cz` from `response.key` and set the group position to `{cx*CHUNK_SIZE.x, cy*CHUNK_SIZE.y, cz*CHUNK_SIZE.z}` when inserting meshes. (You already create `BufferGeometry` from worker buffers—keep that; just add the group positioning.)&#x20;
-* Switch material to front-face culling now (it matters immediately once faces exist):
+**G2. Atlas real texture**
 
-  ```ts
-  new THREE.MeshStandardMaterial({ map: atlas, side: THREE.FrontSide })
-  ```
-
-
-
-**G1. Face-culling mesh builder (worker)**
-Implement a pure function `buildChunkMesh(chunkData, neighborhood, registry, atlasMeta)` and call it from the mesher worker. Keep the worker message shape you have; fill the payload arrays instead of returning empties. (You already transfer buffers—keep that.)&#x20;
-Rules:
-
-* Skip `AIR` (id 0). Opaque neighbors hide faces. (Registry provides `opaque`.)&#x20;
-* **Neighbor policy (fix):** treat **missing neighbor chunk as AIR** so borders render fully and you don’t get holes at edges. When the neighbor arrives, re-mesh both chunks to remove the now-internal faces. (Your plan text said “treat missing as AIR” but the acceptance claimed “holes appear” — that’s inverted; holes only happen if you treat missing as SOLID.)&#x20;
-* Emit per-quad: 4 verts, 6 indices, flat normal, and UVs from atlas tile. Build as tightly-packed typed arrays.
-
-Buffers & types:
-
-* Positions, normals, uvs: `Float32Array`. Indices: **`Uint32Array`** to be safe against pathological cases. (Three will use 32-bit indices via WebGL2 or the extension.) Keep your transfer logic.&#x20;
-* Use your typed helpers where it actually simplifies growth (optional; correctness over cleverness).&#x20;
-
-Atlas UVs (for G1; you’ll refine in G2):
-
-* Use atlas-tile uv in `[0,1]` normalized space. Add a half-texel inset: `eps = 0.5 / atlasSizePx` to avoid bleeding, and clamp UVs to `[eps, 1-eps]`. (You’ll finalize filters in G2.)
-
-Events:
-
-* Keep your current pipeline: `GEN_CHUNK → CHUNK_DATA → MESH_CHUNK → CHUNK_MESH`. (You already route data to mesher and emit.)
-
-**Acceptance (corrected):** spawn a grid; chunk borders **render** without holes. When a neighbor arrives, you may momentarily have redundant interior faces until a re-mesh. No crashes; buffers transfer. (Originally this acceptance mentioned “holes” — that would imply treating missing as SOLID, which we are not doing.)&#x20;
+* Replace placeholder with your real atlas image + JSON mapping (`/assets/textures/atlas.png`, `/atlas.json`).
+* Apply nearest‑neighbor filters.
+  **Acceptance:** Pixelated textures appear; grass top/side/bottom mapped correctly.
 
 ---
 
-**G2. Atlas: real texture (nearest-neighbor, no bleed)**
+### Phase H — Player & Camera
 
-* Implement `loadAtlas()` to return a `THREE.Texture` and metadata `{ tileSizePx, atlasSizePx, tiles: Record<string,{u,v}> }`.
+**H1. Pointer lock + mouse look**
 
-  * Set: `minFilter = NearestFilter`, `magFilter = NearestFilter`, `generateMipmaps = false`, `anisotropy = 1`, `wrapS = wrapT = ClampToEdge`.
-  * Ensure correct color space (`SRGBColorSpace`) to avoid washed colors in `MeshStandardMaterial`.
-  * Keep stub fallback if the image can’t load. (Your stub path exists.)&#x20;
-* Define tiles for `grass` (`top`, `side`, `bottom`), `dirt`, `stone`. Map block faces to tiles in the registry so the mesher can pick per-face UVs.&#x20;
+* Register input handlers for pointer lock, mouse movement; store yaw/pitch; clamp pitch.
+* Camera position separate from player AABB center (eye height offset).
+  **Acceptance:** You can look around smoothly; escape unlocks pointer.
 
-**Acceptance:** blocks show correct per-face textures; no shimmering; no seams at tile edges when the camera moves.
+**H2. Movement & gravity**
 
----
+* WASD movement applied in camera yaw plane; sprint with Shift.
+* Gravity applied; delta‑time aware.
+  **Acceptance:** You can move on flat ground (no collisions yet), fall until y=0 clamp (temporary).
 
-**G3. ChunkRenderer completion**
+**H3. AABB collisions with world**
 
-* In `handleChunkMesh` you already create `BufferGeometry` from the arrays; ensure:
+* Implement axis‑separated sweep against voxel solids.
+* Resolve in X, Z, then Y; set grounded when Y hit from above.
+  **Acceptance:** You stand on terrain, slide along walls, can’t pass through blocks.
 
-  * `geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))` et al;
-  * `geometry.setIndex(new THREE.BufferAttribute(indices, 1))`;
-  * Call `geometry.computeBoundingSphere()` (cheap) and cache a `Box3` per-chunk for culling later.&#x20;
-* Create (or reuse) a `THREE.Group` per chunk key. Set group position using parsed `cx,cy,cz` and `CHUNK_SIZE`.
-* Emit your own `MESH_CREATED/MESH_UPDATED/MESH_REMOVED` events (you’ve scaffolded the types) so streaming/culling can listen.&#x20;
+**H4. Jump**
 
-**Acceptance:** geometry appears at the correct world position for each chunk; replacing a mesh doesn’t leak old objects; no WebGL warnings.
-
----
-
-### Phase H — Greedy meshing (optional; behind flag)
-
-**H1. Greedy merge in worker (per face-axis)**
-
-* Under `USE_GREEDY_MESH` (already in flags), switch meshing to greedy: for each of the 3 face orientations, build a 2D mask of exposed faces, merge maximal rectangles with identical **block id, face tile, and normal**. Don’t merge across chunk boundaries; don’t merge transparent blocks.&#x20;
-* Preserve UVs: for a merged rectangle of size `w×h` tiles, scale UV span accordingly with the same `eps` insetting.
-* Keep `Uint32Array` indices. Reuse your transfer code.&#x20;
-
-**H2. Validation**
-
-* Unit-test the pure meshing function (not the worker):
-
-  * Single cube → 6 quads, 12 tris.
-  * `2×1×1` touching → 10 quads naive, but **8** with greedy (two faces merged).
-  * Solid layer → 2 giant quads top/bottom.
-* Visual: toggle flag at runtime (rebuild) and compare draw calls/chunk.
-
-**Acceptance:** vertex/tri count drops materially on typical terrain; visuals identical.
+* Space: if grounded, apply upward impulse.
+  **Acceptance:** Jumping works; cannot multi‑jump in midair.
 
 ---
 
-### Phase I — Streaming, visibility & remesh hygiene
+### Phase I — Block interaction
 
-**I1. View-dependent chunk set**
+**I1. Raycast voxel selection**
 
-* From camera world pos → chunk `C3`. Maintain a desired set within `CHUNK_RADIUS` (config). Schedule gen requests; honor your `pendingRequests` set. Evict far chunks (destroy meshes, delete from world).
+* Voxel DDA (“grid marching”) from camera position along view dir up to max distance.
+* Return hit block cell and adjacent “place” cell.
+  **Acceptance:** Draw a debug wireframe box on target cell.
 
-**I2. Frustum culling**
+**I2. Mine & place**
 
-* Compute frustum from camera each frame; toggle `chunkGroup.visible` based on precomputed `Box3` per chunk (from G3). Keep this cheap; no per-face culling.
+* Left click: set hit block to AIR; Right click: set place cell to selected block id.
+* After edit: mark involved chunk (and neighbor if boundary face) “dirty” → re‑mesh queue.
+  **Acceptance:** Edits appear immediately; adjacent faces appear/disappear as expected.
 
-**I3. Seam hygiene (neighbor events)**
+**I3. Hotbar & selected block**
 
-* When chunk **A** or any of its 6 neighbors become available or change, enqueue a **re-mesh** for **A** (and the changed neighbor) so interior seam faces are culled. Throttle to avoid stampedes while moving.
-
-**Acceptance:** walking around streams chunks smoothly without holes; when you linger at a seam, interior faces get cleaned up within a beat; GPU time remains stable with culling on.
-
----
-
-### Phase J — Player camera & controls (minimal)
-
-**J1. FPS camera**
-
-* Pointer lock + WASD + mouse look; clamp pitch; smoothing optional.
-* Start camera above ground; recenter on chunk changes to avoid tunneling.
-
-**J2. Basic pause & resize**
-
-* Handle escape to unlock; on resize, call renderer `setSize` (you already have a helper) and update camera aspect.&#x20;
-
-**Acceptance:** you can look and move; no runaway delta on tab switches; aspect stays correct.
+* UI: show 9 slots; number keys 1–9 switch.
+* Default items: grass, dirt, stone.
+  **Acceptance:** Selected block changes; right‑click places that block.
 
 ---
 
-### Phase K — Interaction (raycast DDA) & block edits
+### Phase J — UI, HUD, Debug
 
-**K1. Voxel DDA**
+**J1. Zustand store**
 
-* Implement DDA exactly as specced in the plan (use `worldToChunk`/`localToIndex`—no ad-hoc `%`). Return hit block id and face normal.
+* `/state/ui.ts`: fps, crosshair toggle, selectedSlot, debug toggles, pause state.
+* Engine updates fps into store every 0.5s.
+  **Acceptance:** HUD reads from store; no React ↔ engine cycles.
 
-**K2. Break/place**
+**J2. HUD overlays**
 
-* Left-click: set hit block to AIR; right-click: place held block on the face hit (offset by normal). Apply via `World.setBlock`, then enqueue re-mesh for hit chunk and any affected neighbor if the edit touched an edge.
+* Crosshair (simple CSS), hotbar, minimal debug panel (F3).
+  **Acceptance:** F3 shows player pos, chunk pos, loaded chunk count, tri count, ms/frame.
 
-**Acceptance:** crosshair targets the expected block; break/place updates the mesh within the affected chunk; no desync.
+**J3. Pause menu**
 
----
-
-### Phase L — Polish (still scoped, no sugar)
-
-**L1. Lighting placeholder**
-
-* Flat vertex colors per face (constant ambient term) to give some depth without real lightmaps. Keep `MeshStandardMaterial` or swap to `MeshLambertMaterial` if you prefer cheaper shading; consistent color space with the atlas.
-
-**L2. Debug HUD & toggles**
-
-* Draw tri/vertex counts per visible chunk; flag to flip naive/greedy; show chunk coords under crosshair.
-
-**L3. Performance passes**
-
-* Verify WebGL2 path uses 32-bit indices; if WebGL1, ensure `OES_element_index_uint` is present; otherwise chunk-split fallback (only if you actually hit the limit).
-
-**Acceptance:** terrain feels alive, no visual crawl/bleed, stable FPS in a 13×13×1 ring.
+* ESC toggles pause: stops updating player input but keeps render; show menu with options (noclip, regen world, wireframe).
+  **Acceptance:** Paused state blocks movement; toggles apply.
 
 ---
 
-## Notes on risky spots (so you don’t trip later)
+### Phase K — Persistence
 
-* If you leave `DoubleSide` on, you’ll tank fill-rate and fight lighting as soon as normals exist. Flip it now.&#x20;
-* Don’t keep a shadow copy of chunk size; import the constant everywhere, including the renderer. Your local constant in `ChunkRenderer.ts` is a silent mismatch risk.
-* Your pipeline already fans out `CHUNK_DATA → MESH_CHUNK` and emits `CHUNK_MESH`; finish the last 5% wiring in Engine so chunks actually show up once G1 lands.
+**K1. Save seed & settings**
+
+* `/persist/settings.ts`: save/load to IndexedDB via `idb-keyval`: `seed`, `flags`.
+  **Acceptance:** Refresh keeps seed/flags.
+
+**K2. Save block overrides**
+
+* Sparse format: for each edited block, key by world coord or per‑chunk bucket:
+
+  * `overrides[chunkKey] = Array<{lx,ly,lz,id}>`.
+* Load overrides on chunk ready and merge before meshing.
+  **Acceptance:** Place/edit few blocks; refresh; edits persist.
+
+---
+
+### Phase L — Streaming & Lifecycle
+
+**L1. Chunk streamer**
+
+* Based on player position, compute a **wanted set** of chunk keys in radius `R`.
+* Request gen+mesh for missing; unload far chunks (remove meshes, keep overrides only).
+* Budget requests per frame to avoid spikes.
+  **Acceptance:** As you walk, new terrain streams in; old chunks unload behind you.
+
+**L2. Neighbor‑aware meshing**
+
+* When a chunk arrives, if neighbors exist, mesh with correct seam checks.
+* On neighbor arrival, re‑mesh both to fix seams.
+  **Acceptance:** Seam holes largely disappear moments after neighbors load.
+
+---
+
+### Phase M — Performance & Workers
+
+**M1. Worker pool**
+
+* Fixed pool size (e.g., 2 gen, 2 mesh workers).
+* Round‑robin or queue based on type.
+  **Acceptance:** Under load, UI remains responsive; no long main‑thread stalls.
+
+**M2. Geometry reuse**
+
+* Reuse `BufferGeometry` objects per chunk where possible by updating buffers.
+  **Acceptance:** GC pressure drops (verify via perf overlay).
+
+**M3. Backpressure on edits**
+
+* Debounce multiple edits affecting the same chunk into a single re‑mesh.
+  **Acceptance:** Spamming place/remove doesn’t freeze the app.
+
+---
+
+### Phase N — Visual polish (lightweight)
+
+**N1. Day/Night cycle (visual only)**
+
+* Animate directional light intensity/color and sky color over a 20‑minute loop. No per‑block light.
+  **Acceptance:** Ambient changes over time; toggle in debug.
+
+**N2. Fog**
+
+* Add linear fog matching background to hide far LOD edges.
+  **Acceptance:** Chunks fade into fog; far clipping less jarring.
+
+**N3. Transparent blocks (optional)**
+
+* Add `leaves` as `opaque=false`, `solid=true` (or false if you want to walk through).
+* Render order: keep a separate material for transparent; draw after opaque. (No sorting per face v1.)
+  **Acceptance:** Leaves look okay; minor artifacts acceptable.
+
+---
+
+### Phase O — Optional optimizations
+
+**O1. Greedy meshing toggle**
+
+* Implement greedy merge per face axis for quads of same block/uv.
+  **Acceptance:** Triangle count drops significantly on flat areas.
+
+**O2. Frustum culling per chunk**
+
+* Do a simple AABB vs camera frustum test to skip rendering unseen chunks.
+  **Acceptance:** Perf improves when looking at the sky/ground.
+
+**O3. Simple LOD (optional)**
+
+* Beyond radius R/2, skip top/bottom faces (or use coarser mesh).
+  **Acceptance:** Minor visual change; perf improves on wide views.
+
+---
+
+## Critical Algorithms (minimal pseudocode — safe to hand the agent)
+
+**World ↔ Chunk mapping:**
+
+```
+floorDiv(n,d) = Math.floor(n/d) if n>=0 else -Math.ceil(Math.abs(n)/d)
+euclidMod(n,d) = ((n % d) + d) % d
+
+cx = floorDiv(x, sx)
+lx = euclidMod(x, sx)
+... same for y,z
+```
+
+**Flatten index:**
+
+```
+index(lx,ly,lz) = ly*(sx*sz) + lz*sx + lx
+```
+
+**Face visibility check:**
+
+```
+emitFace if neighborBlock.opaque === false
+```
+
+**Raycast DDA:**
+
+```
+tMaxX/Y/Z = next voxel boundary distances from ray origin
+tDeltaX/Y/Z = distance between boundaries
+stepX/Y/Z = sign(dir)
+loop steps up to maxDistance:
+  choose axis with smallest tMax*
+  advance that axis by 1 voxel and tMax* += tDelta*
+  if voxel is solid -> hit
+```
+
+---
+
+## Guardrails for the Agent (so it doesn’t drift)
+
+* **Never import React inside `/engine`**.
+* **Never reference Three.js from workers** (workers are headless).
+* **All chunk math uses the shared helpers** (no ad‑hoc `%`).
+* **Block ID 0 is AIR forever**.
+* **All public functions documented with Inputs/Outputs/Side‑effects**.
+* **Every new module gets a 3‑line header: purpose, callers, invariants**.
+* **Add a tiny test** when you add math/coords utils (keeps the floorDiv truth intact).
+
+---
+
+## Concrete Prompts (copy/paste to your coding agent)
+
+Below are granular “do this, then stop” tasks with deliverables & checks. They map to the phases above. Use them one by one.
+
+### Bootstrapping
+
+1. **Task A1**: Initialize Vite React TS project, install deps (`three`, `zustand`, `simplex-noise`, `idb-keyval`, `vitest`, `@types/…`). Add ESLint + Prettier.
+   **Deliverables**: working dev server; scripts: `dev`, `build`, `preview`, `test`, `typecheck`.
+   **Check**: run all scripts; no TS errors.
+
+2. **Task A2**: Create folder structure exactly as listed. Add `constants.ts` with `CHUNK_SIZE={16,64,16}`, `PLAYER={height:1.8,width:0.6,speed:{walk:4,sprint:6},jump:8,gravity:-24}`; `flags.ts` as in §12.
+   **Check**: import constants in a dummy file; `tsc` passes.
+
+3. **Task A3**: Implement `CanvasHost` and engine bootstrap stub (`Engine.start/stop`). Canvas fills viewport; resize on window resize.
+   **Check**: console logs `Engine tick dt=…`.
+
+### Rendering
+
+4. **Task B1**: Implement `/engine/render/Renderer.ts` wrapper around `THREE.WebGLRenderer` using the provided canvas. Add `setSize` and `render(scene,camera)`.
+   **Check**: background clears each frame.
+
+5. **Task B2**: Add `SceneBuilder` with ambient + directional light; `createCamera` (fov 70). Wire into engine; render loop draws the scene.
+   **Check**: no content yet, but running.
+
+6. **Task B3**: Implement `Atlas` with stubbed 1×1 texture; export `loadAtlas()` returning `texture` and atlas metadata.
+   **Check**: material can be created from the texture without errors.
+
+### Math & World Core
+
+7. **Task C1**: Implement `coords.ts` with `floorDiv`, `euclidMod`, `worldToChunk`, `chunkKey`. Add Vitest covering negative coords.
+   **Check**: tests pass.
+
+8. **Task D1**: Implement `BlockRegistry` with four blocks (`air`, `grass`, `dirt`, `stone`). Invariants: `air.id===0`, `air.opaque=false`, `air.solid=false`.
+   **Check**: unit tests for registry lookup.
+
+9. **Task D2**: Implement `Chunk` with `voxels: Uint8Array` and `get/set`. Include flatten index helpers.
+   **Check**: set/get edges work.
+
+10. **Task D3**: Implement `World` manager (`Map<ChunkKey, Chunk>`) with events `CHUNK_ADDED`, `BLOCK_CHANGED`.
+    **Check**: event fires on set across chunk boundaries.
+
+### Workers & Pipeline
+
+11. **Task E1**: Add `/types/workers.ts` message types and guards.
+    **Check**: compile ok.
+
+12. **Task E2**: Add `generator.worker.ts` that creates empty `ChunkData` filled with AIR. Wire `ChunkPipeline` to request gen for `{0,0,0}` on boot.
+    **Check**: logs “chunk ready” for origin.
+
+13. **Task E3**: Add `mesher.worker.ts` skeleton returning empty mesh buffers. Add `ChunkRenderer` to listen for `CHUNK_MESH` and insert a placeholder `Mesh` (e.g., a simple BoxGeometry at origin just to validate plumbing).
+    **Check**: box visible; then remove the placeholder.
+
+### Real Terrain & Meshing
+
+14. **Task F1**: In generator worker, seed `simplex-noise`, implement heightmap fill for voxels in chunk world coords.
+    **Check**: read back a few sample y to ensure layering.
+
+15. **Task G1**: Implement naive meshing with face culling. Build typed arrays for positions/normals/uvs/indices. Transfer buffers.
+    **Check**: terrain renders as cubes; fps > 60 on a few chunks.
+
+16. **Task G2**: Replace stub atlas with your real `/assets/textures/atlas.png` + `/atlas.json`. Apply nearest filters; compute UVs from tile coordinates.
+    **Check**: grass/dirt/stone textures appear correctly per face.
+
+### Player & Physics
+
+17. **Task H1**: Implement pointer lock and mouse look; yaw/pitch stored in engine; clamp pitch.
+    **Check**: free look works.
+
+18. **Task H2**: Implement WASD movement with delta time; temporary floor at y=0.
+    **Check**: moves consistently regardless of fps.
+
+19. **Task H3**: Implement AABB collisions against solid blocks using axis‑separated sweep.
+    **Check**: stand on terrain, slide on walls.
+
+20. **Task H4**: Implement jump (grounded check).
+    **Check**: jump height roughly consistent.
+
+### Interaction & UI
+
+21. **Task I1**: Implement voxel DDA raycast to select target block and adjacent placement cell.
+    **Check**: draw wireframe on target cell (debug material).
+
+22. **Task I2**: Left click remove, right click place selected block; schedule re‑mesh for affected chunks (current + neighbor if face on boundary).
+    **Check**: edits reflect immediately; seams correct.
+
+23. **Task I3**: Implement Zustand UI store; HUD with crosshair, hotbar, debug F3 overlay.
+    **Check**: 9‑slot hotbar; number keys switch selection.
+
+### Persistence & Streaming
+
+24. **Task K1**: Save/load `seed` and UI settings via IndexedDB.
+    **Check**: refresh keeps seed.
+
+25. **Task K2**: Implement per‑chunk overrides save/load; merge overrides into `ChunkData` when chunk becomes ready (before meshing).
+    **Check**: edits persist across refresh.
+
+26. **Task L1**: Implement chunk streamer: compute wanted set around player; enqueue gen/mesh; unload far chunks (remove mesh; keep overrides).
+    **Check**: walking streams terrain; resource usage stable.
+
+27. **Task L2**: Neighbor‑aware re‑meshing when new neighbor arrives on any side.
+    **Check**: seam holes vanish after neighbor mesh.
+
+### Perf & Polish
+
+28. **Task M1**: Worker pool for generator/mesher; cap concurrency; simple FIFO queues.
+    **Check**: main thread never spikes > 16ms in typical movement.
+
+29. **Task M2**: Reuse geometries; update attribute arrays instead of reallocating.
+    **Check**: GC pauses reduced per perf panel.
+
+30. **Task N1**: Day/night: animate directional light & background; toggle via UI.
+    **Check**: cycle visible; toggle works.
+
+31. **Task N2**: Add fog matching background; set far plane appropriately.
+    **Check**: distant chunks fade.
+
+32. **Task O1 (optional)**: Greedy meshing behind a flag; verify visually + tri count.
+    **Check**: triangles reduced; no UV seams.
+
+33. **Task O2 (optional)**: Frustum culling per chunk AABB.
+    **Check**: perf improves when looking away from dense terrain.
+
+---
+
+## Common Pitfalls (call these out to the agent)
+
+* **Negative coords**: always use `euclidMod` for local indices; `%` alone is wrong for negatives.
+* **Raycast off‑by‑ones**: return both `hitCell` and `placeCell`. Place into `placeCell`, not `hitCell`.
+* **Chunk seam visibility**: treat missing neighbors as unknown → either wait or re‑mesh when neighbor arrives.
+* **UV bleeding**: add 0.5‑pixel inset when computing UVs from atlas to avoid sampling edges when minifying.
+* **Physics tunneling**: with high fps it’s fine; if sprinting causes tunneling, clamp per‑frame max delta or use substeps (2 per frame).
+
+---
+
+## Minimal Block Set (atlas tiles)
+
+* `air` (reserved id 0)
+* `grass` (top, bottom=dirt, sides=grass\_side)
+* `dirt` (all)
+* `stone` (all)
+* Optional later: `sand`, `log` (top/bottom bark\_cross, sides bark), `leaves` (transparent).
+
+---
+
+## Definition of Done (v1)
+
+* Move, look, jump with solid collisions.
+* Place/remove blocks with immediate visual update.
+* Terrain streams within a radius; seams heal when neighbors arrive.
+* Texture atlas, pixelated filtering.
+* Save/load seed & edits.
+* UI: crosshair, hotbar, F3 debug.
+* Smooth 60fps on a modest laptop at radius \~6.
+
+---
