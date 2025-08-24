@@ -56,7 +56,7 @@ function start(canvas: HTMLCanvasElement) {
   const atlasTexture = loadAtlas();
   const material = new THREE.MeshStandardMaterial({ 
     map: atlasTexture,
-    side: THREE.DoubleSide // For now, to see faces from both sides
+    side: THREE.FrontSide // Use front-face culling for proper performance
   });
   
   chunkRenderer = new ChunkRenderer(scene, material);

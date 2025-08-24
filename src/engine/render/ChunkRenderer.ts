@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { EventEmitter } from '../utils/EventEmitter.js';
 import type { ChunkKey, ChunkMeshResponse } from '../../types/workers.js';
+import { CHUNK_SIZE } from '../../config/constants.js';
 
 export interface ChunkRendererEvents extends Record<string, unknown> {
   MESH_CREATED: { key: ChunkKey; mesh: THREE.Mesh };
@@ -60,7 +61,6 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     
     // Position mesh at chunk world coordinates
     // Each chunk is CHUNK_SIZE units in size
-    const CHUNK_SIZE = { x: 16, y: 64, z: 16 }; // TODO: Import from constants
     mesh.position.set(
       cx * CHUNK_SIZE.x,
       cy * CHUNK_SIZE.y,
