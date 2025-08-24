@@ -1,11 +1,13 @@
 {
   "tileSize": 16,
-  "atlasSize": 5,
+  "atlasSize": 8,
   "tiles": {
     "grass_top": [0, 0],
     "dirt": [1, 0],
     "grass_side": [2, 0],
-    "stone": [3, 0],
-    "air": [4, 0]
+    "cobblestone": [3, 0],
+    "sand": [4, 0],
+    "water": [5, 0],
+    "air": [7, 0]
   }
 }

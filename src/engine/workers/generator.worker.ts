@@ -20,6 +20,7 @@ const NOISE_SCALE = 0.01; // Lower values = smoother terrain
 const BASE_HEIGHT = 32;    // Base terrain height
 const AMPLITUDE = 16;      // Height variation
 const BEDROCK_LEVEL = 3;   // Stone below this level
+const WATER_LEVEL = 26;    // Global water table for shallow lakes
 
 // Height calculation function (duplicated in TerrainGenerator.ts for main thread use)
 function getHeightAtPosition(x: number, z: number, noise2D: (x: number, z: number) => number): number {
@@ -79,6 +80,8 @@ function generateTerrain(
   const GRASS = 1;
   const DIRT = 2;
   const STONE = 3;
+  const SAND = 4;
+  const WATER = 5;
   
   // Process each column in the chunk
   for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
@@ -87,7 +90,7 @@ function generateTerrain(
       const worldX = cx * CHUNK_SIZE.x + lx;
       const worldZ = cz * CHUNK_SIZE.z + lz;
       
-      // Generate height using noise
+      // Generate terrain height using noise
       const height = getHeightAtPosition(worldX, worldZ, noise2D);
       
       // Fill column from bottom up
@@ -95,19 +98,27 @@ function generateTerrain(
         const worldY = cy * CHUNK_SIZE.y + ly;
         const index = localToIndex(lx, ly, lz);
         
+        // Natural layering rules
+        // 1) Ground: stone deep, then 2 layers of dirt (or sand if near water), then grass/sand surface
+        // 2) Water: flat, 1-block surface at WATER_LEVEL wherever the ground height is below water level
         if (worldY <= height) {
-          // Below surface - determine block type
+          // Solid ground
           if (worldY < BEDROCK_LEVEL) {
-            voxels[index] = STONE; // Bedrock area
+            voxels[index] = STONE;
           } else if (worldY === height) {
-            voxels[index] = GRASS; // Surface
+            // Surface block
+            voxels[index] = (height <= WATER_LEVEL + 1) ? SAND : GRASS;
           } else if (worldY > height - 3) {
-            voxels[index] = DIRT; // 3 layers of dirt below surface
+            // Sub-surface layer (two blocks)
+            voxels[index] = (height <= WATER_LEVEL + 1) ? SAND : DIRT;
           } else {
-            voxels[index] = STONE; // Deep stone
+            voxels[index] = STONE;
           }
+        } else if (worldY === WATER_LEVEL && height < WATER_LEVEL) {
+          // Flat water surface at global water level (no depth fill)
+          voxels[index] = WATER;
         } else {
-          voxels[index] = AIR; // Above surface
+          voxels[index] = AIR;
         }
       }
     }

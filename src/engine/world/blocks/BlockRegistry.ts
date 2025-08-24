@@ -50,7 +50,21 @@ export class BlockRegistry {
         name: 'stone',
         opaque: true,
         solid: true,
-        faces: { all: 'stone' }
+        faces: { all: 'cobblestone' }
+      },
+      {
+        id: 4,
+        name: 'sand',
+        opaque: true,
+        solid: true,
+        faces: { all: 'sand' }
+      },
+      {
+        id: 5,
+        name: 'water',
+        opaque: false,
+        solid: false,
+        faces: { all: 'water' }
       }
     ];
 

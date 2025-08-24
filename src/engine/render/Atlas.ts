@@ -102,7 +102,7 @@ function createSimpleAtlas(): THREE.Texture {
 async function loadTextureAtlas(): Promise<THREE.Texture> {
   const textureLoader = new THREE.TextureLoader();
   const tileSize = 16;
-  const atlasWidth = 5; // 5 tiles wide for the current blocks
+  const atlasWidth = 8; // 8 tiles wide for current blocks
   const atlasHeight = 1; // 1 tile tall
 
   const canvas = document.createElement('canvas');
@@ -118,18 +118,16 @@ async function loadTextureAtlas(): Promise<THREE.Texture> {
     'grass_top': [0, 0],
     'dirt': [1, 0],
     'grass_side': [2, 0],
-    'stone': [3, 0]
-  };
+    'cobblestone': [3, 0],
+    'sand': [4, 0],
+    'water': [5, 0]
+  } as const;
 
   // Load and draw each texture - grass_top and grass_side from textures directory, others from material_icons
   const loadPromises = Object.entries(texturePositions).map(async ([textureName, [x, y]]) => {
     try {
       let texturePath = '';
-      if (textureName === 'grass_top' || textureName === 'grass_side') {
-        texturePath = `/src/assets/textures/${textureName}.png`;
-      } else {
-        texturePath = `/src/assets/material_icons/${textureName}.png`;
-      }
+      texturePath = `/src/assets/textures/${textureName}.png`;
 
       const texture = await new Promise<THREE.Texture>((resolve, reject) => {
         textureLoader.load(
@@ -203,8 +201,10 @@ export async function loadFullAtlas(): Promise<Atlas> {
         'grass_top': [0, 0],
         'dirt': [1, 0],
         'grass_side': [2, 0],
-        'stone': [3, 0],
-        'air': [4, 0]
+        'cobblestone': [3, 0],
+        'sand': [4, 0],
+        'water': [5, 0],
+        'air': [7, 0]
       }
     };
 

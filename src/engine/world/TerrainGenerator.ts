@@ -10,6 +10,7 @@ import { createNoise2D } from 'simplex-noise';
 const NOISE_SCALE = 0.01; // Lower values = smoother terrain
 const BASE_HEIGHT = 32;    // Base terrain height
 const AMPLITUDE = 16;      // Height variation
+export const WATER_LEVEL = 26; // keep in sync with generator.worker.ts
 
 /**
  * Get terrain height at a specific world position
