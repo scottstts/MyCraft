@@ -12,6 +12,7 @@ export class InputSystem {
   private camera: THREE.PerspectiveCamera;
   private isPointerLocked: boolean = false;
   private readonly mouseSensitivity: number = 0.002;
+  private onPointerLockChangedCallback: ((locked: boolean) => void) | null = null;
 
   // Yaw (rotate around Y axis) and Pitch (rotate around X axis) in radians
   private yawRadians: number = 0;
@@ -94,6 +95,7 @@ export class InputSystem {
 
   private onPointerLockChange(): void {
     this.isPointerLocked = document.pointerLockElement === this.canvas;
+    if (this.onPointerLockChangedCallback) this.onPointerLockChangedCallback(this.isPointerLocked);
   }
 
   private onMouseMove(e: MouseEvent): void {
@@ -104,6 +106,25 @@ export class InputSystem {
 
     this.yawRadians -= deltaX * this.mouseSensitivity;
     this.pitchRadians -= deltaY * this.mouseSensitivity;
+  }
+
+  /** External: set callback for pointer lock changes */
+  onPointerLockChanged(cb: (locked: boolean) => void): void {
+    this.onPointerLockChangedCallback = cb;
+  }
+
+  /** External: request pointer lock on the game canvas */
+  requestPointerLock(): void {
+    if (this.canvas && document.pointerLockElement !== this.canvas) {
+      this.canvas.requestPointerLock?.();
+    }
+  }
+
+  /** External: release pointer lock */
+  exitPointerLock(): void {
+    if (document.exitPointerLock) {
+      try { document.exitPointerLock(); } catch { /* ignore */ }
+    }
   }
 
   private onMouseDown(e: MouseEvent): void {

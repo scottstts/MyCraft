@@ -23,6 +23,10 @@ export interface UIState {
   paused: boolean;
   setPaused: (paused: boolean) => void;
 
+  // Whether the user is in the game control mode (focus owned by game)
+  inGame: boolean;
+  setInGame: (inGame: boolean) => void;
+
   // Restart signal: incrementing token triggers restart side-effect in host
   restartToken: number;
   bumpRestartToken: () => void;
@@ -50,6 +54,8 @@ export const useUIStore = create<UIState>((set) => ({
   setFps: (fps: number) => set({ fps }),
   paused: false,
   setPaused: (paused: boolean) => set({ paused }),
+  inGame: false,
+  setInGame: (inGame: boolean) => set({ inGame }),
   restartToken: 0,
   bumpRestartToken: () => set((s) => ({ restartToken: s.restartToken + 1 })),
 }));

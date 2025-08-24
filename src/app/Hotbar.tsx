@@ -68,22 +68,33 @@ export function FpsOverlay() {
   )
 }
 
+export function PauseHint() {
+  return (
+    <div style={{ position: 'absolute', left: 12, top: 12, color: '#cfe9ef', fontFamily: 'monospace', fontSize: 12, padding: '6px 8px', background: 'rgba(0,0,0,0.35)', borderRadius: 6, pointerEvents: 'none' }}>
+      Press P to pause
+    </div>
+  )
+}
+
 export function PauseMenu() {
   const paused = useUIStore(s => s.paused)
   const setPaused = useUIStore(s => s.setPaused)
   const bumpRestartToken = useUIStore(s => s.bumpRestartToken)
+  const inGame = useUIStore(s => s.inGame)
   if (!paused) return null
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(2px)' }}>
       <div style={{ minWidth: 360, padding: 20, background: 'linear-gradient(180deg, rgba(28,31,36,0.98), rgba(18,20,23,0.98))', borderRadius: 10, color: '#eaeaea', boxShadow: '0 12px 36px rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.06)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 0.5 }}>Paused</div>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>Press P to toggle pause</div>
         </div>
         <div style={{ display: 'flex', gap: 12 }}>
           <button onClick={() => setPaused(false)} style={{ flex: 1, padding: '10px 14px', background: 'linear-gradient(180deg,#2ea043,#1f6f2e)', color: '#fff', border: '1px solid #1d5b28', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>Resume</button>
           <button onClick={() => { bumpRestartToken(); setPaused(false) }} style={{ flex: 1, padding: '10px 14px', background: 'linear-gradient(180deg,#3a7bd5,#2a5298)', color: '#fff', border: '1px solid #243f7a', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>Restart</button>
         </div>
+        {!inGame && (
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>Click the canvas to enter the game.</div>
+        )}
       </div>
     </div>
   )

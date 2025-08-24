@@ -22,6 +22,7 @@ async function loadEngine(): Promise<EngineApi> {
 export function CanvasHost() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const setPaused = useUIStore(s => s.setPaused)
+  const setInGame = useUIStore(s => s.setInGame)
   const restartToken = useUIStore(s => s.restartToken)
 
   useEffect(() => {
@@ -34,6 +35,8 @@ export function CanvasHost() {
       if (!canvas || !mounted) return
       engineApi = await loadEngine()
       await engineApi.start(canvas)
+      // After engine starts, initial state is out-of-game until pointer lock
+      setInGame(false)
 
       const onResize = () => {
         // Renderer handles canvas sizing via renderer.onResize()

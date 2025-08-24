@@ -37,17 +37,34 @@ let interactionSystem: InteractionSystem | null = null;
 let lastFrameNow: number = 0;
 let fpsCounterFrames: number = 0;
 let fpsLastReportNow: number = 0;
+let lastPaused: boolean = false;
 
 function update(dtSeconds: number) {
   // Always allow pause toggle to be consumed
   if (inputSystem && inputSystem.consumePauseToggle?.()) {
-    const pausedNow = useUIStore.getState().paused;
-    useUIStore.getState().setPaused(!pausedNow);
+    const ui = useUIStore.getState();
+    const nextPaused = !ui.paused;
+    // Only allow pause toggle when inGame
+    if (ui.inGame) {
+      ui.setPaused(nextPaused);
+      if (nextPaused) {
+        // Pausing: keep inGame true but release pointer lock so user can click menu
+        inputSystem.exitPointerLock?.();
+      } else {
+        // Resuming: request pointer lock again for gameplay
+        inputSystem.requestPointerLock?.();
+      }
+    }
   }
 
   // Gate updates on paused state; keep rendering the scene for visual continuity
-  const paused = useUIStore.getState().paused;
-  if (!paused) {
+  const { paused, inGame } = useUIStore.getState();
+
+  // Detect resume edge: paused -> running, and we are inGame; reacquire pointer lock
+  if (lastPaused && !paused && inGame) {
+    inputSystem?.requestPointerLock?.();
+  }
+  if (inGame && !paused) {
     if (inputSystem) {
       inputSystem.update();
     }
@@ -73,6 +90,8 @@ function update(dtSeconds: number) {
   if (renderer && scene && camera) {
     renderer.render(scene, camera);
   }
+  // Remember paused state for next frame
+  lastPaused = paused;
 }
 
 function tick(now: number) {
@@ -129,6 +148,17 @@ async function start(canvas: HTMLCanvasElement) {
 
   // Input system (pointer lock + mouse look)
   inputSystem = new InputSystem(canvas, camera);
+  // Track pointer lock -> set inGame accordingly
+  inputSystem.onPointerLockChanged((locked: boolean) => {
+    const ui = useUIStore.getState();
+    if (locked) {
+      ui.setInGame(true);
+    } else {
+      // If pointer lock was released by browser (e.g., Esc), leave inGame only if not paused
+      if (!ui.paused) ui.setInGame(false);
+      // If paused, remain inGame so UI can handle clicks
+    }
+  });
 
   // Player controller (movement + gravity + collisions)
   playerController = new PlayerController(camera, world, inputSystem);
@@ -172,6 +202,7 @@ async function start(canvas: HTMLCanvasElement) {
   window.addEventListener('resize', handleResize);
   
   running = true;
+  lastPaused = useUIStore.getState().paused;
   lastFrameNow = performance.now();
   fpsCounterFrames = 0;
   fpsLastReportNow = 0;
@@ -180,6 +211,7 @@ async function start(canvas: HTMLCanvasElement) {
 
 function stop() {
   running = false;
+  lastPaused = false;
   if (rafId !== null) {
     cancelAnimationFrame(rafId);
     rafId = null;
