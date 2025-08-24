@@ -191,12 +191,13 @@ async function start(canvas: HTMLCanvasElement) {
   );
 
   // Configure post-processing for minecraft-style visuals
+  console.log('[Engine] Configuring post-processing settings');
   postProcessor.updateSettings({
     ssaoEnabled: true,
     ssaoIntensity: 0.3,
     ssaoRadius: 0.01,
     bloomEnabled: true,
-    bloomStrength: 0.2,
+    bloomStrength: 0.4,
     exposure: 0.9,
     contrast: 1.05,
     saturation: 1.0
@@ -205,9 +206,10 @@ async function start(canvas: HTMLCanvasElement) {
   // Initialize shadow system (temporarily disabled to avoid WebGL feedback loops)
   shadowSystem = new ShadowSystem(renderer.getRenderer(), scene);
   
-  // Configure shadows for optimal minecraft-style visuals (start disabled)
+  // Configure shadows for optimal minecraft-style visuals
+  console.log('[Engine] Configuring shadow settings');
   shadowSystem.updateSettings({
-    enabled: false, // Temporarily disabled
+    enabled: true, // Enable shadows by default
     resolution: 1024,
     cascades: 3,
     shadowDistance: 100,
@@ -367,21 +369,34 @@ function stop() {
 
 // Global function for UI to update post-processing settings
 function updatePostProcessingSettings(settings: any) {
+  console.log('[Engine] Received post-processing settings:', settings);
   if (postProcessor) {
     postProcessor.updateSettings(settings);
+    console.log('[Engine] Applied post-processing settings successfully');
+  } else {
+    console.error('[Engine] Post-processor not available!');
   }
 }
 
 // Global function for UI to update shadow settings
 function updateShadowSettings(settings: any) {
+  console.log('[Engine] Received shadow settings:', settings);
   if (shadowSystem) {
     shadowSystem.updateSettings(settings);
+    console.log('[Engine] Applied shadow settings successfully');
+  } else {
+    console.error('[Engine] Shadow system not available!');
   }
 }
 
 // Expose to global scope for UI communication
 (window as any).updatePostProcessingSettings = updatePostProcessingSettings;
 (window as any).updateShadowSettings = updateShadowSettings;
+
+console.log('[Engine] Global functions exposed to window:', {
+  updatePostProcessingSettings: !!(window as any).updatePostProcessingSettings,
+  updateShadowSettings: !!(window as any).updateShadowSettings
+});
 
 export const engine = { start, stop };
 export type Engine = typeof engine;

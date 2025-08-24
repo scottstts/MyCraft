@@ -114,13 +114,8 @@ export class ShadowSystem {
   }
 
   private updateShadowLightPosition(): void {
-    // Simulate sun movement (can be made dynamic later)
-    const sunAngle = Date.now() * 0.0001; // Slow rotation for testing
-    this.shadowLight.position.set(
-      Math.cos(sunAngle) * 100,
-      120,
-      Math.sin(sunAngle) * 100
-    );
+    // Static sun position for consistent shadows
+    this.shadowLight.position.set(50, 120, 50);
 
     // Update shadow light target
     this.shadowLight.target.position.set(0, 0, 0);
@@ -260,11 +255,19 @@ export class ShadowSystem {
   updateSettings(newSettings: Partial<ShadowSettings>): void {
     const oldResolution = this.settings.resolution;
     const oldCascades = this.settings.cascades;
+    const oldSettings = { ...this.settings };
     
     this.settings = { ...this.settings, ...newSettings };
+    
+    console.log('[ShadowSystem] Updating settings:', {
+      old: oldSettings,
+      new: this.settings,
+      changes: newSettings
+    });
 
     // Reinitialize if resolution or cascade count changed
     if (oldResolution !== this.settings.resolution || oldCascades !== this.settings.cascades) {
+      console.log('[ShadowSystem] Reinitializing cascades due to resolution/cascade change');
       this.dispose();
       this.initializeCascades();
     }
@@ -272,6 +275,10 @@ export class ShadowSystem {
     // Update shadow light properties
     this.shadowLight.shadow.mapSize.setScalar(this.settings.resolution);
     this.shadowLight.shadow.camera.far = this.settings.shadowDistance;
+    
+    // Enable/disable shadow mapping
+    this.renderer.shadowMap.enabled = this.settings.enabled;
+    console.log('[ShadowSystem] Shadow mapping enabled:', this.settings.enabled);
   }
 
   /**

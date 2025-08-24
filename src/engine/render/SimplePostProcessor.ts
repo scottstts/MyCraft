@@ -31,7 +31,7 @@ export class SimplePostProcessor {
     ssaoIntensity: 0.3,
     ssaoRadius: 0.01,
     bloomEnabled: true,
-    bloomStrength: 0.2,
+    bloomStrength: 0.4,
     exposure: 0.9,
     contrast: 1.05,
     saturation: 1.0
@@ -164,32 +164,30 @@ export class SimplePostProcessor {
           return clamp(1.0 - occlusion * 0.5, 0.3, 1.0); // Limit darkening
         }
 
-        // Conservative bloom effect
+        // Working bloom effect
         vec3 bloom(sampler2D tex, vec2 uv) {
-          if (!bloomEnabled) return texture2D(tex, uv).rgb;
-          
           vec3 color = texture2D(tex, uv).rgb;
-          
-          // Only bloom very bright pixels to avoid edge artifacts
-          float brightness = dot(color, vec3(0.299, 0.587, 0.114));
-          if (brightness < 0.8) {
-            return color; // No bloom for dim areas
-          }
+          if (!bloomEnabled) return color;
           
           vec3 bloomColor = vec3(0.0);
-          float blur = 1.5 / min(resolution.x, resolution.y);
+          float blur = 2.0 / min(resolution.x, resolution.y);
           
-          // Simple 4-tap blur
+          // Gather neighboring pixels for blur
           bloomColor += texture2D(tex, uv + vec2(blur, 0.0)).rgb;
           bloomColor += texture2D(tex, uv + vec2(-blur, 0.0)).rgb;
           bloomColor += texture2D(tex, uv + vec2(0.0, blur)).rgb;
           bloomColor += texture2D(tex, uv + vec2(0.0, -blur)).rgb;
-          bloomColor /= 4.0;
+          bloomColor += texture2D(tex, uv + vec2(blur, blur)).rgb;
+          bloomColor += texture2D(tex, uv + vec2(-blur, blur)).rgb;
+          bloomColor += texture2D(tex, uv + vec2(blur, -blur)).rgb;
+          bloomColor += texture2D(tex, uv + vec2(-blur, -blur)).rgb;
+          bloomColor /= 8.0;
           
-          // Only add bloom to bright areas
-          float bloomBrightness = dot(bloomColor, vec3(0.299, 0.587, 0.114));
-          if (bloomBrightness > 0.7) {
-            return color + bloomColor * bloomStrength;
+          // Apply bloom to bright areas (much lower threshold)
+          float brightness = dot(color, vec3(0.299, 0.587, 0.114));
+          if (brightness > 0.4) {
+            float bloomFactor = (brightness - 0.4) / 0.6; // Smooth ramp from 0.4 to 1.0
+            return color + bloomColor * bloomStrength * bloomFactor * 2.0;
           }
           
           return color;
@@ -220,10 +218,8 @@ export class SimplePostProcessor {
         void main() {
           vec3 color = texture2D(tDiffuse, vUv).rgb;
           
-          // Apply bloom first
-          if (bloomEnabled) {
-            color = bloom(tDiffuse, vUv);
-          }
+          // Apply bloom (always process, function handles enable/disable)
+          color = bloom(tDiffuse, vUv);
           
           // Apply SSAO with safety checks
           if (ssaoEnabled) {
@@ -259,19 +255,37 @@ export class SimplePostProcessor {
    * Update post-processing settings
    */
   updateSettings(newSettings: Partial<PostProcessorSettings>): void {
+    const oldSettings = { ...this.settings };
     this.settings = { ...this.settings, ...newSettings };
+    
+    console.log('[PostProcessor] Updating settings:', {
+      old: oldSettings,
+      new: this.settings,
+      changes: newSettings
+    });
 
     if (this.quadMaterial) {
       const uniforms = (this.quadMaterial.uniforms as any);
       
-      if (newSettings.ssaoEnabled !== undefined) uniforms.ssaoEnabled.value = newSettings.ssaoEnabled;
+      if (newSettings.ssaoEnabled !== undefined) {
+        uniforms.ssaoEnabled.value = newSettings.ssaoEnabled;
+        console.log('[PostProcessor] SSAO enabled:', newSettings.ssaoEnabled);
+      }
       if (newSettings.ssaoIntensity !== undefined) uniforms.ssaoIntensity.value = newSettings.ssaoIntensity;
       if (newSettings.ssaoRadius !== undefined) uniforms.ssaoRadius.value = newSettings.ssaoRadius;
-      if (newSettings.bloomEnabled !== undefined) uniforms.bloomEnabled.value = newSettings.bloomEnabled;
-      if (newSettings.bloomStrength !== undefined) uniforms.bloomStrength.value = newSettings.bloomStrength;
+      if (newSettings.bloomEnabled !== undefined) {
+        uniforms.bloomEnabled.value = newSettings.bloomEnabled;
+        console.log('[PostProcessor] Bloom enabled:', newSettings.bloomEnabled);
+      }
+      if (newSettings.bloomStrength !== undefined) {
+        uniforms.bloomStrength.value = newSettings.bloomStrength;
+        console.log('[PostProcessor] Bloom strength:', newSettings.bloomStrength);
+      }
       if (newSettings.exposure !== undefined) uniforms.exposure.value = newSettings.exposure;
       if (newSettings.contrast !== undefined) uniforms.contrast.value = newSettings.contrast;
       if (newSettings.saturation !== undefined) uniforms.saturation.value = newSettings.saturation;
+    } else {
+      console.error('[PostProcessor] Quad material not available for uniform updates!');
     }
   }
 
