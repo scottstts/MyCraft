@@ -160,7 +160,16 @@ async function loadTextureAtlas(): Promise<THREE.Texture> {
       });
 
       const img = texture.image as HTMLImageElement;
-      ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize);
+      if (textureName === 'grass_side') {
+        // Rotate grass_side by 180 degrees when drawing into the atlas
+        ctx.save();
+        ctx.translate((x + 0.5) * tileSize, (y + 0.5) * tileSize);
+        ctx.rotate(Math.PI);
+        ctx.drawImage(img, -tileSize / 2, -tileSize / 2, tileSize, tileSize);
+        ctx.restore();
+      } else {
+        ctx.drawImage(img, x * tileSize, y * tileSize, tileSize, tileSize);
+      }
 
       // Dispose the temporary texture
       texture.dispose();
