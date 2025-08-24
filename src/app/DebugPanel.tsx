@@ -36,7 +36,7 @@ export const DebugPanel: React.FC = () => {
     saturation: 1.0,
     shadowEnabled: true, // Enable shadows by default
     shadowResolution: 1024,
-    shadowDistance: 100,
+    shadowDistance: 1000,
     shadowSoftness: 2.5,
     shadowIntensity: 0.6,
   });
@@ -274,7 +274,7 @@ export const DebugPanel: React.FC = () => {
           <input
             type="range"
             min="50"
-            max="200"
+            max="2000"
             step="10"
             value={settings.shadowDistance}
             onChange={(e) => handleSettingChange('shadowDistance', parseFloat(e.target.value))}

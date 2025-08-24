@@ -233,7 +233,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
    * Update uniforms that change over time
    */
   updateUniforms(_camera: THREE.Camera): void {
-    (this.uniforms as any).time.value = (Date.now() - this.startTime) * 0.001;
+    (this.uniforms as any).time.value = (Date.now() - this.startTime);
   }
 
   /**
