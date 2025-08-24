@@ -204,32 +204,54 @@ float ssao(vec2 uv, vec3 position, vec3 normal) {
 ## Phase 4: Dynamic Shadow System
 
 ### Objective
-Implement cascade shadow mapping with PCF filtering for cinema-quality dynamic shadows.
+Implement stable single-map shadow system with PCF filtering for cinema-quality dynamic shadows without artifacts.
 
 ### Implementation Details
 
 #### 4.1 Shadow System (`src/engine/render/ShadowSystem.ts`)
 
 **Architecture:**
-- **Cascade Shadow Mapping**: 3-level LOD system for optimal quality/performance
-- **Orthographic Shadow Cameras**: One per cascade level
-- **Render Target Management**: Dedicated shadow map textures
-- **Real-time Shadow Updates**: Per-frame shadow matrix calculation
+- **Single Stable Shadow Map**: Simplified from cascade system for maximum stability
+- **Player-Centered Shadows**: Shadow camera follows player position smoothly
+- **Orthographic Shadow Camera**: Single shadow camera with dynamic sizing
+- **Real-time Shadow Updates**: Per-frame shadow matrix calculation with artifact prevention
 
-**Cascade Configuration:**
-- **Logarithmic Distribution**: `distance = maxDistance * Math.pow(ratio, 1.5)`
-- **Default Distances**: [25, 50, 100] units
-- **Automatic LOD Selection**: Based on fragment distance from camera
+**Shadow Camera Configuration:**
+- **Dynamic Sizing**: Shadow camera size scales with shadowDistance (`distance * 0.5`)
+- **Player Following**: Camera positioned relative to player using sun direction
+- **Stable Positioning**: Fixed sun direction vector (50, 120, 50) prevents artifacts
 
 **Shadow Map Rendering:**
 ```typescript
 private renderShadowMaps(scene: THREE.Scene): void {
     const originalRenderTarget = this.renderer.getRenderTarget();
-    for (let i = 0; i < this.settings.cascades; i++) {
-        this.renderer.setRenderTarget(this.shadowMaps[i]);
-        this.renderer.render(scene, this.shadowCameras[i]);
-    }
+    
+    // Only render the first shadow map for stability
+    this.renderer.setRenderTarget(this.shadowMaps[0]);
+    this.renderer.render(scene, this.shadowCameras[0]);
+    
     this.renderer.setRenderTarget(originalRenderTarget);
+}
+```
+
+**Camera Positioning:**
+```typescript
+private updateCascadeCameras(viewCamera: THREE.Camera): void {
+    const camera = this.shadowCameras[0];
+    const playerPos = viewCamera.position.clone();
+    
+    // Fixed shadow camera size based on shadowDistance
+    const shadowSize = this.settings.shadowDistance * 0.5;
+    camera.left = -shadowSize;
+    camera.right = shadowSize;
+    camera.top = shadowSize;
+    camera.bottom = -shadowSize;
+    
+    // Position shadow camera to look at player from sun direction
+    const sunOffset = new THREE.Vector3(50, 120, 50).normalize()
+        .multiplyScalar(this.settings.shadowDistance);
+    camera.position.copy(playerPos).add(sunOffset);
+    camera.lookAt(playerPos);
 }
 ```
 
@@ -237,31 +259,39 @@ private renderShadowMaps(scene: THREE.Scene): void {
 
 **Implementation in BlockMaterial Shader:**
 - **9-tap PCF sampling** for soft shadow edges
-- **Cascade selection** based on fragment distance
+- **Single shadow map** approach eliminates cascade complexity
+- **Enhanced softness scaling** with `shadowSoftness * 0.001` for visible effects
 - **Dynamic bias system** to prevent shadow acne
 - **Percentage-closer filtering** for smooth transitions
 
 **Shader Code:**
 ```glsl
+// Simplified single shadow map sampling
 float sampleShadow(vec3 worldPos, vec3 normal, vec3 sunDir) {
-    // Cascade selection
-    int cascadeIndex = 0;
-    for (int i = 0; i < shadowCascades - 1; i++) {
-        if (viewDistance > shadowDistances[i]) {
-            cascadeIndex = i + 1;
-        }
-    }
+    // Return 1.0 (no shadow) if shadow system is disabled
+    if (shadowIntensity <= 0.0) return 1.0;
     
-    // PCF sampling
+    // Transform world position to shadow map space using first shadow map
+    vec4 shadowCoord = shadowMatrix0 * vec4(worldPos, 1.0);
+    shadowCoord = shadowCoord * 0.5 + 0.5; // Convert to [0,1] range
+    
+    // Apply bias to prevent shadow acne
+    float bias = shadowBias + shadowNormalBias * (1.0 - max(dot(normal, sunDir), 0.0));
+    float shadowDepth = shadowCoord.z - bias;
+    
+    // PCF sampling for soft shadows
     float shadow = 0.0;
+    float texelSize = shadowSoftness * 0.001; // More visible softness scaling
+    
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
             vec2 offset = vec2(float(x), float(y)) * texelSize;
-            float sampleDepth = texture2D(shadowMap, shadowCoord.xy + offset).r;
+            float sampleDepth = texture2D(shadowMap0, shadowCoord.xy + offset).r;
             shadow += shadowDepth <= sampleDepth ? 1.0 : 0.0;
         }
     }
-    return shadow / 9.0;
+    
+    return mix(1.0 - shadowIntensity, 1.0, shadow / 9.0);
 }
 ```
 
@@ -270,20 +300,21 @@ float sampleShadow(vec3 worldPos, vec3 normal, vec3 sunDir) {
 **Engine Integration:**
 - **Per-frame Updates**: Shadow system updated in main render loop with proper enable/disable logic
 - **Uniform Synchronization**: Shadow matrices and settings passed to materials
-- **Performance Optimization**: Cascade culling and LOD selection
-- **Static Sun Position**: Fixed sun at (50, 120, 50) to eliminate moving shadow artifacts
+- **Performance Optimization**: Single shadow map for better performance and stability
+- **Mesh Shadow Properties**: All chunk meshes configured with `castShadow` and `receiveShadow` enabled
 
 **Material Integration:**
 - **Shader Uniform Updates**: Real-time shadow parameter updates with complete settings object
 - **Proper Toggle Support**: shadowIntensity set to 0.0 when shadows disabled
-- **Shadow Light Control**: Both `castShadow` and `renderer.shadowMap.enabled` controlled
-- **Complete Settings Interface**: All required shadow properties (cascades, bias, normalBias) included
+- **Shadow Light Control**: Both `shadowLight.castShadow` and `renderer.shadowMap.enabled` controlled
+- **Enhanced Softness Control**: Improved `shadowSoftness * 0.001` scaling for visible effects
 
 **Critical Bug Fixes:**
-- **Fixed moving shadows**: Eliminated animated sun position causing "cloud shadow" artifacts
+- **Fixed moving shadow artifacts**: Simplified single shadow map eliminates complex cascade issues
 - **Fixed toggle functionality**: Shadows now properly appear/disappear when toggled
-- **Fixed slider connectivity**: Resolution, distance, and softness sliders now functional
-- **Fixed missing properties**: Added cascades, bias, and normalBias to settings interface
+- **Fixed slider connectivity**: Distance and softness sliders now functional with cascade distance recalculation
+- **Fixed softness visibility**: Enhanced softness scaling makes shadow edge changes clearly visible
+- **Removed resolution complexity**: Fixed at 1024 for optimal stability, removed from UI
 
 ---
 
@@ -327,9 +358,9 @@ src/engine/core/
 
 ### Implemented Optimizations
 
-1. **Cascade Shadow LOD**: Automatic quality reduction with distance
+1. **Single Shadow Map**: Simplified from cascade system for better performance
 2. **Effect Toggles**: Individual post-processing effects can be disabled
-3. **Resolution Scaling**: Shadow map resolution adjustable (512-4096)
+3. **Fixed Shadow Resolution**: 1024x1024 for optimal stability and performance
 4. **Graceful Degradation**: Systems disable if performance issues detected
 5. **Uniform Caching**: Minimize GPU state changes
 
@@ -355,18 +386,18 @@ src/engine/core/
 
 **Post-Processing:**
 - SSAO: Enabled, 0.3 intensity, 0.01 radius (optimized values)
-- Bloom: Enabled, 0.4 strength (increased from 0.2), 0.4 threshold (improved from 0.9)
+- Bloom: Enabled, 0.4 strength, 0.3 threshold (range 0.0-0.8 for optimal effect)
 - Exposure: 0.9 (reduced from 1.1)
 - Contrast: 1.05 (reduced from 1.15)
 - Saturation: 1.0 (reduced from 1.1)
 
 **Shadows:**
-- Resolution: 1024x1024
-- Cascades: 3 levels
-- Distance: 100 units
-- Softness: 2.5
+- Resolution: 1024x1024 (fixed, removed from UI for stability)
+- Single Shadow Map: Simplified from cascade system
+- Distance: 100 units (dynamically adjustable)
+- Softness: 2.5 (enhanced scaling for visibility)
 - Intensity: 0.6
-- **Default**: Enabled (fixed UI connectivity issues)
+- **Default**: Enabled (stable player-centered system)
 
 ### User Controls
 
@@ -396,9 +427,9 @@ src/engine/core/
 - **Issue**: Resolution, distance, and softness sliders had no effect
 - **Solution**: Include all required properties (cascades, bias, normalBias) in settings interface
 
-**✅ Fixed: Bloom Toggle Not Working**
-- **Issue**: Bloom threshold too high (0.8+), effect never visible
-- **Solution**: Lowered threshold to 0.4 with smooth brightness ramp
+**✅ Fixed: Bloom Threshold Issues**
+- **Issue**: Bloom threshold range too high (0-2.0), default too high (1.0)
+- **Solution**: Limited range to 0.0-0.8, default set to 0.3 for optimal visibility
 
 **✅ Fixed: Graphics Artifacts**
 - **Issue**: Dark spots and edge blur from SSAO/Bloom

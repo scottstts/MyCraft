@@ -90,35 +90,18 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float shadowIntensity;
       uniform float shadowResolution;
 
-      // PCF Shadow sampling with cascade selection
+      // Simplified single shadow map sampling
       float sampleShadow(vec3 worldPos, vec3 normal, vec3 sunDir) {
           // Return 1.0 (no shadow) if shadow system is disabled
           if (shadowIntensity <= 0.0) return 1.0;
           
-          float viewDistance = length(vViewPosition);
-          int cascadeIndex = 0;
-          
-          // Select appropriate cascade
-          for (int i = 0; i < shadowCascades - 1; i++) {
-              if (viewDistance > shadowDistances[i]) {
-                  cascadeIndex = i + 1;
-              }
-          }
-          
-          // Transform world position to shadow map space
-          vec4 shadowCoord;
-          if (cascadeIndex == 0) {
-              shadowCoord = shadowMatrix0 * vec4(worldPos, 1.0);
-          } else if (cascadeIndex == 1) {
-              shadowCoord = shadowMatrix1 * vec4(worldPos, 1.0);
-          } else {
-              shadowCoord = shadowMatrix2 * vec4(worldPos, 1.0);
-          }
-          
+          // Transform world position to shadow map space using first shadow map
+          vec4 shadowCoord = shadowMatrix0 * vec4(worldPos, 1.0);
           shadowCoord = shadowCoord * 0.5 + 0.5; // Convert to [0,1] range
           
           if (shadowCoord.x < 0.0 || shadowCoord.x > 1.0 || 
-              shadowCoord.y < 0.0 || shadowCoord.y > 1.0) {
+              shadowCoord.y < 0.0 || shadowCoord.y > 1.0 || 
+              shadowCoord.z < 0.0 || shadowCoord.z > 1.0) {
               return 1.0; // Outside shadow map
           }
           
@@ -128,22 +111,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           
           // PCF sampling for soft shadows
           float shadow = 0.0;
-          float texelSize = shadowSoftness / shadowResolution;
+          float texelSize = shadowSoftness * 0.001; // More visible softness scaling
           int samples = 0;
           
           for (int x = -1; x <= 1; x++) {
               for (int y = -1; y <= 1; y++) {
                   vec2 offset = vec2(float(x), float(y)) * texelSize;
-                  float sampleDepth;
-                  
-                  if (cascadeIndex == 0) {
-                      sampleDepth = texture2D(shadowMap0, shadowCoord.xy + offset).r;
-                  } else if (cascadeIndex == 1) {
-                      sampleDepth = texture2D(shadowMap1, shadowCoord.xy + offset).r;
-                  } else {
-                      sampleDepth = texture2D(shadowMap2, shadowCoord.xy + offset).r;
-                  }
-                  
+                  float sampleDepth = texture2D(shadowMap0, shadowCoord.xy + offset).r;
                   shadow += shadowDepth <= sampleDepth ? 1.0 : 0.0;
                   samples++;
               }

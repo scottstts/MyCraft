@@ -130,38 +130,34 @@ export class ShadowSystem {
   }
 
   private updateCascadeCameras(viewCamera: THREE.Camera): void {
-    for (let i = 0; i < this.settings.cascades; i++) {
-      const camera = this.shadowCameras[i];
-      
-      // Simple stable shadow camera positioning
-      // Position the shadow camera to look at the player's position
-      const playerPos = viewCamera.position.clone();
-      
-      // Calculate camera size based on cascade level
-      const cascadeScale = (i + 1) * 20; // Increase size for farther cascades
-      camera.left = -cascadeScale;
-      camera.right = cascadeScale;
-      camera.top = cascadeScale;
-      camera.bottom = -cascadeScale;
-      camera.near = 0.5;
-      camera.far = this.cascadeDistances[i];
-      
-      // Position shadow camera relative to player
-      camera.position.copy(this.shadowLight.position);
-      camera.lookAt(playerPos);
-      camera.updateProjectionMatrix();
-      camera.updateMatrixWorld();
-    }
+    // Use only the first shadow camera for simplicity and stability
+    const camera = this.shadowCameras[0];
+    const playerPos = viewCamera.position.clone();
+    
+    // Fixed shadow camera size based on shadowDistance
+    const shadowSize = this.settings.shadowDistance * 0.5;
+    camera.left = -shadowSize;
+    camera.right = shadowSize;
+    camera.top = shadowSize;
+    camera.bottom = -shadowSize;
+    camera.near = 0.5;
+    camera.far = this.settings.shadowDistance * 2; // Generous far plane
+    
+    // Position shadow camera to look at player from sun direction
+    const sunOffset = new THREE.Vector3(50, 120, 50).normalize().multiplyScalar(this.settings.shadowDistance);
+    camera.position.copy(playerPos).add(sunOffset);
+    camera.lookAt(playerPos);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
   }
 
 
   private renderShadowMaps(scene: THREE.Scene): void {
     const originalRenderTarget = this.renderer.getRenderTarget();
     
-    for (let i = 0; i < this.settings.cascades; i++) {
-      this.renderer.setRenderTarget(this.shadowMaps[i]);
-      this.renderer.render(scene, this.shadowCameras[i]);
-    }
+    // Only render the first shadow map for stability
+    this.renderer.setRenderTarget(this.shadowMaps[0]);
+    this.renderer.render(scene, this.shadowCameras[0]);
 
     this.renderer.setRenderTarget(originalRenderTarget);
   }

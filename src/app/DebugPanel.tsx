@@ -268,20 +268,6 @@ export const DebugPanel: React.FC = () => {
           Enable Shadows
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
-          Resolution: {settings.shadowResolution}
-          <select
-            value={settings.shadowResolution}
-            onChange={(e) => handleSettingChange('shadowResolution', parseInt(e.target.value))}
-            disabled={!settings.shadowEnabled}
-            style={{ width: '100%', marginTop: '4px', padding: '2px' }}
-          >
-            <option value={512}>512 (Fast)</option>
-            <option value={1024}>1024 (Balanced)</option>
-            <option value={2048}>2048 (High)</option>
-            <option value={4096}>4096 (Ultra)</option>
-          </select>
-        </label>
 
         <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
           Distance: {settings.shadowDistance}
