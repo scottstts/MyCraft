@@ -82,9 +82,9 @@ function initializeBlockRegistry(): void {
       opaque: true,
       solid: true,
       faces: {
-        top: [0, 1],
-        bottom: [1, 1],
-        side: [2, 1]
+        top: [0, 0],
+        bottom: [1, 0],
+        side: [2, 0]
       }
     },
     {
@@ -92,14 +92,14 @@ function initializeBlockRegistry(): void {
       name: 'dirt',
       opaque: true,
       solid: true,
-      faces: { all: [1, 1] }
+      faces: { all: [1, 0] }
     },
     {
       id: 3,
       name: 'stone',
       opaque: true,
       solid: true,
-      faces: { all: [3, 1] }
+      faces: { all: [3, 0] }
     }
   ];
   
@@ -258,13 +258,14 @@ function addFaceQuad(
     normals.push(nx, ny, nz);
   }
   
-  // Add UVs - assume 16x16 atlas with 16px tiles
-  const atlasSize = 16; // tiles across
+  // Add UVs - assume 4x4 atlas with 16px tiles
+  const atlasSize = 4; // tiles across
   const tileSize = 1 / atlasSize;
-  const u0 = tileU * tileSize;
-  const v0 = tileV * tileSize;
-  const u1 = u0 + tileSize;
-  const v1 = v0 + tileSize;
+  const epsilon = 0.5 / (atlasSize * 16); // Half-pixel inset to avoid seams
+  const u0 = tileU * tileSize + epsilon;
+  const v0 = tileV * tileSize + epsilon;
+  const u1 = u0 + tileSize - 2 * epsilon;
+  const v1 = v0 + tileSize - 2 * epsilon;
   
   // UV coordinates for quad (counter-clockwise)
   uvs.push(u0, v1); // bottom-left

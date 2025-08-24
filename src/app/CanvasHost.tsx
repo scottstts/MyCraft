@@ -31,8 +31,7 @@ export function CanvasHost() {
       engineApi.start(canvas)
 
       const onResize = () => {
-        canvas.width = canvas.clientWidth
-        canvas.height = canvas.clientHeight
+        // Renderer handles canvas sizing via renderer.onResize()
       }
       onResize()
       window.addEventListener('resize', onResize)

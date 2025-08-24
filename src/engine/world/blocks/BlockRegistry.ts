@@ -33,9 +33,9 @@ export class BlockRegistry {
         opaque: true,
         solid: true,
         faces: {
-          top: [0, 1],    // grass_top
-          bottom: [1, 1], // dirt
-          side: [2, 1]    // grass_side
+          top: [0, 0],    // grass_top
+          bottom: [1, 0], // dirt
+          side: [2, 0]    // grass_side
         }
       },
       {
@@ -43,14 +43,14 @@ export class BlockRegistry {
         name: 'dirt',
         opaque: true,
         solid: true,
-        faces: { all: [1, 1] } // dirt texture
+        faces: { all: [1, 0] } // dirt texture
       },
       {
         id: 3,
         name: 'stone',
         opaque: true,
         solid: true,
-        faces: { all: [3, 1] } // stone texture
+        faces: { all: [3, 0] } // stone texture
       }
     ];
 

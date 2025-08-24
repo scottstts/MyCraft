@@ -30,7 +30,7 @@ export function createCamera(aspect: number = 1): THREE.PerspectiveCamera {
     512    // far - enough to see multiple chunks
   );
   
-  camera.position.set(0, 10, 0); // Start above ground
+  camera.position.set(0, 80, 0); // Start well above terrain (BASE_HEIGHT=32 + AMPLITUDE=16)
   
   return camera;
 }
