@@ -18,6 +18,15 @@ export class PlayerController {
   private velocityY: number = 0;
   private grounded: boolean = false;
 
+  // Visual smoothing for instantaneous vertical steps
+  private renderYOffsetY: number = 0;
+  private elevationTween = {
+    from: 0,
+    elapsed: 0,
+    duration: 0,
+    active: false,
+  };
+
   // AABB dimensions
   private readonly width: number = PLAYER.width;
   private readonly height: number = PLAYER.height;
@@ -44,6 +53,11 @@ export class PlayerController {
 
   /** Update controller each frame */
   update(deltaSeconds: number): void {
+    // Remove last frame's visual offset so physics uses true position
+    if (this.renderYOffsetY !== 0) {
+      this.camera.position.y -= this.renderYOffsetY;
+      this.renderYOffsetY = 0;
+    }
     // Jump edge-trigger: only if grounded
     if (this.input.consumeJumpRequested() && this.grounded) {
       this.velocityY = this.jumpImpulse;
@@ -96,6 +110,9 @@ export class PlayerController {
       this.velocityY = 0;
       this.grounded = true;
     }
+
+    // Apply post-physics elevation tween (visual only)
+    this.applyElevationTween(deltaSeconds);
   }
 
   /**
@@ -175,6 +192,32 @@ export class PlayerController {
   /** Camera base Y helper: returns y of feet (AABB minY) */
   private getBaseY(cameraY: number = this.camera.position.y): number {
     return cameraY - this.eyeHeight;
+  }
+
+  /** Start a short visual tween from previous level to new level for smooth stepping */
+  startElevationTween(height: number, duration: number = 0.12): void {
+    // Height is how much we instantly stepped up in physics.
+    // Render offset starts at -height (old level) and eases to 0 (new level).
+    this.elevationTween.from = -height;
+    this.elevationTween.elapsed = 0;
+    this.elevationTween.duration = Math.max(0.06, duration);
+    this.elevationTween.active = true;
+  }
+
+  private applyElevationTween(dt: number): void {
+    if (!this.elevationTween.active) return;
+    this.elevationTween.elapsed += dt;
+    const t = Math.min(1, this.elevationTween.elapsed / this.elevationTween.duration);
+    // Ease-out cubic for smooth settle
+    const easeOutCubic = (u: number) => 1 - Math.pow(1 - u, 3);
+    const eased = easeOutCubic(t);
+    const currentOffset = this.elevationTween.from * (1 - eased); // from -> 0
+    this.renderYOffsetY = currentOffset;
+    this.camera.position.y += this.renderYOffsetY;
+    if (t >= 1) {
+      this.elevationTween.active = false;
+      this.renderYOffsetY = 0;
+    }
   }
 
   /**

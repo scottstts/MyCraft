@@ -249,7 +249,7 @@ async function start(canvas: HTMLCanvasElement) {
   selectionSystem = new SelectionSystem(camera, world, scene);
   
   // Interaction system (mine/place + re-mesh)
-  interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline);
+  interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);
   
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', (data: ChunkPipelineEvents['CHUNK_READY']) => {

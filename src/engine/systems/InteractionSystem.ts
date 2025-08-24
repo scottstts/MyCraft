@@ -14,6 +14,7 @@ import { addToInventory, getSelectedPlacementBlockId, consumeOneFromSelected } f
 import { CHUNK_SIZE, PLAYER } from '../../config/constants';
 import { worldToChunk } from '../utils/coords';
 import type { ChunkPipeline } from '../world/ChunkPipeline';
+import { PlayerController } from './PlayerController';
 
 export class InteractionSystem {
   private camera: THREE.PerspectiveCamera;
@@ -21,6 +22,7 @@ export class InteractionSystem {
   private input: InputSystem;
   private selection: SelectionSystem;
   private pipeline: ChunkPipeline;
+  private playerController: PlayerController | null;
 
   private readonly airId: number = 0;
   
@@ -30,13 +32,15 @@ export class InteractionSystem {
     world: World,
     input: InputSystem,
     selection: SelectionSystem,
-    pipeline: ChunkPipeline
+    pipeline: ChunkPipeline,
+    playerController?: PlayerController
   ) {
     this.camera = camera;
     this.world = world;
     this.input = input;
     this.selection = selection;
     this.pipeline = pipeline;
+    this.playerController = playerController ?? null;
   }
 
   update(): void {
@@ -65,8 +69,9 @@ export class InteractionSystem {
           const placeId = getSelectedPlacementBlockId();
           if (placeId !== null && consumeOneFromSelected()) {
             if (permission.elevatePlayer) {
-              // Move player up by exactly one block before placing
+              // Smooth visual step: start a short tween from old to new height
               this.camera.position.y += 1;
+              (this.playerController as any)?.startElevationTween?.(1);
             }
             this.world.setBlock(x, y, z, placeId);
             this.remeshAffectedChunks(x, y, z);
