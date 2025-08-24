@@ -76,27 +76,8 @@ function createSimpleAtlas(): THREE.Texture {
   canvas.height = tileSize;              // 16 pixels tall (1 row only)
   const ctx = canvas.getContext('2d')!;
 
-  // Clear to black
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Grass top (0,0) - green
-  ctx.fillStyle = '#7CB342';
-  ctx.fillRect(0, 0, tileSize, tileSize);
-
-  // Dirt (1,0) - brown
-  ctx.fillStyle = '#8B4513';
-  ctx.fillRect(tileSize, 0, tileSize, tileSize);
-
-  // Grass side (2,0) - brown with green top stripe
-  ctx.fillStyle = '#8B4513';
-  ctx.fillRect(tileSize * 2, 0, tileSize, tileSize);
-  ctx.fillStyle = '#7CB342';
-  ctx.fillRect(tileSize * 2, 0, tileSize, 3);
-
-  // Stone (3,0) - gray
-  ctx.fillStyle = '#696969';
-  ctx.fillRect(tileSize * 3, 0, tileSize, tileSize);
+  // Clear to transparent; no programmatic placeholder tiles since we use image textures
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   // Air (4,0) - transparent (leave black)
   // ctx.fillStyle = 'transparent'; // Already black/transparent
@@ -175,9 +156,7 @@ async function loadTextureAtlas(): Promise<THREE.Texture> {
       texture.dispose();
     } catch (error) {
       console.warn(`Failed to load texture ${textureName}:`, error);
-      // Draw a fallback colored rectangle
-      ctx.fillStyle = getFallbackColor(textureName);
-      ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+      // Leave transparent if texture fails to load
     }
   });
 
@@ -187,16 +166,7 @@ async function loadTextureAtlas(): Promise<THREE.Texture> {
   return configureTexture(atlasTexture);
 }
 
-// Helper function to get fallback colors for textures that fail to load
-function getFallbackColor(textureName: string): string {
-  const fallbackColors: Record<string, string> = {
-    'grass_top': '#7CB342',
-    'dirt': '#8B4513',
-    'grass_side': '#8B4513',
-    'stone': '#696969'
-  };
-  return fallbackColors[textureName] || '#000000';
-}
+// (Removed) Fallback color fills are not used when loading image textures
 
 // Configure texture with proper pixel art settings
 function configureTexture(texture: THREE.Texture): THREE.Texture {
