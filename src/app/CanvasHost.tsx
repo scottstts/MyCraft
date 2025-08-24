@@ -27,6 +27,7 @@ export function CanvasHost() {
   useEffect(() => {
     let engineApi: EngineApi | null = null
     let mounted = true
+    let removeListeners: (() => void) | null = null
 
     const setup = async () => {
       const canvas = canvasRef.current
@@ -40,31 +41,22 @@ export function CanvasHost() {
       onResize()
       window.addEventListener('resize', onResize)
 
-      const onKeyDown = (e: KeyboardEvent) => {
-        if (e.code === 'KeyP' || e.key === 'p' || e.key === 'P') {
-          const pausedNow = useUIStore.getState().paused
-          setPaused(!pausedNow)
-          e.preventDefault()
-          e.stopPropagation()
-        }
-      }
-      document.addEventListener('keydown', onKeyDown)
-
-      return () => {
+      // Register cleanup for listeners so effect teardown can call it
+      removeListeners = () => {
         window.removeEventListener('resize', onResize)
-        document.removeEventListener('keydown', onKeyDown)
       }
     }
 
-    const cleanupPromise = setup()
+    void setup()
 
     return () => {
       mounted = false
       setPaused(false)
+      // Ensure we remove any listeners registered during setup
+      if (removeListeners) removeListeners()
       engineApi?.stop()
-      void cleanupPromise
     }
-  }, [restartToken])
+  }, [restartToken, setPaused])
 
   // Prevent context menu on right click over canvas
   const onContextMenu = (e: React.MouseEvent) => e.preventDefault()

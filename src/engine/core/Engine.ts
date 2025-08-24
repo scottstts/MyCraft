@@ -39,6 +39,12 @@ let fpsCounterFrames: number = 0;
 let fpsLastReportNow: number = 0;
 
 function update(dtSeconds: number) {
+  // Always allow pause toggle to be consumed
+  if (inputSystem && inputSystem.consumePauseToggle?.()) {
+    const pausedNow = useUIStore.getState().paused;
+    useUIStore.getState().setPaused(!pausedNow);
+  }
+
   // Gate updates on paused state; keep rendering the scene for visual continuity
   const paused = useUIStore.getState().paused;
   if (!paused) {
