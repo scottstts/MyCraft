@@ -1,0 +1,12 @@
+{
+  "tileSize": 16,
+  "atlasSize": 4,
+  "tiles": {
+    "grass_top": [0, 0],
+    "dirt": [1, 0],
+    "grass_side": [2, 0],
+    "stone": [3, 0],
+    "grass_bottom": [1, 0],
+    "air": [0, 0]
+  }
+}

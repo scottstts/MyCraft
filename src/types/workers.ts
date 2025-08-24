@@ -3,7 +3,10 @@
  * Shared between main thread and web workers.
  */
 
-import type { ChunkData } from './index.js';
+import type { ChunkData, BlockDef, BlockId } from './index.js';
+
+// Re-export types needed by workers
+export type { BlockDef, BlockId };
 
 // Basic types
 export type ChunkKey = string; // `${cx},${cy},${cz}`

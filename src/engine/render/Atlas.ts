@@ -56,36 +56,82 @@ export class Atlas {
   }
 }
 
-// Stub implementation that creates a 1x1 white texture
-export function loadAtlas(): THREE.Texture {
-  // Create a 1x1 white texture as placeholder
+// Create a simple programmatic atlas texture for now
+function createSimpleAtlas(): THREE.Texture {
+  const tileSize = 16;
+  const atlasSize = 4; // 4x4 tiles = 64x64 texture
   const canvas = document.createElement('canvas');
-  canvas.width = 1;
-  canvas.height = 1;
+  canvas.width = atlasSize * tileSize;
+  canvas.height = atlasSize * tileSize;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = 'white';
-  ctx.fillRect(0, 0, 1, 1);
+  
+  // Clear to black
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Grass top (0,0) - green
+  ctx.fillStyle = '#7CB342';
+  ctx.fillRect(0, 0, tileSize, tileSize);
+  
+  // Dirt (1,0) - brown
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(tileSize, 0, tileSize, tileSize);
+  
+  // Grass side (2,0) - brown with green top stripe
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(tileSize * 2, 0, tileSize, tileSize);
+  ctx.fillStyle = '#7CB342';
+  ctx.fillRect(tileSize * 2, 0, tileSize, 3);
+  
+  // Stone (3,0) - gray
+  ctx.fillStyle = '#696969';
+  ctx.fillRect(tileSize * 3, 0, tileSize, tileSize);
   
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestMipmapNearestFilter;
+  texture.anisotropy = 1;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
   
   return texture;
 }
 
-// Future: Load full atlas with JSON configuration
-export function loadFullAtlas(): Promise<Atlas> {
-  return new Promise((resolve) => {
-    const texture = loadAtlas();
+// Load full atlas with JSON configuration
+export async function loadFullAtlas(): Promise<Atlas> {
+  try {
+    // Load atlas configuration
+    const response = await fetch('/atlas.json');
+    const config: AtlasConfig = await response.json();
     
+    // For now, use programmatic texture
+    // TODO: Later load actual image file
+    const texture = createSimpleAtlas();
+    
+    return new Atlas(texture, config);
+  } catch (error) {
+    console.warn('Failed to load atlas, falling back to simple atlas:', error);
+    
+    // Fallback configuration
     const config: AtlasConfig = {
-      tileSize: 1,
-      atlasSize: 1,
+      tileSize: 16,
+      atlasSize: 4,
       tiles: {
-        'default': [0, 0]
+        'grass_top': [0, 0],
+        'dirt': [1, 0], 
+        'grass_side': [2, 0],
+        'stone': [3, 0],
+        'grass_bottom': [1, 0],
+        'air': [0, 0]
       }
     };
     
-    resolve(new Atlas(texture, config));
-  });
+    const texture = createSimpleAtlas();
+    return new Atlas(texture, config);
+  }
+}
+
+// Backward compatibility 
+export function loadAtlas(): THREE.Texture {
+  return createSimpleAtlas();
 }
