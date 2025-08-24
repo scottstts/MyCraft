@@ -50,7 +50,7 @@ export interface ChunkMeshResponse {
     positions: Float32Array;
     normals: Float32Array;
     uvs: Float32Array;
-    indices: Uint32Array;
+    indices: Uint16Array | Uint32Array;
   };
 }
 
@@ -91,5 +91,5 @@ export function isChunkMeshResponse(msg: any): msg is ChunkMeshResponse {
          msg.payload.positions instanceof Float32Array &&
          msg.payload.normals instanceof Float32Array &&
          msg.payload.uvs instanceof Float32Array &&
-         msg.payload.indices instanceof Uint32Array;
+         (msg.payload.indices instanceof Uint16Array || msg.payload.indices instanceof Uint32Array);
 }

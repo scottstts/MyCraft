@@ -188,18 +188,20 @@ function addFaceQuad(
       break;
     case 'right': // +X
       quad = [
-        [lx + 1, ly,     lz],
+        // Reordered for correct CCW winding when viewed from +X
         [lx + 1, ly,     lz + 1],
-        [lx + 1, ly + 1, lz + 1],
-        [lx + 1, ly + 1, lz]
+        [lx + 1, ly,     lz],
+        [lx + 1, ly + 1, lz],
+        [lx + 1, ly + 1, lz + 1]
       ];
       break;
     case 'left': // -X
       quad = [
-        [lx, ly,     lz + 1],
+        // Reordered for correct CCW winding when viewed from -X
         [lx, ly,     lz],
-        [lx, ly + 1, lz],
-        [lx, ly + 1, lz + 1]
+        [lx, ly,     lz + 1],
+        [lx, ly + 1, lz + 1],
+        [lx, ly + 1, lz]
       ];
       break;
     case 'top': // +Y
@@ -237,12 +239,15 @@ function addFaceQuad(
     throw new Error('[MesherWorker] Atlas config required for UV calculation');
   }
   
-  const tileSize = 1 / atlasConfig.atlasSize;
-  const epsilon = 0.5 / (atlasConfig.atlasSize * atlasConfig.tileSize); // Half-pixel inset to avoid seams
-  const u0 = tileU * tileSize + epsilon;
-  const v0 = tileV * tileSize + epsilon;
-  const u1 = u0 + tileSize - 2 * epsilon;
-  const v1 = v0 + tileSize - 2 * epsilon;
+  // Our atlas is laid out as atlasSize tiles horizontally and 1 tile vertically
+  const tileSizeU = 1 / atlasConfig.atlasSize;
+  const tileSizeV = 1; // single row atlas
+  const epsilonU = 0.5 / (atlasConfig.atlasSize * atlasConfig.tileSize); // half pixel in U
+  const epsilonV = 0.5 / (1 * atlasConfig.tileSize); // half pixel in V
+  const u0 = tileU * tileSizeU + epsilonU;
+  const v0 = tileV * tileSizeV + epsilonV;
+  const u1 = u0 + tileSizeU - 2 * epsilonU;
+  const v1 = v0 + tileSizeV - 2 * epsilonV;
   
   // UV coordinates for quad (counter-clockwise)
   uvs.push(u0, v1); // bottom-left
