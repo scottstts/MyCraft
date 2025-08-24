@@ -21,6 +21,12 @@ const BASE_HEIGHT = 32;    // Base terrain height
 const AMPLITUDE = 16;      // Height variation
 const BEDROCK_LEVEL = 3;   // Stone below this level
 
+// Height calculation function (duplicated in TerrainGenerator.ts for main thread use)
+function getHeightAtPosition(x: number, z: number, noise2D: (x: number, z: number) => number): number {
+  const noiseValue = noise2D(x * NOISE_SCALE, z * NOISE_SCALE);
+  return Math.floor(BASE_HEIGHT + AMPLITUDE * noiseValue);
+}
+
 // Handle messages from main thread
 self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
@@ -58,7 +64,7 @@ function handleGenerateChunk(request: GenerateChunkRequest): void {
   };
   
   // Transfer the voxels array for performance
-  (self as unknown as DedicatedWorkerGlobalScope).postMessage(response, { transfer: [voxels.buffer] });
+  self.postMessage(response, { transfer: [voxels.buffer] });
 }
 
 function generateTerrain(
@@ -82,8 +88,7 @@ function generateTerrain(
       const worldZ = cz * CHUNK_SIZE.z + lz;
       
       // Generate height using noise
-      const noiseValue = noise2D(worldX * NOISE_SCALE, worldZ * NOISE_SCALE);
-      const height = Math.floor(BASE_HEIGHT + AMPLITUDE * noiseValue);
+      const height = getHeightAtPosition(worldX, worldZ, noise2D);
       
       // Fill column from bottom up
       for (let ly = 0; ly < CHUNK_SIZE.y; ly++) {

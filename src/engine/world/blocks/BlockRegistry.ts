@@ -25,7 +25,7 @@ export class BlockRegistry {
         name: 'air',
         opaque: false,
         solid: false,
-        faces: { all: [0, 0] } // Placeholder - air doesn't render
+        faces: { all: 'air' } // Placeholder - air doesn't render
       },
       {
         id: 1,
@@ -33,9 +33,9 @@ export class BlockRegistry {
         opaque: true,
         solid: true,
         faces: {
-          top: [0, 0],    // grass_top
-          bottom: [1, 0], // dirt
-          side: [2, 0]    // grass_side
+          top: 'grass_top',
+          bottom: 'grass_bottom',
+          side: 'grass_side'
         }
       },
       {
@@ -43,14 +43,14 @@ export class BlockRegistry {
         name: 'dirt',
         opaque: true,
         solid: true,
-        faces: { all: [1, 0] } // dirt texture
+        faces: { all: 'dirt' }
       },
       {
         id: 3,
         name: 'stone',
         opaque: true,
         solid: true,
-        faces: { all: [3, 0] } // stone texture
+        faces: { all: 'stone' }
       }
     ];
 

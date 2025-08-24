@@ -14,8 +14,9 @@ import type {
   MeshChunkRequest,
   ChunkMeshResponse
 } from '../../types/workers.js';
-import type { ChunkData } from '../../types/index.js';
+import type { ChunkData, BlockDef } from '../../types/index.js';
 import { isChunkDataResponse, isChunkMeshResponse } from '../../types/workers.js';
+import type { AtlasConfig } from '../render/Atlas.js';
 
 export interface ChunkPipelineEvents extends Record<string, unknown> {
   CHUNK_READY: { key: ChunkKey; chunkData: ChunkData };
@@ -26,6 +27,8 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
   private generatorWorker: Worker;
   private mesherWorker: Worker;
   private pendingRequests = new Set<ChunkKey>();
+  private atlasConfig: AtlasConfig | null = null;
+  private blockRegistry: BlockDef[] = [];
   
   constructor() {
     super();
@@ -57,6 +60,14 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
     this.mesherWorker.onerror = (error) => {
       console.error('[ChunkPipeline] Mesher worker error:', error);
     };
+  }
+  
+  /**
+   * Set atlas configuration and block registry for meshing
+   */
+  setAtlasConfig(atlasConfig: AtlasConfig, blockRegistry: BlockDef[]): void {
+    this.atlasConfig = atlasConfig;
+    this.blockRegistry = blockRegistry;
   }
   
   /**
@@ -94,10 +105,19 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
     
     this.pendingRequests.delete(key);
     
-    // Send chunk data to mesher worker
+    // Send chunk data to mesher worker with atlas config and block registry
+    if (!this.atlasConfig) {
+      throw new Error('[ChunkPipeline] Atlas config must be set before requesting chunks');
+    }
+    
     const meshRequest: MeshChunkRequest = {
       type: 'MESH_CHUNK',
-      payload: { key, chunkData }
+      payload: { 
+        key, 
+        chunkData, 
+        atlasConfig: this.atlasConfig,
+        blockRegistry: this.blockRegistry
+      }
     };
     
     this.mesherWorker.postMessage(meshRequest);

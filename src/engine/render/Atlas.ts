@@ -54,6 +54,14 @@ export class Atlas {
   getAtlasSize(): number {
     return this.config.atlasSize;
   }
+
+  getTiles(): Record<string, [number, number]> {
+    return this.config.tiles;
+  }
+
+  getConfig(): AtlasConfig {
+    return this.config;
+  }
 }
 
 // Create a simple programmatic atlas texture for now

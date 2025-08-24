@@ -42,11 +42,11 @@ export interface BlockDef {
   opaque: boolean;         // true → face is hidden by same block adjacent
   solid: boolean;          // true → collides with player
   faces: {
-    // atlas tile indices (u, v) per face; or single "all" tile
-    top?: [number, number];
-    bottom?: [number, number];
-    side?: [number, number];
-    all?: [number, number];
+    // atlas tile keys (string) per face; or single "all" tile
+    top?: string;
+    bottom?: string;
+    side?: string;
+    all?: string;
   };
 }
 

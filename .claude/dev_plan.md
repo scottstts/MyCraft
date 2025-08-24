@@ -423,6 +423,11 @@ interface WorkerRes {
 
 ### Phase G — Naive meshing (visible faces)
 
+**G0 (new): Single source of truth for atlas**
+
+* Create `AtlasConfig` once and share it with both main thread and mesher worker. The class already exists. Send `{atlasSize, tileSize, tiles}` to the worker either in a bootstrap message or alongside `MESH_CHUNK`. (Right now worker hard‑codes 16; fix that contract.)
+  *Acceptance:* worker uses the passed `atlasSize`, and BlockRegistry faces match the config. (Add an assertion in worker.)
+
 **G1. Face culling mesh builder (worker)**
 
 * For each voxel:
@@ -436,11 +441,14 @@ interface WorkerRes {
 * UVs from atlas using block’s face tile.
   **Acceptance:** Chunks render with proper block faces; holes appear temporarily at chunk seams until neighbor mesh arrives (acceptable v1).
 
-**G2. Atlas real texture**
+**G2 (tighten): Real atlas assets**
 
-* Replace placeholder with your real atlas image + JSON mapping (`/assets/textures/atlas.png`, `/atlas.json`).
-* Apply nearest‑neighbor filters.
-  **Acceptance:** Pixelated textures appear; grass top/side/bottom mapped correctly.
+* When you swap to a file atlas (`/assets/textures/atlas.png` + `/atlas.json`), **parse atlas.json** into `AtlasConfig` and ship that to the worker. Don’t duplicate tile coordinates in BlockRegistry; BlockRegistry should reference tiles by **string key** (`'grass_top'`, `'dirt'`, …) and a lookup resolves to `(u,v)` using the single config.&#x20;
+
+**G3 (new acceptance): Spawn/visibility sanity**
+
+* Before moving on, add a tiny “spawn above ground” helper: query height at (0,0) from the generator’s `height()` and place camera at `height+4`. (For v1, hard‑code y=80 like above.)
+  *Acceptance:* first render always shows terrain; no all‑black canvas.
 
 ---
 

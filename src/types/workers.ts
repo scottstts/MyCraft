@@ -4,6 +4,7 @@
  */
 
 import type { ChunkData, BlockDef, BlockId } from './index.js';
+import type { AtlasConfig } from '../engine/render/Atlas.js';
 
 // Re-export types needed by workers
 export type { BlockDef, BlockId };
@@ -28,7 +29,8 @@ export interface MeshChunkRequest {
   payload: {
     key: ChunkKey;
     chunkData: ChunkData;
-    // Block registry will be passed separately
+    atlasConfig: AtlasConfig;
+    blockRegistry: BlockDef[];
   };
 }
 
@@ -69,7 +71,9 @@ export function isGenerateChunkRequest(msg: any): msg is GenerateChunkRequest {
 export function isMeshChunkRequest(msg: any): msg is MeshChunkRequest {
   return msg && msg.type === 'MESH_CHUNK' && msg.payload &&
          typeof msg.payload.key === 'string' &&
-         msg.payload.chunkData;
+         msg.payload.chunkData &&
+         msg.payload.atlasConfig &&
+         Array.isArray(msg.payload.blockRegistry);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

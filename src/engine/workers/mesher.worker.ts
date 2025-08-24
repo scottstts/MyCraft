@@ -10,12 +10,14 @@ import type {
   ChunkMeshResponse
 } from '../../types/workers.js';
 import type { BlockDef, BlockId } from '../../types/index.js';
+import type { AtlasConfig } from '../render/Atlas.js';
 import { isMeshChunkRequest } from '../../types/workers.js';
 import { CHUNK_SIZE } from '../../config/constants.js';
 import { localToIndex } from '../utils/coords.js';
 
 // Block registry snapshot (passed from main thread)
-const blockRegistry = new Map<BlockId, BlockDef>();
+let blockRegistry = new Map<BlockId, BlockDef>();
+let atlasConfig: AtlasConfig | null = null;
 
 // Face directions (normal vectors)
 const FACES = [
@@ -39,11 +41,20 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
 };
 
 function handleMeshChunk(request: MeshChunkRequest): void {
-  const { key, chunkData } = request.payload;
+  const { key, chunkData, atlasConfig: receivedAtlasConfig, blockRegistry: receivedBlockRegistry } = request.payload;
   
-  // Initialize block registry if not already done
-  if (blockRegistry.size === 0) {
-    initializeBlockRegistry();
+  // Update atlas config from main thread
+  atlasConfig = receivedAtlasConfig;
+  
+  // Update block registry from main thread
+  blockRegistry = new Map();
+  for (const block of receivedBlockRegistry) {
+    blockRegistry.set(block.id, block);
+  }
+  
+  // Assert atlas config is available
+  if (!atlasConfig) {
+    throw new Error('[MesherWorker] Atlas config is required but not provided');
   }
   
   // Build mesh from chunk data
@@ -66,47 +77,7 @@ function handleMeshChunk(request: MeshChunkRequest): void {
   });
 }
 
-function initializeBlockRegistry(): void {
-  // Hardcoded block definitions matching the main thread registry
-  const blocks: BlockDef[] = [
-    {
-      id: 0,
-      name: 'air',
-      opaque: false,
-      solid: false,
-      faces: { all: [0, 0] }
-    },
-    {
-      id: 1,
-      name: 'grass',
-      opaque: true,
-      solid: true,
-      faces: {
-        top: [0, 0],
-        bottom: [1, 0],
-        side: [2, 0]
-      }
-    },
-    {
-      id: 2,
-      name: 'dirt',
-      opaque: true,
-      solid: true,
-      faces: { all: [1, 0] }
-    },
-    {
-      id: 3,
-      name: 'stone',
-      opaque: true,
-      solid: true,
-      faces: { all: [3, 0] }
-    }
-  ];
-  
-  for (const block of blocks) {
-    blockRegistry.set(block.id, block);
-  }
-}
+// Block registry is now provided from main thread, no hardcoded initialization needed
 
 function buildChunkMesh(chunkData: { voxels: Uint8Array }) {
   const positions: number[] = [];
@@ -258,10 +229,13 @@ function addFaceQuad(
     normals.push(nx, ny, nz);
   }
   
-  // Add UVs - assume 4x4 atlas with 16px tiles
-  const atlasSize = 4; // tiles across
-  const tileSize = 1 / atlasSize;
-  const epsilon = 0.5 / (atlasSize * 16); // Half-pixel inset to avoid seams
+  // Add UVs using atlas config
+  if (!atlasConfig) {
+    throw new Error('[MesherWorker] Atlas config required for UV calculation');
+  }
+  
+  const tileSize = 1 / atlasConfig.atlasSize;
+  const epsilon = 0.5 / (atlasConfig.atlasSize * atlasConfig.tileSize); // Half-pixel inset to avoid seams
   const u0 = tileU * tileSize + epsilon;
   const v0 = tileV * tileSize + epsilon;
   const u1 = u0 + tileSize - 2 * epsilon;
@@ -281,18 +255,36 @@ function addFaceQuad(
 }
 
 function getFaceUV(block: BlockDef, faceName: string): [number, number] {
-  // Determine which texture to use for this face
+  if (!atlasConfig) {
+    throw new Error('[MesherWorker] Atlas config required for UV lookup');
+  }
+
+  // Determine which tile key to use for this face
+  let tileKey: string;
   switch (faceName) {
     case 'top':
-      return block.faces.top || block.faces.all || [0, 0];
+      tileKey = block.faces.top || block.faces.all || 'air';
+      break;
     case 'bottom':
-      return block.faces.bottom || block.faces.all || [0, 0];
+      tileKey = block.faces.bottom || block.faces.all || 'air';
+      break;
     case 'front':
     case 'back':
     case 'left':
     case 'right':
-      return block.faces.side || block.faces.all || [0, 0];
+      tileKey = block.faces.side || block.faces.all || 'air';
+      break;
     default:
-      return block.faces.all || [0, 0];
+      tileKey = block.faces.all || 'air';
+      break;
   }
+
+  // Look up tile coordinates from atlas config
+  const tileCoords = atlasConfig.tiles[tileKey];
+  if (!tileCoords) {
+    console.warn(`[MesherWorker] Tile key '${tileKey}' not found in atlas config, using fallback`);
+    return [0, 0];
+  }
+
+  return tileCoords;
 }

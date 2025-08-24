@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react'
 
 type EngineApi = {
-  start: (canvas: HTMLCanvasElement) => void
+  start: (canvas: HTMLCanvasElement) => Promise<void>
   stop: () => void
 }
 
@@ -28,7 +28,7 @@ export function CanvasHost() {
       const canvas = canvasRef.current
       if (!canvas || !mounted) return
       engineApi = await loadEngine()
-      engineApi.start(canvas)
+      await engineApi.start(canvas)
 
       const onResize = () => {
         // Renderer handles canvas sizing via renderer.onResize()

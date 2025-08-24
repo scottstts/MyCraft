@@ -11,7 +11,9 @@ import { createScene, createCamera } from '../render/SceneBuilder';
 import { World } from '../world/World';
 import type { ChunkPipelineEvents } from '../world/ChunkPipeline';
 import { ChunkRenderer } from '../render/ChunkRenderer';
-import { loadAtlas } from '../render/Atlas';
+import { loadFullAtlas } from '../render/Atlas';
+import { getBlockRegistry } from '../world/blocks/BlockRegistry';
+import { findSpawnPosition } from '../world/TerrainGenerator';
 
 let rafId: number | null = null;
 let running = false;
@@ -39,7 +41,7 @@ function tick() {
   rafId = requestAnimationFrame(tick);
 }
 
-function start(canvas: HTMLCanvasElement) {
+async function start(canvas: HTMLCanvasElement) {
   if (running) return;
   
   // Initialize renderer
@@ -53,14 +55,22 @@ function start(canvas: HTMLCanvasElement) {
   // Initialize world
   world = new World();
   
-  // Initialize chunk renderer with basic material
-  const atlasTexture = loadAtlas();
+  // Load atlas and initialize chunk renderer
+  const atlas = await loadFullAtlas();
   const material = new THREE.MeshStandardMaterial({ 
-    map: atlasTexture,
+    map: atlas.getTexture(),
     side: THREE.FrontSide // Use front-face culling for proper performance
   });
   
   chunkRenderer = new ChunkRenderer(scene, material);
+  
+  // Set atlas config and block registry in chunk pipeline
+  const blockRegistry = getBlockRegistry();
+  world.chunkPipeline.setAtlasConfig(atlas.getConfig(), blockRegistry.getAllBlocks());
+
+  // Set camera spawn position above ground  
+  const spawnPos = findSpawnPosition(world.getSeed());
+  camera.position.set(spawnPos.x, spawnPos.y, spawnPos.z);
   
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', (data: ChunkPipelineEvents['CHUNK_READY']) => {
