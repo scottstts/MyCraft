@@ -10,7 +10,7 @@ import type { World } from '../world/World';
 import { InputSystem } from './Input';
 import { SelectionSystem } from './SelectionSystem';
 import { getBlockIdByName } from '../world/blocks/BlockRegistry';
-import { CHUNK_SIZE } from '../../config/constants';
+import { CHUNK_SIZE, PLAYER } from '../../config/constants';
 import { worldToChunk } from '../utils/coords';
 import type { ChunkPipeline } from '../world/ChunkPipeline';
 
@@ -58,7 +58,7 @@ export class InteractionSystem {
       const sel = this.selection.getSelection();
       if (sel.hit && sel.placeCell) {
         const { x, y, z } = sel.placeCell;
-        if (this.world.getBlock(x, y, z) === this.airId) {
+        if (this.canPlaceAt(x, y, z)) {
           this.world.setBlock(x, y, z, this.defaultPlaceId);
           this.remeshAffectedChunks(x, y, z);
         }
@@ -89,6 +89,40 @@ export class InteractionSystem {
         this.pipeline.requestRemesh(ncx, ncy, ncz, n.getData());
       }
     }
+  }
+
+  /**
+   * Check if a block can be placed at world cell without intersecting the player AABB
+   */
+  private canPlaceAt(x: number, y: number, z: number): boolean {
+    // Must be empty
+    if (this.world.getBlock(x, y, z) !== this.airId) return false;
+
+    // Compute player AABB from camera position and PLAYER dimensions
+    const halfWidth = PLAYER.width / 2;
+    const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1);
+    const cam = this.camera.position;
+    const playerMinX = cam.x - halfWidth;
+    const playerMaxX = cam.x + halfWidth;
+    const playerMinY = cam.y - eyeHeight;
+    const playerMaxY = playerMinY + PLAYER.height;
+    const playerMinZ = cam.z - halfWidth;
+    const playerMaxZ = cam.z + halfWidth;
+
+    const blockMinX = x;
+    const blockMaxX = x + 1;
+    const blockMinY = y;
+    const blockMaxY = y + 1;
+    const blockMinZ = z;
+    const blockMaxZ = z + 1;
+
+    const EPS = 1e-5;
+    const separated =
+      playerMaxX <= blockMinX + EPS || playerMinX >= blockMaxX - EPS ||
+      playerMaxY <= blockMinY + EPS || playerMinY >= blockMaxY - EPS ||
+      playerMaxZ <= blockMinZ + EPS || playerMinZ >= blockMaxZ - EPS;
+
+    return separated;
   }
 }
 
