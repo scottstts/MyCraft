@@ -1,5 +1,5 @@
 import CanvasHost from './app/CanvasHost'
-import { Hotbar, Crosshair } from './app/Hotbar'
+import { Hotbar, Crosshair, FpsOverlay, PauseMenu } from './app/Hotbar'
 
 export default function App() {
   return (
@@ -7,6 +7,8 @@ export default function App() {
       <CanvasHost />
       <Hotbar />
       <Crosshair />
+      <FpsOverlay />
+      <PauseMenu />
     </>
   )
 }

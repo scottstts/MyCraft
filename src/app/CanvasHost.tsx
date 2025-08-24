@@ -5,6 +5,8 @@
  * Invariants: Does not import engine internals directly beyond start/stop API.
  */
 import { useEffect, useRef } from 'react'
+import { useUIStore } from '../state/ui'
+
 
 type EngineApi = {
   start: (canvas: HTMLCanvasElement) => Promise<void>
@@ -19,6 +21,8 @@ async function loadEngine(): Promise<EngineApi> {
 
 export function CanvasHost() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const setPaused = useUIStore(s => s.setPaused)
+  const restartToken = useUIStore(s => s.restartToken)
 
   useEffect(() => {
     let engineApi: EngineApi | null = null
@@ -36,8 +40,19 @@ export function CanvasHost() {
       onResize()
       window.addEventListener('resize', onResize)
 
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (e.code === 'KeyP' || e.key === 'p' || e.key === 'P') {
+          const pausedNow = useUIStore.getState().paused
+          setPaused(!pausedNow)
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }
+      document.addEventListener('keydown', onKeyDown)
+
       return () => {
         window.removeEventListener('resize', onResize)
+        document.removeEventListener('keydown', onKeyDown)
       }
     }
 
@@ -45,10 +60,11 @@ export function CanvasHost() {
 
     return () => {
       mounted = false
+      setPaused(false)
       engineApi?.stop()
       void cleanupPromise
     }
-  }, [])
+  }, [restartToken])
 
   // Prevent context menu on right click over canvas
   const onContextMenu = (e: React.MouseEvent) => e.preventDefault()

@@ -35,30 +35,35 @@ let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
 let interactionSystem: InteractionSystem | null = null;
 let lastFrameNow: number = 0;
+let fpsCounterFrames: number = 0;
+let fpsLastReportNow: number = 0;
 
 function update(dtSeconds: number) {
-  // Update subsystems here (physics, input, etc.)
-  // For now, just ensure rendering happens
-  if (inputSystem) {
-    inputSystem.update();
-  }
-  // Handle number key slot selection (UI side-effect is fine here)
-  if (inputSystem) {
-    const slot = inputSystem.consumeSelectedSlot?.();
-    if (slot !== undefined && slot !== null) {
-      useUIStore.getState().setSelectedSlot(slot);
-      // If the selected slot is empty, do nothing; InteractionSystem consults inventory
+  // Gate updates on paused state; keep rendering the scene for visual continuity
+  const paused = useUIStore.getState().paused;
+  if (!paused) {
+    if (inputSystem) {
+      inputSystem.update();
+    }
+    // Handle number key slot selection (UI side-effect is fine here)
+    if (inputSystem) {
+      const slot = inputSystem.consumeSelectedSlot?.();
+      if (slot !== undefined && slot !== null) {
+        useUIStore.getState().setSelectedSlot(slot);
+        // If the selected slot is empty, do nothing; InteractionSystem consults inventory
+      }
+    }
+    if (playerController) {
+      playerController.update(dtSeconds);
+    }
+    if (selectionSystem) {
+      selectionSystem.update();
+    }
+    if (interactionSystem) {
+      interactionSystem.update();
     }
   }
-  if (playerController) {
-    playerController.update(dtSeconds);
-  }
-  if (selectionSystem) {
-    selectionSystem.update();
-  }
-  if (interactionSystem) {
-    interactionSystem.update();
-  }
+  // Update subsystems here (physics, input, etc.)
   if (renderer && scene && camera) {
     renderer.render(scene, camera);
   }
@@ -71,6 +76,16 @@ function tick(now: number) {
   lastFrameNow = now;
 
   update(dtSeconds);
+  // FPS reporting every ~0.5s
+  fpsCounterFrames += 1;
+  if (fpsLastReportNow === 0) fpsLastReportNow = now;
+  const elapsedSinceReport = now - fpsLastReportNow;
+  if (elapsedSinceReport >= 500) {
+    const fps = Math.round((fpsCounterFrames * 1000) / elapsedSinceReport);
+    useUIStore.getState().setFps(fps);
+    fpsCounterFrames = 0;
+    fpsLastReportNow = now;
+  }
   
   rafId = requestAnimationFrame(tick);
 }
@@ -152,6 +167,8 @@ async function start(canvas: HTMLCanvasElement) {
   
   running = true;
   lastFrameNow = performance.now();
+  fpsCounterFrames = 0;
+  fpsLastReportNow = 0;
   rafId = requestAnimationFrame(tick);
 }
 

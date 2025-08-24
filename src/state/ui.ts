@@ -14,6 +14,18 @@ export interface UIState {
   // Simple hotbar: list of block ids per slot
   hotbar: number[]; // length 9
   setHotbar: (ids: number[]) => void;
+
+  // Heads-up display values
+  fps: number; // updated periodically by engine
+  setFps: (fps: number) => void;
+
+  // Pause state toggles update of engine subsystems (but render continues)
+  paused: boolean;
+  setPaused: (paused: boolean) => void;
+
+  // Restart signal: incrementing token triggers restart side-effect in host
+  restartToken: number;
+  bumpRestartToken: () => void;
 }
 
 const DEFAULT_HOTBAR: number[] = [
@@ -34,6 +46,12 @@ export const useUIStore = create<UIState>((set) => ({
   setSelectedSlot: (slot: number) => set({ selectedSlot: Math.max(0, Math.min(8, Math.floor(slot))) }),
   hotbar: DEFAULT_HOTBAR.slice(),
   setHotbar: (ids: number[]) => set({ hotbar: ids.slice(0, 9) }),
+  fps: 0,
+  setFps: (fps: number) => set({ fps }),
+  paused: false,
+  setPaused: (paused: boolean) => set({ paused }),
+  restartToken: 0,
+  bumpRestartToken: () => set((s) => ({ restartToken: s.restartToken + 1 })),
 }));
 
 export function getSelectedBlockId(): number | null {
