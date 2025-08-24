@@ -25,12 +25,15 @@ export class Atlas {
     this.texture = texture;
     this.config = config;
     
-    // Configure for pixel art
+    // Configure for pixel art - match UV convention
+    this.texture.flipY = true;
+    this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.magFilter = THREE.NearestFilter;
-    this.texture.minFilter = THREE.NearestMipmapNearestFilter;
-    this.texture.anisotropy = 1;
-    this.texture.wrapS = THREE.RepeatWrapping;
-    this.texture.wrapT = THREE.RepeatWrapping;
+    this.texture.minFilter = THREE.NearestFilter;          // no mips until padding exists
+    this.texture.generateMipmaps = false;
+    this.texture.wrapS = THREE.ClampToEdgeWrapping;
+    this.texture.wrapT = THREE.ClampToEdgeWrapping;
+    this.texture.needsUpdate = true;
   }
 
   getTexture(): THREE.Texture {
@@ -67,10 +70,10 @@ export class Atlas {
 // Create a simple programmatic atlas texture for now
 function createSimpleAtlas(): THREE.Texture {
   const tileSize = 16;
-  const atlasSize = 4; // 4x4 tiles = 64x64 texture
+  const atlasSize = 4; // 4 tiles in a row = 64x16 texture
   const canvas = document.createElement('canvas');
-  canvas.width = atlasSize * tileSize;
-  canvas.height = atlasSize * tileSize;
+  canvas.width = atlasSize * tileSize;  // 64 pixels wide
+  canvas.height = tileSize;              // 16 pixels tall (1 row only)
   const ctx = canvas.getContext('2d')!;
   
   // Clear to black
@@ -96,11 +99,17 @@ function createSimpleAtlas(): THREE.Texture {
   ctx.fillRect(tileSize * 3, 0, tileSize, tileSize);
   
   const texture = new THREE.CanvasTexture(canvas);
+
+  // --- critical lines ---
+  texture.flipY = true;                             // match UV convention
+  texture.colorSpace = THREE.SRGBColorSpace;
   texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestMipmapNearestFilter;
-  texture.anisotropy = 1;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
+  texture.minFilter = THREE.NearestFilter;          // no mips until padding exists
+  texture.generateMipmaps = false;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.needsUpdate = true;
+  // ----------------------
   
   return texture;
 }

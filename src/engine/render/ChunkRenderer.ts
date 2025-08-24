@@ -48,7 +48,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    geometry.setIndex(Array.from(indices));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     
     // Create mesh
     const mesh = new THREE.Mesh(geometry, this.material);

@@ -52,9 +52,12 @@ function handleMeshChunk(request: MeshChunkRequest): void {
     blockRegistry.set(block.id, block);
   }
   
-  // Assert atlas config is available
+  // Assert atlas config is available and valid
   if (!atlasConfig) {
     throw new Error('[MesherWorker] Atlas config is required but not provided');
+  }
+  if (!atlasConfig.atlasSize || !atlasConfig.tileSize || !atlasConfig.tiles) {
+    throw new Error('[MesherWorker] Invalid atlas config - missing required properties');
   }
   
   // Build mesh from chunk data
