@@ -77,13 +77,13 @@ export class ShadowSystem {
         this.settings.resolution,
         this.settings.resolution,
         {
-          minFilter: THREE.NearestFilter,
-          magFilter: THREE.NearestFilter,
-          format: THREE.RGBAFormat,
-          type: THREE.UnsignedByteType
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.DepthFormat,
+          type: THREE.UnsignedIntType,
+          stencilBuffer: false
         }
       );
-      // Shadow map configuration (comparison will be handled in shader)
       this.shadowMaps.push(shadowMap);
     }
   }

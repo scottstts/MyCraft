@@ -91,6 +91,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
 
       // PCF Shadow sampling with cascade selection
       float sampleShadow(vec3 worldPos, vec3 normal, vec3 sunDir) {
+          // Return 1.0 (no shadow) if shadow system is disabled
+          if (shadowIntensity <= 0.0) return 1.0;
+          
           float viewDistance = length(vViewPosition);
           int cascadeIndex = 0;
           
@@ -228,7 +231,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         envMapIntensity: { value: 0.3 },
         time: { value: 0.0 },
         
-        // Shadow uniforms (will be updated by ShadowSystem)
+        // Shadow uniforms (will be updated by ShadowSystem) - start disabled
         shadowMap0: { value: null },
         shadowMap1: { value: null },
         shadowMap2: { value: null },
@@ -240,7 +243,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowSoftness: { value: 2.0 },
         shadowBias: { value: -0.0005 },
         shadowNormalBias: { value: 0.02 },
-        shadowIntensity: { value: 0.7 }
+        shadowIntensity: { value: 0.0 } // Start with shadows disabled
       },
       defines: envMap ? { USE_ENVMAP: true } : {},
       side: THREE.FrontSide,

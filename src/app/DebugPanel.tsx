@@ -34,7 +34,7 @@ export const DebugPanel: React.FC = () => {
     exposure: 1.1,
     contrast: 1.15,
     saturation: 1.1,
-    shadowEnabled: true,
+    shadowEnabled: false, // Start disabled to avoid WebGL issues
     shadowResolution: 1024,
     shadowDistance: 100,
     shadowSoftness: 2.5,

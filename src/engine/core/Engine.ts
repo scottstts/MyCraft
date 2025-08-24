@@ -202,12 +202,12 @@ async function start(canvas: HTMLCanvasElement) {
     saturation: 1.1
   });
 
-  // Initialize shadow system
+  // Initialize shadow system (temporarily disabled to avoid WebGL feedback loops)
   shadowSystem = new ShadowSystem(renderer.getRenderer(), scene);
   
-  // Configure shadows for optimal minecraft-style visuals
+  // Configure shadows for optimal minecraft-style visuals (start disabled)
   shadowSystem.updateSettings({
-    enabled: true,
+    enabled: false, // Temporarily disabled
     resolution: 1024,
     cascades: 3,
     shadowDistance: 100,
