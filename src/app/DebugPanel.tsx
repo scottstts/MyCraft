@@ -283,19 +283,7 @@ export const DebugPanel: React.FC = () => {
           />
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
-          Softness: {settings.shadowSoftness.toFixed(1)}
-          <input
-            type="range"
-            min="0.5"
-            max="5"
-            step="0.1"
-            value={settings.shadowSoftness}
-            onChange={(e) => handleSettingChange('shadowSoftness', parseFloat(e.target.value))}
-            disabled={!settings.shadowEnabled}
-            style={{ width: '100%', marginTop: '4px' }}
-          />
-        </label>
+        
 
         <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
           Intensity: {settings.shadowIntensity.toFixed(2)}
