@@ -60,9 +60,14 @@ export class InteractionSystem {
       const sel = this.selection.getSelection();
       if (sel.hit && sel.placeCell) {
         const { x, y, z } = sel.placeCell;
-        if (this.canPlaceAt(x, y, z)) {
+        const permission = this.evaluatePlacement(x, y, z);
+        if (permission.canPlace) {
           const placeId = getSelectedPlacementBlockId();
           if (placeId !== null && consumeOneFromSelected()) {
+            if (permission.elevatePlayer) {
+              // Move player up by exactly one block before placing
+              this.camera.position.y += 1;
+            }
             this.world.setBlock(x, y, z, placeId);
             this.remeshAffectedChunks(x, y, z);
           }
@@ -97,11 +102,16 @@ export class InteractionSystem {
   }
 
   /**
-   * Check if a block can be placed at world cell without intersecting the player AABB
+   * Evaluate if a block can be placed at (x,y,z).
+   * General rule: do not allow placement that intersects player's current AABB.
+   * Exception: allow placing directly under the player if there is one-block headroom,
+   * moving the player up by one block before placement.
    */
-  private canPlaceAt(x: number, y: number, z: number): boolean {
-    // Must be empty
-    if (this.world.getBlock(x, y, z) !== this.airId) return false;
+  private evaluatePlacement(x: number, y: number, z: number): { canPlace: boolean; elevatePlayer: boolean } {
+    // Must be empty cell
+    if (this.world.getBlock(x, y, z) !== this.airId) {
+      return { canPlace: false, elevatePlayer: false };
+    }
 
     // Compute player AABB from camera position and PLAYER dimensions
     const halfWidth = PLAYER.width / 2;
@@ -127,7 +137,53 @@ export class InteractionSystem {
       playerMaxY <= blockMinY + EPS || playerMinY >= blockMaxY - EPS ||
       playerMaxZ <= blockMinZ + EPS || playerMinZ >= blockMaxZ - EPS;
 
-    return separated;
+    if (separated) {
+      return { canPlace: true, elevatePlayer: false };
+    }
+
+    // Intersects player; check underfoot exception
+    const baseY = playerMinY;
+    const underfootY = Math.floor(baseY);
+    const isUnderfootCell = y === underfootY;
+
+    // Require block center to be within player's footprint to avoid front/side placements elevating
+    const centerX = x + 0.5;
+    const centerZ = z + 0.5;
+    const centerInsideFootprint = centerX > playerMinX + EPS && centerX < playerMaxX - EPS &&
+                                  centerZ > playerMinZ + EPS && centerZ < playerMaxZ - EPS;
+
+    if (isUnderfootCell && centerInsideFootprint) {
+      // Test one-block upward headroom for the player's AABB
+      const newBaseY = baseY + 1;
+      const newMinY = newBaseY;
+      const newMaxY = newMinY + PLAYER.height;
+      if (!this.aabbIntersectsSolid(playerMinX, newMinY, playerMinZ, playerMaxX, newMaxY, playerMaxZ)) {
+        return { canPlace: true, elevatePlayer: true };
+      }
+    }
+
+    return { canPlace: false, elevatePlayer: false };
+  }
+
+  /** Test if an AABB intersects any solid blocks in the world */
+  private aabbIntersectsSolid(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): boolean {
+    const ix0 = Math.floor(minX);
+    const iy0 = Math.floor(minY);
+    const iz0 = Math.floor(minZ);
+    const ix1 = Math.floor(maxX);
+    const iy1 = Math.floor(maxY);
+    const iz1 = Math.floor(maxZ);
+
+    for (let y = iy0; y <= iy1; y++) {
+      for (let z = iz0; z <= iz1; z++) {
+        for (let x = ix0; x <= ix1; x++) {
+          if (this.world.isBlockSolid(x, y, z)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 }
 
