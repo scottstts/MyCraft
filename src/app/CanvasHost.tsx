@@ -52,12 +52,20 @@ export function CanvasHost() {
 
   // Prevent context menu on right click over canvas
   const onContextMenu = (e: React.MouseEvent) => e.preventDefault()
+  const onClick = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    if (document.pointerLockElement !== canvas) {
+      canvas.requestPointerLock()
+    }
+  }
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#0b0d10' }}>
       <canvas
         ref={canvasRef}
         onContextMenu={onContextMenu}
+        onClick={onClick}
         style={{ width: '100%', height: '100%', display: 'block' }}
       />
     </div>

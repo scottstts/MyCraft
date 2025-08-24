@@ -14,6 +14,7 @@ import { ChunkRenderer } from '../render/ChunkRenderer';
 import { loadFullAtlas } from '../render/Atlas';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
+import { InputSystem } from '../systems/Input';
 
 let rafId: number | null = null;
 let running = false;
@@ -24,10 +25,14 @@ let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let world: World | null = null;
 let chunkRenderer: ChunkRenderer | null = null;
+let inputSystem: InputSystem | null = null;
 
 function update() {
   // Update subsystems here (physics, input, etc.)
   // For now, just ensure rendering happens
+  if (inputSystem) {
+    inputSystem.update();
+  }
   if (renderer && scene && camera) {
     renderer.render(scene, camera);
   }
@@ -71,6 +76,9 @@ async function start(canvas: HTMLCanvasElement) {
   // Set camera spawn position above ground  
   const spawnPos = findSpawnPosition(world.getSeed());
   camera.position.set(spawnPos.x, spawnPos.y, spawnPos.z);
+
+  // Input system (pointer lock + mouse look)
+  inputSystem = new InputSystem(canvas, camera);
   
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', (data: ChunkPipelineEvents['CHUNK_READY']) => {
@@ -113,6 +121,12 @@ function stop() {
   if (rafId !== null) {
     cancelAnimationFrame(rafId);
     rafId = null;
+  }
+
+  // Clean up input
+  if (inputSystem) {
+    inputSystem.destroy();
+    inputSystem = null;
   }
   
   // Clean up chunk renderer
