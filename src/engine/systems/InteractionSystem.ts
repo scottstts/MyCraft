@@ -9,7 +9,7 @@ import type * as THREE from 'three';
 import type { World } from '../world/World';
 import { InputSystem } from './Input';
 import { SelectionSystem } from './SelectionSystem';
-import { getBlockIdByName } from '../world/blocks/BlockRegistry';
+ 
 import { addToInventory, getSelectedPlacementBlockId, consumeOneFromSelected } from '../../state/inventory';
 import { CHUNK_SIZE, PLAYER } from '../../config/constants';
 import { worldToChunk } from '../utils/coords';
@@ -23,7 +23,7 @@ export class InteractionSystem {
   private pipeline: ChunkPipeline;
 
   private readonly airId: number = 0;
-  private readonly defaultPlaceId: number;
+  
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -37,8 +37,6 @@ export class InteractionSystem {
     this.input = input;
     this.selection = selection;
     this.pipeline = pipeline;
-
-    this.defaultPlaceId = getBlockIdByName('dirt') ?? 1;
   }
 
   update(): void {
@@ -63,10 +61,8 @@ export class InteractionSystem {
       if (sel.hit && sel.placeCell) {
         const { x, y, z } = sel.placeCell;
         if (this.canPlaceAt(x, y, z)) {
-          const placeId = getSelectedPlacementBlockId() ?? this.defaultPlaceId;
-          // Only place if selected slot has at least one (consume); if none, fallback to default but do not consume
-          const hadSelected = getSelectedPlacementBlockId() !== null;
-          if (!hadSelected || consumeOneFromSelected()) {
+          const placeId = getSelectedPlacementBlockId();
+          if (placeId !== null && consumeOneFromSelected()) {
             this.world.setBlock(x, y, z, placeId);
             this.remeshAffectedChunks(x, y, z);
           }
