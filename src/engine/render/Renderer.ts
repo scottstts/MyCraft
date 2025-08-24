@@ -18,6 +18,16 @@ export class Renderer {
 
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setClearColor(0x87CEEB); // Sky blue background
+    
+    // Enhanced rendering settings for better materials
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    
+    // Optional: Enable shadow mapping (will be used in Phase 4)
+    this.renderer.shadowMap.enabled = false; // Will enable in Phase 4
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    
     this.setSize(canvas.clientWidth, canvas.clientHeight);
   }
 
@@ -37,6 +47,10 @@ export class Renderer {
 
   render(scene: THREE.Scene, camera: THREE.Camera): void {
     this.renderer.render(scene, camera);
+  }
+
+  getRenderer(): THREE.WebGLRenderer {
+    return this.renderer;
   }
 
   dispose(): void {

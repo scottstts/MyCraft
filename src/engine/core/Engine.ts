@@ -12,6 +12,8 @@ import { World } from '../world/World';
 import type { ChunkPipelineEvents } from '../world/ChunkPipeline';
 import { ChunkRenderer } from '../render/ChunkRenderer';
 import { loadFullAtlas } from '../render/Atlas';
+import { Environment } from '../render/Environment';
+import { BlockMaterial } from '../render/BlockMaterial';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
 import { InputSystem } from '../systems/Input';
@@ -19,7 +21,6 @@ import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { useUIStore } from '../../state/ui';
-import { useInventory } from '../../state/inventory';
 
 let rafId: number | null = null;
 let running = false;
@@ -30,6 +31,8 @@ let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let world: World | null = null;
 let chunkRenderer: ChunkRenderer | null = null;
+let environment: Environment | null = null;
+let blockMaterial: BlockMaterial | null = null;
 let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
@@ -86,6 +89,12 @@ function update(dtSeconds: number) {
       interactionSystem.update();
     }
   }
+  
+  // Update material uniforms
+  if (blockMaterial && camera) {
+    blockMaterial.updateUniforms(camera);
+  }
+  
   // Update subsystems here (physics, input, etc.)
   if (renderer && scene && camera) {
     renderer.render(scene, camera);
@@ -129,14 +138,28 @@ async function start(canvas: HTMLCanvasElement) {
   // Initialize world
   world = new World();
   
-  // Load atlas and initialize chunk renderer
-  const atlas = await loadFullAtlas();
-  const material = new THREE.MeshStandardMaterial({ 
-    map: atlas.getTexture(),
-    side: THREE.FrontSide // Use front-face culling for proper performance
-  });
+  // Create simple environment mapping (temporarily simplified to avoid WebGL errors)
+  environment = new Environment(renderer.getRenderer());
+  let envMap: THREE.CubeTexture | null = null;
+  try {
+    envMap = environment.createEnvironmentMap();
+    scene.environment = envMap;
+  } catch (error) {
+    console.warn('Environment mapping disabled due to WebGL compatibility:', error);
+    envMap = null;
+  }
   
-  chunkRenderer = new ChunkRenderer(scene, material);
+  // Load atlas and initialize chunk renderer with custom material
+  const atlas = await loadFullAtlas();
+  blockMaterial = new BlockMaterial(
+    atlas.getTexture(),
+    envMap
+  );
+  
+  // Configure material properties for natural block materials
+  blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
+  
+  chunkRenderer = new ChunkRenderer(scene, blockMaterial);
   
   // Set atlas config and block registry in chunk pipeline
   const blockRegistry = getBlockRegistry();
@@ -229,6 +252,12 @@ function stop() {
     chunkRenderer = null;
   }
 
+  // Clean up block material
+  if (blockMaterial) {
+    blockMaterial.dispose();
+    blockMaterial = null;
+  }
+
   // Clean up player controller
   playerController = null;
   
@@ -247,6 +276,12 @@ function stop() {
     world = null;
   }
   
+  // Clean up environment
+  if (environment) {
+    environment.dispose();
+    environment = null;
+  }
+
   // Clean up renderer
   if (renderer) {
     renderer.dispose();
