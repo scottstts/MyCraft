@@ -2,7 +2,7 @@
  * Debug panel for post-processing controls and graphics settings
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useUIStore } from '../state/ui';
 
 interface PostProcessingSettings {
@@ -26,14 +26,14 @@ export const DebugPanel: React.FC = () => {
   const { debugVisible, setDebugVisible } = useUIStore();
   const [settings, setSettings] = useState<PostProcessingSettings>({
     ssaoEnabled: true,
-    ssaoIntensity: 0.4,
-    ssaoRadius: 0.15,
+    ssaoIntensity: 0.3,
+    ssaoRadius: 0.12,
     bloomEnabled: true,
-    bloomStrength: 0.2,
-    bloomThreshold: 0.9,
-    exposure: 1.1,
-    contrast: 1.15,
-    saturation: 1.1,
+    bloomStrength: 0.15,
+    bloomThreshold: 1.0,
+    exposure: 0.9,
+    contrast: 1.05,
+    saturation: 1.0,
     shadowEnabled: false, // Start disabled to avoid WebGL issues
     shadowResolution: 1024,
     shadowDistance: 100,
@@ -41,24 +41,39 @@ export const DebugPanel: React.FC = () => {
     shadowIntensity: 0.6,
   });
 
+  // Initialize settings on mount
+  useEffect(() => {
+    // Apply initial settings to the engine
+    (window as any).updatePostProcessingSettings?.(settings);
+    (window as any).updateShadowSettings?.({
+      enabled: settings.shadowEnabled,
+      resolution: settings.shadowResolution,
+      shadowDistance: settings.shadowDistance,
+      softness: settings.shadowSoftness,
+      intensity: settings.shadowIntensity,
+    });
+  }, []); // Only run once on mount
+
   if (!debugVisible) {
     return (
       <div style={{
         position: 'fixed',
-        top: '10px',
-        right: '10px',
+        top: '52px', // Position under the "Press P to pause" banner
+        left: '12px', // Align with the pause banner
         zIndex: 1000,
       }}>
         <button
           onClick={() => setDebugVisible(true)}
           style={{
-            padding: '8px 12px',
-            backgroundColor: 'rgba(0, 0, 0, 0.7)',
-            color: 'white',
-            border: '1px solid #666',
-            borderRadius: '4px',
+            padding: '6px 8px',
+            backgroundColor: 'rgba(0, 0, 0, 0.35)',
+            color: '#cfe9ef',
+            border: 'none',
+            borderRadius: '6px',
             cursor: 'pointer',
             fontSize: '12px',
+            fontFamily: 'monospace',
+            pointerEvents: 'auto',
           }}
         >
           Graphics Settings
@@ -85,8 +100,8 @@ export const DebugPanel: React.FC = () => {
   return (
     <div style={{
       position: 'fixed',
-      top: '10px',
-      right: '10px',
+      top: '52px',
+      left: '12px',
       width: '280px',
       backgroundColor: 'rgba(0, 0, 0, 0.9)',
       border: '1px solid #666',

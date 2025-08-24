@@ -193,13 +193,13 @@ async function start(canvas: HTMLCanvasElement) {
   // Configure post-processing for minecraft-style visuals
   postProcessor.updateSettings({
     ssaoEnabled: true,
-    ssaoIntensity: 0.4,
-    ssaoRadius: 0.15,
+    ssaoIntensity: 0.3,
+    ssaoRadius: 0.12,
     bloomEnabled: true,
-    bloomStrength: 0.2,
-    exposure: 1.1,
-    contrast: 1.15,
-    saturation: 1.1
+    bloomStrength: 0.15,
+    exposure: 0.9,
+    contrast: 1.05,
+    saturation: 1.0
   });
 
   // Initialize shadow system (temporarily disabled to avoid WebGL feedback loops)
