@@ -28,13 +28,13 @@ export class SimplePostProcessor {
 
   private settings: PostProcessorSettings = {
     ssaoEnabled: true,
-    ssaoIntensity: 0.4,
-    ssaoRadius: 0.15,
+    ssaoIntensity: 0.3,
+    ssaoRadius: 0.12,
     bloomEnabled: true,
-    bloomStrength: 0.2,
-    exposure: 1.1,
-    contrast: 1.15,
-    saturation: 1.1
+    bloomStrength: 0.15,
+    exposure: 0.9,
+    contrast: 1.05,
+    saturation: 1.0
   };
 
   private renderer: THREE.WebGLRenderer;
@@ -171,9 +171,9 @@ export class SimplePostProcessor {
           bloom += texture2D(tex, uv + vec2(0.0, -blur)).rgb;
           bloom /= 4.0;
           
-          // Only bloom bright areas
+          // Only bloom bright areas - raised threshold to reduce overexposure
           float brightness = dot(bloom, vec3(0.299, 0.587, 0.114));
-          if (brightness > 0.8) {
+          if (brightness > 1.0) {
             return color + bloom * bloomStrength;
           }
           

@@ -21,7 +21,7 @@ export class Renderer {
     
     // Enhanced rendering settings for better materials
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = 0.8;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     
     // Optional: Enable shadow mapping (will be used in Phase 4)
