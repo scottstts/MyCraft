@@ -53,6 +53,10 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     // Create mesh
     const mesh = new THREE.Mesh(geometry, this.material);
     
+    // Enable shadow casting and receiving
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    
     // Parse chunk coordinates from key for positioning
     const [cxStr, cyStr, czStr] = key.split(',');
     const cx = parseInt(cxStr, 10);

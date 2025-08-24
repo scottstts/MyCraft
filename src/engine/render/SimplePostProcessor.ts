@@ -11,6 +11,7 @@ export interface PostProcessorSettings {
   ssaoRadius: number;
   bloomEnabled: boolean;
   bloomStrength: number;
+  bloomThreshold: number;
   exposure: number;
   contrast: number;
   saturation: number;
@@ -32,6 +33,7 @@ export class SimplePostProcessor {
     ssaoRadius: 0.01,
     bloomEnabled: true,
     bloomStrength: 0.4,
+    bloomThreshold: 1.0,
     exposure: 0.9,
     contrast: 1.05,
     saturation: 1.0
@@ -96,6 +98,7 @@ export class SimplePostProcessor {
         ssaoRadius: { value: this.settings.ssaoRadius },
         bloomEnabled: { value: this.settings.bloomEnabled },
         bloomStrength: { value: this.settings.bloomStrength },
+        bloomThreshold: { value: this.settings.bloomThreshold },
         exposure: { value: this.settings.exposure },
         contrast: { value: this.settings.contrast },
         saturation: { value: this.settings.saturation }
@@ -118,6 +121,7 @@ export class SimplePostProcessor {
         uniform float ssaoRadius;
         uniform bool bloomEnabled;
         uniform float bloomStrength;
+        uniform float bloomThreshold;
         uniform float exposure;
         uniform float contrast;
         uniform float saturation;
@@ -183,10 +187,10 @@ export class SimplePostProcessor {
           bloomColor += texture2D(tex, uv + vec2(-blur, -blur)).rgb;
           bloomColor /= 8.0;
           
-          // Apply bloom to bright areas (much lower threshold)
+          // Apply bloom to bright areas
           float brightness = dot(color, vec3(0.299, 0.587, 0.114));
-          if (brightness > 0.4) {
-            float bloomFactor = (brightness - 0.4) / 0.6; // Smooth ramp from 0.4 to 1.0
+          if (brightness > bloomThreshold) {
+            float bloomFactor = (brightness - bloomThreshold) / (1.0 - bloomThreshold); // Smooth ramp from threshold to 1.0
             return color + bloomColor * bloomStrength * bloomFactor * 2.0;
           }
           
@@ -280,6 +284,10 @@ export class SimplePostProcessor {
       if (newSettings.bloomStrength !== undefined) {
         uniforms.bloomStrength.value = newSettings.bloomStrength;
         console.log('[PostProcessor] Bloom strength:', newSettings.bloomStrength);
+      }
+      if (newSettings.bloomThreshold !== undefined) {
+        uniforms.bloomThreshold.value = newSettings.bloomThreshold;
+        console.log('[PostProcessor] Bloom threshold:', newSettings.bloomThreshold);
       }
       if (newSettings.exposure !== undefined) uniforms.exposure.value = newSettings.exposure;
       if (newSettings.contrast !== undefined) uniforms.contrast.value = newSettings.contrast;

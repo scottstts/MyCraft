@@ -88,6 +88,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float shadowBias;
       uniform float shadowNormalBias;
       uniform float shadowIntensity;
+      uniform float shadowResolution;
 
       // PCF Shadow sampling with cascade selection
       float sampleShadow(vec3 worldPos, vec3 normal, vec3 sunDir) {
@@ -127,7 +128,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           
           // PCF sampling for soft shadows
           float shadow = 0.0;
-          float texelSize = shadowSoftness / 1024.0;
+          float texelSize = shadowSoftness / shadowResolution;
           int samples = 0;
           
           for (int x = -1; x <= 1; x++) {
@@ -243,7 +244,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowSoftness: { value: 2.0 },
         shadowBias: { value: -0.0005 },
         shadowNormalBias: { value: 0.02 },
-        shadowIntensity: { value: 0.0 } // Start with shadows disabled
+        shadowIntensity: { value: 0.0 }, // Start with shadows disabled
+        shadowResolution: { value: 1024 } // Default shadow resolution
       },
       defines: envMap ? { USE_ENVMAP: true } : {},
       side: THREE.FrontSide,

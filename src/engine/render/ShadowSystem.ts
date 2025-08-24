@@ -252,6 +252,7 @@ export class ShadowSystem {
     uniforms.shadowBias = { value: this.settings.bias };
     uniforms.shadowNormalBias = { value: this.settings.normalBias };
     uniforms.shadowIntensity = { value: this.settings.enabled ? this.settings.intensity : 0.0 };
+    uniforms.shadowResolution = { value: this.settings.resolution };
 
     return uniforms;
   }
