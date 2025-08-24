@@ -505,18 +505,18 @@ interface WorkerRes {
 
 **J1. Zustand store**
 
-* `/state/ui.ts`: fps, crosshair toggle, selectedSlot, debug toggles, pause state.
+* `/state/ui.ts`: fps, crosshair toggle, selectedSlot, pause state.
 * Engine updates fps into store every 0.5s.
   **Acceptance:** HUD reads from store; no React ↔ engine cycles.
 
 **J2. HUD overlays**
 
-* Crosshair (simple CSS), hotbar, minimal debug panel (F3).
+* Crosshair (simple CSS), hotbar.
   **Acceptance:** F3 shows player pos, chunk pos, loaded chunk count, tri count, ms/frame.
 
 **J3. Pause menu**
 
-* ESC toggles pause: stops updating player input but keeps render; show menu with options (noclip, regen world, wireframe).
+* ESC toggles pause: stops updating player input but keeps render; show menu with options (regen world).
   **Acceptance:** Paused state blocks movement; toggles apply.
 
 ---
