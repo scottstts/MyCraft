@@ -162,16 +162,16 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   /**
    * Update uniforms that change over time
    */
-  updateUniforms(camera: THREE.Camera): void {
-    this.uniforms.time.value = (Date.now() - this.startTime) * 0.001;
+  updateUniforms(_camera: THREE.Camera): void {
+    (this.uniforms as any).time.value = (Date.now() - this.startTime) * 0.001;
   }
 
   /**
    * Set material properties
    */
   setMaterialProperties(roughness: number, metalness: number, envMapIntensity: number): void {
-    this.uniforms.roughness.value = roughness;
-    this.uniforms.metalness.value = metalness;
-    this.uniforms.envMapIntensity.value = envMapIntensity;
+    (this.uniforms as any).roughness.value = roughness;
+    (this.uniforms as any).metalness.value = metalness;
+    (this.uniforms as any).envMapIntensity.value = envMapIntensity;
   }
 }

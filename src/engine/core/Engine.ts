@@ -14,6 +14,7 @@ import { ChunkRenderer } from '../render/ChunkRenderer';
 import { loadFullAtlas } from '../render/Atlas';
 import { Environment } from '../render/Environment';
 import { BlockMaterial } from '../render/BlockMaterial';
+import { SimplePostProcessor } from '../render/SimplePostProcessor';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
 import { InputSystem } from '../systems/Input';
@@ -33,6 +34,7 @@ let world: World | null = null;
 let chunkRenderer: ChunkRenderer | null = null;
 let environment: Environment | null = null;
 let blockMaterial: BlockMaterial | null = null;
+let postProcessor: SimplePostProcessor | null = null;
 let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
@@ -96,7 +98,11 @@ function update(dtSeconds: number) {
   }
   
   // Update subsystems here (physics, input, etc.)
-  if (renderer && scene && camera) {
+  if (postProcessor) {
+    // Use post-processed rendering
+    postProcessor.render();
+  } else if (renderer && scene && camera) {
+    // Fallback to basic rendering
     renderer.render(scene, camera);
   }
   // Remember paused state for next frame
@@ -160,6 +166,28 @@ async function start(canvas: HTMLCanvasElement) {
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
   
   chunkRenderer = new ChunkRenderer(scene, blockMaterial);
+
+  // Initialize post-processing pipeline
+  const canvasSize = renderer.getCanvasSize();
+  postProcessor = new SimplePostProcessor(
+    renderer.getRenderer(),
+    scene,
+    camera,
+    canvasSize.width,
+    canvasSize.height
+  );
+
+  // Configure post-processing for minecraft-style visuals
+  postProcessor.updateSettings({
+    ssaoEnabled: true,
+    ssaoIntensity: 0.4,
+    ssaoRadius: 0.15,
+    bloomEnabled: true,
+    bloomStrength: 0.2,
+    exposure: 1.1,
+    contrast: 1.15,
+    saturation: 1.1
+  });
   
   // Set atlas config and block registry in chunk pipeline
   const blockRegistry = getBlockRegistry();
@@ -220,6 +248,11 @@ async function start(canvas: HTMLCanvasElement) {
       renderer.onResize();
       camera.aspect = canvas.clientWidth / canvas.clientHeight;
       camera.updateProjectionMatrix();
+      
+      // Update post-processor size
+      if (postProcessor) {
+        postProcessor.setSize(canvas.clientWidth, canvas.clientHeight);
+      }
     }
   };
   window.addEventListener('resize', handleResize);
@@ -258,6 +291,12 @@ function stop() {
     blockMaterial = null;
   }
 
+  // Clean up post processor
+  if (postProcessor) {
+    postProcessor.dispose();
+    postProcessor = null;
+  }
+
   // Clean up player controller
   playerController = null;
   
@@ -291,6 +330,16 @@ function stop() {
   scene = null;
   camera = null;
 }
+
+// Global function for UI to update post-processing settings
+function updatePostProcessingSettings(settings: any) {
+  if (postProcessor) {
+    postProcessor.updateSettings(settings);
+  }
+}
+
+// Expose to global scope for UI communication
+(window as any).updatePostProcessingSettings = updatePostProcessingSettings;
 
 export const engine = { start, stop };
 export type Engine = typeof engine;

@@ -27,6 +27,10 @@ export interface UIState {
   inGame: boolean;
   setInGame: (inGame: boolean) => void;
 
+  // Debug panel visibility
+  debugVisible: boolean;
+  setDebugVisible: (visible: boolean) => void;
+
   // Restart signal: incrementing token triggers restart side-effect in host
   restartToken: number;
   bumpRestartToken: () => void;
@@ -56,6 +60,8 @@ export const useUIStore = create<UIState>((set) => ({
   setPaused: (paused: boolean) => set({ paused }),
   inGame: false,
   setInGame: (inGame: boolean) => set({ inGame }),
+  debugVisible: false,
+  setDebugVisible: (visible: boolean) => set({ debugVisible: visible }),
   restartToken: 0,
   bumpRestartToken: () => set((s) => ({ restartToken: s.restartToken + 1 })),
 }));
