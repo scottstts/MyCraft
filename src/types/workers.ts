@@ -21,6 +21,7 @@ export interface GenerateChunkRequest {
     cy: number;
     cz: number;
     seed: number;
+    worldRadius?: number; // For island generation sizing
   };
 }
 

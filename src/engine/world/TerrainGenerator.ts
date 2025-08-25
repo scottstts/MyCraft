@@ -59,7 +59,7 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 /**
  * Get terrain height at a specific world position using island generation
  */
-export function getHeightAtPosition(x: number, z: number, seed: number): number {
+export function getHeightAtPosition(x: number, z: number, seed: number, worldRadius?: number): number {
   const rngCoastline = mulberry32(seed ^ 0x9e3779b9);
   const rngElevation = mulberry32(seed ^ 0x85ebca6b);
   const rngHills     = mulberry32(seed ^ 0xc2b2ae35);
@@ -76,8 +76,8 @@ export function getHeightAtPosition(x: number, z: number, seed: number): number 
   const nWarpZ     = createNoise2D(rngWarpZ);
   const nLakes     = createNoise2D(rngLakes);
 
-  // Estimate world bounds for island shape (assume 7x7 default, 48x48 chunks)
-  const worldRadius = 7 * 48 / 2;
+  // Use provided world radius or estimate from chunk size (7x7 default, 48x48 chunks)
+  const estimatedRadius = worldRadius || (7 * 48 / 2);
 
   // Domain warp for natural terrain variation
   const wx = nWarpX(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;
@@ -87,7 +87,7 @@ export function getHeightAtPosition(x: number, z: number, seed: number): number 
 
   // Distance from center for island shape
   const distanceFromCenter = Math.sqrt(x * x + z * z);
-  const normalizedDistance = distanceFromCenter / worldRadius;
+  const normalizedDistance = distanceFromCenter / estimatedRadius;
 
   // Island mask with noisy coastline
   const coastlineNoise = nCoastline(x * COASTLINE_NOISE_SCALE, z * COASTLINE_NOISE_SCALE);
@@ -128,13 +128,47 @@ export function getHeightAtPosition(x: number, z: number, seed: number): number 
 }
 
 /**
- * Find a suitable spawn position above ground
+ * Find a suitable spawn position above ground on the island
  */
-export function findSpawnPosition(seed: number, spawnX = 0, spawnZ = 0): { x: number; y: number; z: number } {
-  const height = getHeightAtPosition(spawnX, spawnZ, seed);
+export function findSpawnPosition(seed: number, spawnX = 0, spawnZ = 0, worldRadius?: number): { x: number; y: number; z: number } {
+  // Try to find a good spawn location on the island, starting from the requested position
+  // but falling back to known good locations if needed
+  const candidatePositions = [
+    { x: spawnX, z: spawnZ }, // Requested position
+    { x: 0, z: 0 },           // Center
+    { x: 10, z: 10 },         // Slightly offset from center
+    { x: -10, z: -10 },       // Other side of center
+    { x: 20, z: 0 },          // Along main axes
+    { x: 0, z: 20 },
+  ];
+  
+  let bestSpawn = { x: spawnX, z: spawnZ, height: WATER_LEVEL - 10 };
+  
+  // Find the highest valid land position among candidates
+  for (const pos of candidatePositions) {
+    const height = getHeightAtPosition(pos.x, pos.z, seed, worldRadius);
+    
+    // Prefer positions that are above water level (on land)
+    if (height > WATER_LEVEL && height > bestSpawn.height) {
+      bestSpawn = { x: pos.x, z: pos.z, height };
+    }
+  }
+  
+  // If no land was found, use the highest position we found
+  if (bestSpawn.height <= WATER_LEVEL) {
+    for (const pos of candidatePositions) {
+      const height = getHeightAtPosition(pos.x, pos.z, seed, worldRadius);
+      if (height > bestSpawn.height) {
+        bestSpawn = { x: pos.x, z: pos.z, height };
+      }
+    }
+  }
+  
+  // Spawn well above the terrain to avoid rendering issues
+  // The player will fall down to the surface via gravity
   return {
-    x: spawnX,
-    y: height + 4, // Spawn 4 blocks above ground as per plan
-    z: spawnZ
+    x: bestSpawn.x,
+    y: bestSpawn.height + 15, // Spawn 15 blocks above ground for safety
+    z: bestSpawn.z
   };
 }

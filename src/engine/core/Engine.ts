@@ -225,10 +225,6 @@ async function start(canvas: HTMLCanvasElement) {
   const blockRegistry = getBlockRegistry();
   world.chunkPipeline.setAtlasConfig(atlas.getConfig(), blockRegistry.getAllBlocks());
 
-  // Set camera spawn position above ground  
-  const spawnPos = findSpawnPosition(world.getSeed());
-  camera.position.set(spawnPos.x, spawnPos.y, spawnPos.z);
-
   // Input system (pointer lock + mouse look)
   inputSystem = new InputSystem(canvas, camera);
   // Track pointer lock -> set inGame accordingly
@@ -257,6 +253,19 @@ async function start(canvas: HTMLCanvasElement) {
     minZ: -negRadius * CHUNK_SIZE.z,
     maxZ: (posRadius + 1) * CHUNK_SIZE.z,
   } as const;
+
+  // Calculate world radius for terrain generation
+  const worldRadius = Math.max(
+    Math.abs(bounds.maxX - bounds.minX),
+    Math.abs(bounds.maxZ - bounds.minZ)
+  ) / 2;
+
+  // Set world radius in chunk pipeline for terrain generation
+  world.chunkPipeline.setWorldRadius(worldRadius);
+
+  // Set camera spawn position above ground  
+  const spawnPos = findSpawnPosition(world.getSeed(), 0, 0, worldRadius);
+  camera.position.set(spawnPos.x, spawnPos.y, spawnPos.z);
 
   // Player controller (movement + gravity + collisions)
   playerController = new PlayerController(camera, world, inputSystem, bounds);

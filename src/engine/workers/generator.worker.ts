@@ -72,7 +72,7 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 }
 
 // Island terrain generation with natural features
-function createHeightFunction(seed: number) {
+function createHeightFunction(seed: number, worldRadius?: number) {
   const rngCoastline = mulberry32(seed ^ 0x9e3779b9);
   const rngElevation = mulberry32(seed ^ 0x85ebca6b);
   const rngHills     = mulberry32(seed ^ 0xc2b2ae35);
@@ -89,8 +89,8 @@ function createHeightFunction(seed: number) {
   const nWarpZ     = createNoise2D(rngWarpZ);
   const nLakes     = createNoise2D(rngLakes);
 
-  // Estimate world bounds for island shape (assume 7x7 default, 48x48 chunks)
-  const worldRadius = 7 * 48 / 2; // Approximate world radius
+  // Use provided world radius or estimate from chunk size (assume 7x7 default, 48x48 chunks)
+  const effectiveRadius = worldRadius || (7 * 48 / 2);
 
   return (x: number, z: number): { height: number; isLand: boolean } => {
     // Domain warp for natural terrain variation
@@ -101,7 +101,7 @@ function createHeightFunction(seed: number) {
 
     // Distance from center for island shape
     const distanceFromCenter = Math.sqrt(x * x + z * z);
-    const normalizedDistance = distanceFromCenter / worldRadius;
+    const normalizedDistance = distanceFromCenter / effectiveRadius;
 
     // Island mask with noisy coastline
     const coastlineNoise = nCoastline(x * COASTLINE_NOISE_SCALE, z * COASTLINE_NOISE_SCALE);
@@ -157,10 +157,10 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
 };
 
 function handleGenerateChunk(request: GenerateChunkRequest): void {
-  const { key, cx, cy, cz, seed } = request.payload;
+  const { key, cx, cy, cz, seed, worldRadius } = request.payload;
   
-  // Create height function with seed
-  const heightAt = createHeightFunction(seed);
+  // Create height function with seed and world radius
+  const heightAt = createHeightFunction(seed, worldRadius);
   
   // Create voxel array
   const totalVoxels = CHUNK_SIZE.x * CHUNK_SIZE.y * CHUNK_SIZE.z;

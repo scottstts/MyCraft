@@ -30,6 +30,7 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
   private atlasConfig: AtlasConfig | null = null;
   private blockRegistry: BlockDef[] = [];
   private chunkDataMap: Map<ChunkKey, ChunkData> = new Map();
+  private worldRadius: number | null = null;
   
   constructor() {
     super();
@@ -70,6 +71,13 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
     this.atlasConfig = atlasConfig;
     this.blockRegistry = blockRegistry;
   }
+
+  /**
+   * Set world radius for island generation
+   */
+  setWorldRadius(worldRadius: number): void {
+    this.worldRadius = worldRadius;
+  }
   
   /**
    * Request generation of a chunk
@@ -85,7 +93,14 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
     
     const request: GenerateChunkRequest = {
       type: 'GEN_CHUNK',
-      payload: { key, cx, cy, cz, seed }
+      payload: { 
+        key, 
+        cx, 
+        cy, 
+        cz, 
+        seed,
+        worldRadius: this.worldRadius || undefined
+      }
     };
     
     this.generatorWorker.postMessage(request);
