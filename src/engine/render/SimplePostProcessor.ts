@@ -265,7 +265,7 @@ export class SimplePostProcessor {
     });
 
     if (this.quadMaterial) {
-      const uniforms = (this.quadMaterial.uniforms as any);
+      const uniforms = this.quadMaterial.uniforms as Record<string, { value: unknown }>;
       
       if (newSettings.ssaoEnabled !== undefined) {
         uniforms.ssaoEnabled.value = newSettings.ssaoEnabled;
@@ -305,14 +305,15 @@ export class SimplePostProcessor {
     
     // Set up post-process material
     if (this.quadMaterial) {
-      (this.quadMaterial.uniforms as any).tDiffuse.value = this.renderTarget1.texture;
-      (this.quadMaterial.uniforms as any).tDepth.value = this.renderTarget1.depthTexture;
-      (this.quadMaterial.uniforms as any).resolution.value.set(
+      const uniforms = this.quadMaterial.uniforms as Record<string, { value: unknown }>;
+      uniforms.tDiffuse.value = this.renderTarget1.texture;
+      uniforms.tDepth.value = this.renderTarget1.depthTexture;
+      (uniforms.resolution.value as THREE.Vector2).set(
         this.renderTarget1.width, 
         this.renderTarget1.height
       );
-      (this.quadMaterial.uniforms as any).cameraNear.value = (this.camera as any).near || 0.1;
-      (this.quadMaterial.uniforms as any).cameraFar.value = (this.camera as any).far || 1000;
+      uniforms.cameraNear.value = (this.camera as THREE.PerspectiveCamera).near || 0.1;
+      uniforms.cameraFar.value = (this.camera as THREE.PerspectiveCamera).far || 1000;
     }
     
     // Render post-process pass to screen

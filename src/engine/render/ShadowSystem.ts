@@ -192,14 +192,15 @@ export class ShadowSystem {
     const originalRenderTarget = this.renderer.getRenderTarget();
 
     // Temporarily replace shadow map sampler uniforms to avoid framebuffer-texture feedback loop
-    const overrides: Array<{ material: THREE.ShaderMaterial; values: Record<string, any> }> = [];
+    const overrides: Array<{ material: THREE.ShaderMaterial; values: Record<string, unknown> }> = [];
     scene.traverse(obj => {
-      const matAny: any = (obj as any).material;
-      const materials: any[] = Array.isArray(matAny) ? matAny : [matAny];
+      const matAny = (obj as THREE.Object3D & { material?: THREE.Material | THREE.Material[] }).material;
+      const materials: (THREE.Material | undefined)[] = Array.isArray(matAny) ? matAny : [matAny];
       materials.forEach((mat) => {
-        if (mat && mat.isShaderMaterial && mat.uniforms) {
-          const u = mat.uniforms as Record<string, { value: any }>;
-          const touched: Record<string, any> = {};
+        if (mat && 'isShaderMaterial' in mat && mat.isShaderMaterial && 'uniforms' in mat) {
+          const shaderMat = mat as THREE.ShaderMaterial;
+          const u = shaderMat.uniforms as Record<string, { value: unknown }>;
+          const touched: Record<string, unknown> = {};
           let hasTouch = false;
           ['shadowMap0', 'shadowMap1', 'shadowMap2'].forEach((key) => {
             if (u[key]) {
@@ -208,7 +209,7 @@ export class ShadowSystem {
               hasTouch = true;
             }
           });
-          if (hasTouch) overrides.push({ material: mat, values: touched });
+          if (hasTouch) overrides.push({ material: shaderMat, values: touched });
         }
       });
     });
@@ -222,7 +223,7 @@ export class ShadowSystem {
 
     // Restore original uniforms
     overrides.forEach(({ material, values }) => {
-      const u = material.uniforms as Record<string, { value: any }>;
+      const u = material.uniforms as Record<string, { value: unknown }>;
       Object.keys(values).forEach((key) => {
         if (u[key]) u[key].value = values[key];
       });
@@ -232,8 +233,8 @@ export class ShadowSystem {
   /**
    * Get shadow uniforms for shaders
    */
-  getShadowUniforms(): { [key: string]: { value: any } } {
-    const uniforms: { [key: string]: { value: any } } = {};
+  getShadowUniforms(): Record<string, { value: unknown }> {
+    const uniforms: Record<string, { value: unknown }> = {};
     
     // Shadow maps
     for (let i = 0; i < this.settings.cascades; i++) {

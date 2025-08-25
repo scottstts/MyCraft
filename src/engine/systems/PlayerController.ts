@@ -87,7 +87,7 @@ export class PlayerController {
 
     // Apply gravity
     this.velocityY += this.gravity * deltaSeconds;
-    let dy = this.velocityY * deltaSeconds;
+    const dy = this.velocityY * deltaSeconds;
 
     // Axis-separated sweep: resolve X, then Z, then Y
     this.resolveAxis('x', dx);

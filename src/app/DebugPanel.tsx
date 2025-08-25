@@ -4,6 +4,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { useUIStore } from '../state/ui';
+import type { PostProcessorSettings } from '../engine/render/SimplePostProcessor';
+import type { ShadowSettings } from '../engine/render/ShadowSystem';
+
+interface WindowWithEngineGlobals extends Window {
+  updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
+  updateShadowSettings?: (settings: ShadowSettings) => void;
+}
 
 interface PostProcessingSettings {
   ssaoEnabled: boolean;
@@ -46,14 +53,16 @@ export const DebugPanel: React.FC = () => {
     // Apply initial settings to the engine with a small delay to ensure engine is ready
     const timer = setTimeout(() => {
       console.log('[DebugPanel] Initializing settings on mount');
-      if ((window as any).updatePostProcessingSettings) {
-        (window as any).updatePostProcessingSettings(settings);
+      const updateFn = (window as WindowWithEngineGlobals).updatePostProcessingSettings;
+      if (updateFn) {
+        updateFn(settings);
         console.log('[DebugPanel] Applied initial post-processing settings');
       } else {
         console.warn('[DebugPanel] Post-processing not available during initialization');
       }
       
-      if ((window as any).updateShadowSettings) {
+      const updateShadowFn = (window as WindowWithEngineGlobals).updateShadowSettings;
+      if (updateShadowFn) {
         const shadowSettings = {
           enabled: settings.shadowEnabled,
           resolution: settings.shadowResolution,
@@ -64,7 +73,7 @@ export const DebugPanel: React.FC = () => {
           normalBias: 0.02,
           intensity: settings.shadowIntensity,
         };
-        (window as any).updateShadowSettings(shadowSettings);
+        updateShadowFn(shadowSettings);
         console.log('[DebugPanel] Applied initial shadow settings');
       } else {
         console.warn('[DebugPanel] Shadow system not available during initialization');
@@ -72,6 +81,7 @@ export const DebugPanel: React.FC = () => {
     }, 1000);
     
     return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
 
   if (!debugVisible) {
@@ -109,14 +119,16 @@ export const DebugPanel: React.FC = () => {
     console.log(`[DebugPanel] Setting ${key} to ${value}`);
     
     // Communicate with engine
-    if ((window as any).updatePostProcessingSettings) {
-      (window as any).updatePostProcessingSettings(newSettings);
+    const updateFn = (window as WindowWithEngineGlobals).updatePostProcessingSettings;
+    if (updateFn) {
+      updateFn(newSettings);
       console.log(`[DebugPanel] Updated post-processing:`, newSettings);
     } else {
       console.error('[DebugPanel] updatePostProcessingSettings not available!');
     }
     
-    if ((window as any).updateShadowSettings) {
+    const updateShadowFn = (window as WindowWithEngineGlobals).updateShadowSettings;
+    if (updateShadowFn) {
       const shadowSettings = {
         enabled: newSettings.shadowEnabled,
         resolution: newSettings.shadowResolution,
@@ -127,7 +139,7 @@ export const DebugPanel: React.FC = () => {
         normalBias: 0.02, // Fixed value for now
         intensity: newSettings.shadowIntensity,
       };
-      (window as any).updateShadowSettings(shadowSettings);
+      updateShadowFn(shadowSettings);
       console.log(`[DebugPanel] Updated shadow settings:`, shadowSettings);
     } else {
       console.error('[DebugPanel] updateShadowSettings not available!');

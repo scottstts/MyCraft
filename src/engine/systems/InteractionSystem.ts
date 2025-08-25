@@ -71,7 +71,7 @@ export class InteractionSystem {
             if (permission.elevatePlayer) {
               // Smooth visual step: start a short tween from old to new height
               this.camera.position.y += 1;
-              (this.playerController as any)?.startElevationTween?.(1);
+              this.playerController?.startElevationTween(1);
             }
             this.world.setBlock(x, y, z, placeId);
             this.remeshAffectedChunks(x, y, z);

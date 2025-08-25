@@ -59,7 +59,7 @@ export function CanvasHost() {
       if (removeListeners) removeListeners()
       engineApi?.stop()
     }
-  }, [restartToken, setPaused])
+  }, [restartToken, setPaused, setInGame])
 
   // Prevent context menu on right click over canvas
   const onContextMenu = (e: React.MouseEvent) => e.preventDefault()

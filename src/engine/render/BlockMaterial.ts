@@ -258,24 +258,26 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   /**
    * Update uniforms that change over time
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   updateUniforms(_camera: THREE.Camera): void {
-    (this.uniforms as any).time.value = (Date.now() - this.startTime);
+    (this.uniforms as Record<string, { value: unknown }>).time.value = (Date.now() - this.startTime);
   }
 
   /**
    * Set material properties
    */
   setMaterialProperties(roughness: number, metalness: number, envMapIntensity: number): void {
-    (this.uniforms as any).roughness.value = roughness;
-    (this.uniforms as any).metalness.value = metalness;
-    (this.uniforms as any).envMapIntensity.value = envMapIntensity;
+    const uniforms = this.uniforms as Record<string, { value: unknown }>;
+    uniforms.roughness.value = roughness;
+    uniforms.metalness.value = metalness;
+    uniforms.envMapIntensity.value = envMapIntensity;
   }
 
   /**
    * Update shadow uniforms from ShadowSystem
    */
-  updateShadowUniforms(shadowUniforms: { [key: string]: { value: any } }): void {
-    const uniforms = this.uniforms as any;
+  updateShadowUniforms(shadowUniforms: Record<string, { value: unknown }>): void {
+    const uniforms = this.uniforms as Record<string, { value: unknown }>;
     Object.keys(shadowUniforms).forEach(key => {
       if (uniforms[key]) {
         uniforms[key].value = shadowUniforms[key].value;

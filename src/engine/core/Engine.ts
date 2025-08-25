@@ -14,8 +14,8 @@ import { ChunkRenderer } from '../render/ChunkRenderer';
 import { loadFullAtlas } from '../render/Atlas';
 import { Environment } from '../render/Environment';
 import { BlockMaterial } from '../render/BlockMaterial';
-import { SimplePostProcessor } from '../render/SimplePostProcessor';
-import { ShadowSystem } from '../render/ShadowSystem';
+import { SimplePostProcessor, type PostProcessorSettings } from '../render/SimplePostProcessor';
+import { ShadowSystem, type ShadowSettings } from '../render/ShadowSystem';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
 import { InputSystem } from '../systems/Input';
@@ -369,7 +369,7 @@ function stop() {
 }
 
 // Global function for UI to update post-processing settings
-function updatePostProcessingSettings(settings: any) {
+function updatePostProcessingSettings(settings: PostProcessorSettings) {
   console.log('[Engine] Received post-processing settings:', settings);
   if (postProcessor) {
     postProcessor.updateSettings(settings);
@@ -380,7 +380,7 @@ function updatePostProcessingSettings(settings: any) {
 }
 
 // Global function for UI to update shadow settings
-function updateShadowSettings(settings: any) {
+function updateShadowSettings(settings: ShadowSettings) {
   console.log('[Engine] Received shadow settings:', settings);
   if (shadowSystem) {
     shadowSystem.updateSettings(settings);
@@ -391,12 +391,18 @@ function updateShadowSettings(settings: any) {
 }
 
 // Expose to global scope for UI communication
-(window as any).updatePostProcessingSettings = updatePostProcessingSettings;
-(window as any).updateShadowSettings = updateShadowSettings;
+(window as Window & {
+  updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
+  updateShadowSettings?: (settings: ShadowSettings) => void;
+}).updatePostProcessingSettings = updatePostProcessingSettings;
+(window as Window & {
+  updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
+  updateShadowSettings?: (settings: ShadowSettings) => void;
+}).updateShadowSettings = updateShadowSettings;
 
 console.log('[Engine] Global functions exposed to window:', {
-  updatePostProcessingSettings: !!(window as any).updatePostProcessingSettings,
-  updateShadowSettings: !!(window as any).updateShadowSettings
+  updatePostProcessingSettings: !!(window as Window & { updatePostProcessingSettings?: unknown }).updatePostProcessingSettings,
+  updateShadowSettings: !!(window as Window & { updateShadowSettings?: unknown }).updateShadowSettings
 });
 
 export const engine = { start, stop };
