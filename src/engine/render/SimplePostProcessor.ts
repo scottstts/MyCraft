@@ -20,7 +20,6 @@ export interface PostProcessorSettings {
 export class SimplePostProcessor {
   private renderTarget1: THREE.WebGLRenderTarget;
   private renderTarget2: THREE.WebGLRenderTarget;
-  private depthTarget: THREE.WebGLRenderTarget;
   private quadGeometry: THREE.PlaneGeometry;
   private quadMaterial: THREE.ShaderMaterial | null = null;
   private quadMesh: THREE.Mesh;
@@ -53,25 +52,22 @@ export class SimplePostProcessor {
     this.renderer = renderer;
     this.mainScene = mainScene;
     this.camera = camera;
+    // Guard against zero-size targets (can happen briefly during layout)
+    const safeWidth = Math.max(1, Math.floor(width));
+    const safeHeight = Math.max(1, Math.floor(height));
+
     // Create render targets with depth texture for SSAO
-    this.renderTarget1 = new THREE.WebGLRenderTarget(width, height, {
+    this.renderTarget1 = new THREE.WebGLRenderTarget(safeWidth, safeHeight, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
-      depthTexture: new THREE.DepthTexture(width, height, THREE.UnsignedShortType)
+      depthTexture: new THREE.DepthTexture(safeWidth, safeHeight, THREE.UnsignedShortType)
     });
 
-    this.renderTarget2 = new THREE.WebGLRenderTarget(width, height, {
+    this.renderTarget2 = new THREE.WebGLRenderTarget(safeWidth, safeHeight, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat
-    });
-
-    this.depthTarget = new THREE.WebGLRenderTarget(width, height, {
-      minFilter: THREE.NearestFilter,
-      magFilter: THREE.NearestFilter,
-      format: THREE.DepthFormat,
-      type: THREE.UnsignedShortType
     });
 
     // Create quad for full-screen passes
@@ -328,14 +324,15 @@ export class SimplePostProcessor {
    * Handle window resize
    */
   setSize(width: number, height: number): void {
-    this.renderTarget1.setSize(width, height);
-    this.renderTarget2.setSize(width, height);
-    this.depthTarget.setSize(width, height);
+    const safeWidth = Math.max(1, Math.floor(width));
+    const safeHeight = Math.max(1, Math.floor(height));
+    this.renderTarget1.setSize(safeWidth, safeHeight);
+    this.renderTarget2.setSize(safeWidth, safeHeight);
     
     // Ensure depth texture is properly resized
     if (this.renderTarget1.depthTexture) {
-      this.renderTarget1.depthTexture.image.width = width;
-      this.renderTarget1.depthTexture.image.height = height;
+      this.renderTarget1.depthTexture.image.width = safeWidth;
+      this.renderTarget1.depthTexture.image.height = safeHeight;
       this.renderTarget1.depthTexture.needsUpdate = true;
     }
   }
@@ -353,7 +350,6 @@ export class SimplePostProcessor {
   dispose(): void {
     this.renderTarget1.dispose();
     this.renderTarget2.dispose();
-    this.depthTarget.dispose();
     this.quadGeometry.dispose();
     if (this.quadMaterial) {
       this.quadMaterial.dispose();

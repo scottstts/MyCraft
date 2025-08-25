@@ -22,6 +22,7 @@ export class ShadowSystem {
   private shadowCameras: THREE.OrthographicCamera[] = [];
   private shadowMaps: THREE.WebGLRenderTarget[] = [];
   private cascadeDistances: number[] = [];
+  private dummyTexture: THREE.DataTexture;
   
   private settings: ShadowSettings = {
     enabled: true,
@@ -52,6 +53,10 @@ export class ShadowSystem {
 
     this.initializeCascades();
     this.enableShadowMapping();
+
+    // Create a 1x1 dummy texture to break feedback loops during shadow pass
+    this.dummyTexture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat);
+    this.dummyTexture.needsUpdate = true;
   }
 
   private initializeCascades(): void {
@@ -73,14 +78,15 @@ export class ShadowSystem {
       this.shadowCameras.push(camera);
 
       // Create shadow map render target
+      // Create a valid color render target. We do not attach a depth-only
+      // texture here to preserve current sampling behavior (sampler2D of .texture).
       const shadowMap = new THREE.WebGLRenderTarget(
         this.settings.resolution,
         this.settings.resolution,
         {
           minFilter: THREE.LinearFilter,
           magFilter: THREE.LinearFilter,
-          format: THREE.DepthFormat,
-          type: THREE.UnsignedIntType,
+          format: THREE.RGBAFormat,
           stencilBuffer: false
         }
       );
@@ -154,12 +160,41 @@ export class ShadowSystem {
 
   private renderShadowMaps(scene: THREE.Scene): void {
     const originalRenderTarget = this.renderer.getRenderTarget();
-    
+
+    // Temporarily replace shadow map sampler uniforms to avoid framebuffer-texture feedback loop
+    const overrides: Array<{ material: THREE.ShaderMaterial; values: Record<string, any> }> = [];
+    scene.traverse(obj => {
+      const matAny: any = (obj as any).material;
+      const materials: any[] = Array.isArray(matAny) ? matAny : [matAny];
+      materials.forEach((mat) => {
+        if (mat && mat.isShaderMaterial && mat.uniforms) {
+          const u = mat.uniforms as Record<string, { value: any }>;
+          const touched: Record<string, any> = {};
+          let hasTouch = false;
+          ['shadowMap0', 'shadowMap1', 'shadowMap2'].forEach((key) => {
+            if (u[key]) {
+              touched[key] = u[key].value;
+              u[key].value = this.dummyTexture;
+              hasTouch = true;
+            }
+          });
+          if (hasTouch) overrides.push({ material: mat, values: touched });
+        }
+      });
+    });
+
     // Only render the first shadow map for stability
     this.renderer.setRenderTarget(this.shadowMaps[0]);
     this.renderer.render(scene, this.shadowCameras[0]);
-
     this.renderer.setRenderTarget(originalRenderTarget);
+
+    // Restore original uniforms
+    overrides.forEach(({ material, values }) => {
+      const u = material.uniforms as Record<string, { value: any }>;
+      Object.keys(values).forEach((key) => {
+        if (u[key]) u[key].value = values[key];
+      });
+    });
   }
 
   /**
