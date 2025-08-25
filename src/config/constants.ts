@@ -5,7 +5,8 @@
  * Invariants: Values are read-only at runtime.
  */
 
-export const CHUNK_SIZE = { x: 16, y: 64, z: 16 } as const;
+// Larger chunk dimensions to make each chunk span a much bigger area
+export const CHUNK_SIZE = { x: 48, y: 96, z: 48 } as const;
 
 export const PLAYER = {
   height: 1.8,
@@ -28,4 +29,3 @@ export const INTERACTION = {
 } as const;
 
 export type ChunkSize = typeof CHUNK_SIZE;
-

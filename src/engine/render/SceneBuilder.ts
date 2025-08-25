@@ -46,7 +46,7 @@ export function createCamera(aspect: number = 1): THREE.PerspectiveCamera {
     70,    // fov
     aspect, // aspect ratio
     0.1,   // near
-    512    // far - enough to see multiple chunks
+    1024    // far - increased to comfortably see larger worlds
   );
   
   camera.position.set(0, 80, 0); // Start well above terrain (BASE_HEIGHT=32 + AMPLITUDE=16)
