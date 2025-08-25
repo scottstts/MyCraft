@@ -215,7 +215,7 @@ async function start(canvas: HTMLCanvasElement) {
     cascades: 3,
     shadowDistance: 100,
     softness: 2.5,
-    bias: -0.0005,
+    bias: 0.0005,
     normalBias: 0.02,
     intensity: 0.6
   });
@@ -401,5 +401,4 @@ console.log('[Engine] Global functions exposed to window:', {
 
 export const engine = { start, stop };
 export type Engine = typeof engine;
-
 

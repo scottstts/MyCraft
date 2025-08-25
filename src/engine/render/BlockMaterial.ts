@@ -90,13 +90,27 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float shadowIntensity;
       uniform float shadowResolution;
 
-      // Simplified single shadow map sampling
+      // Hash-based noise for kernel rotation
+      float hash12(vec2 p) {
+          // Simple but decent hash
+          vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.x + p3.y) * p3.z);
+      }
+
+      // Poisson disk offsets (8 samples)
+      const int POISSON_COUNT = 8;
+      vec2 poisson[POISSON_COUNT];
+
+      // Compute a rotated, Poisson-disk PCF for softer, less banded shadows
       float sampleShadow(vec3 worldPos, vec3 normal, vec3 sunDir) {
           // Return 1.0 (no shadow) if shadow system is disabled
           if (shadowIntensity <= 0.0) return 1.0;
           
           // Transform world position to shadow map space using first shadow map
           vec4 shadowCoord = shadowMatrix0 * vec4(worldPos, 1.0);
+          // For orthographic light cameras w==1, but keep perspective divide for correctness/safety
+          shadowCoord.xyz /= shadowCoord.w;
           shadowCoord = shadowCoord * 0.5 + 0.5; // Convert to [0,1] range
           
           if (shadowCoord.x < 0.0 || shadowCoord.x > 1.0 || 
@@ -109,21 +123,32 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           float bias = shadowBias + shadowNormalBias * (1.0 - max(dot(normal, sunDir), 0.0));
           float shadowDepth = shadowCoord.z - bias;
           
-          // PCF sampling for soft shadows
+          // Prepare Poisson disk
+          poisson[0] = vec2(-0.613392, 0.617481);
+          poisson[1] = vec2(0.170019, -0.040254);
+          poisson[2] = vec2(-0.299417, 0.791925);
+          poisson[3] = vec2(0.645680, 0.493210);
+          poisson[4] = vec2(-0.651784, 0.717887);
+          poisson[5] = vec2(0.421003, 0.027070);
+          poisson[6] = vec2(0.161360, -0.914412);
+          poisson[7] = vec2(-0.725000, -0.045000);
+
+          // Kernel scale in texels, stable across resolutions
+          float texelSize = max(1.0 / shadowResolution, 0.0004);
+          float radius = max(shadowSoftness, 1.0) * texelSize * 2.5;
+
+          // Random rotation per-fragment to break banding
+          float angle = hash12(shadowCoord.xy * 1024.0) * 6.2831853; // 2*pi
+          float s = sin(angle), c = cos(angle);
+          mat2 rot = mat2(c, -s, s, c);
+
           float shadow = 0.0;
-          float texelSize = shadowSoftness * 0.001; // More visible softness scaling
-          int samples = 0;
-          
-          for (int x = -1; x <= 1; x++) {
-              for (int y = -1; y <= 1; y++) {
-                  vec2 offset = vec2(float(x), float(y)) * texelSize;
-                  float sampleDepth = texture2D(shadowMap0, shadowCoord.xy + offset).r;
-                  shadow += shadowDepth <= sampleDepth ? 1.0 : 0.0;
-                  samples++;
-              }
+          for (int i = 0; i < POISSON_COUNT; i++) {
+              vec2 offset = rot * poisson[i] * radius;
+              float sampleDepth = texture2D(shadowMap0, shadowCoord.xy + offset).r;
+              shadow += shadowDepth <= sampleDepth ? 1.0 : 0.0;
           }
-          
-          shadow /= float(samples);
+          shadow /= float(POISSON_COUNT);
           return mix(1.0 - shadowIntensity, 1.0, shadow);
       }
 
@@ -135,7 +160,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 ambient = vec3(0.4, 0.5, 0.6) * 0.4 * vAmbientOcclusion;
           
           // Main sun light
-          vec3 sunDir = normalize(vec3(0.5, 1.0, 0.3));
+          // Match sun direction to shadow light (50,120,50)
+          vec3 sunDir = normalize(vec3(50.0, 120.0, 50.0));
           vec3 sunColor = vec3(1.0, 0.95, 0.8) * 1.2;
           float sunDot = max(dot(normal, sunDir), 0.0);
           
@@ -216,7 +242,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowCascades: { value: 3 },
         shadowDistances: { value: [25, 50, 100] },
         shadowSoftness: { value: 2.0 },
-        shadowBias: { value: -0.0005 },
+        shadowBias: { value: 0.0005 },
         shadowNormalBias: { value: 0.02 },
         shadowIntensity: { value: 0.0 }, // Start with shadows disabled
         shadowResolution: { value: 1024 } // Default shadow resolution

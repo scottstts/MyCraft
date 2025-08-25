@@ -30,7 +30,7 @@ export class ShadowSystem {
     cascades: 3,
     shadowDistance: 100,
     softness: 2.5,
-    bias: -0.0005,
+    bias: 0.0005,
     normalBias: 0.02,
     intensity: 0.6
   };
@@ -77,19 +77,28 @@ export class ShadowSystem {
       const camera = new THREE.OrthographicCamera(-50, 50, 50, -50, 0.5, this.cascadeDistances[i]);
       this.shadowCameras.push(camera);
 
-      // Create shadow map render target
-      // Create a valid color render target. We do not attach a depth-only
-      // texture here to preserve current sampling behavior (sampler2D of .texture).
+      // Create shadow map render target with a depth texture for proper shadow sampling
       const shadowMap = new THREE.WebGLRenderTarget(
         this.settings.resolution,
         this.settings.resolution,
         {
-          minFilter: THREE.LinearFilter,
-          magFilter: THREE.LinearFilter,
+          minFilter: THREE.NearestFilter,
+          magFilter: THREE.NearestFilter,
           format: THREE.RGBAFormat,
+          depthBuffer: true,
           stencilBuffer: false
         }
       );
+
+      // Attach a depth texture (WebGL depth texture extension handled internally by three.js)
+      shadowMap.depthTexture = new THREE.DepthTexture(
+        this.settings.resolution,
+        this.settings.resolution,
+        THREE.UnsignedShortType
+      );
+      // Ensure depth format is correct (defaults are fine, but explicit for clarity)
+      shadowMap.depthTexture.format = THREE.DepthFormat;
+
       this.shadowMaps.push(shadowMap);
     }
   }
@@ -154,7 +163,28 @@ export class ShadowSystem {
     camera.position.copy(playerPos).add(sunOffset);
     camera.lookAt(playerPos);
     camera.updateProjectionMatrix();
-    camera.updateMatrixWorld();
+    camera.updateMatrixWorld(true);
+
+    // Shadow map texel-grid stabilization to prevent shimmering/"venetian blinds"
+    const frustumWidth = (camera.right as number) - (camera.left as number);
+    const frustumHeight = (camera.top as number) - (camera.bottom as number);
+    const texelSizeX = frustumWidth / this.settings.resolution;
+    const texelSizeY = frustumHeight / this.settings.resolution;
+
+    // Transform the center (playerPos) into light view space to compute sub-texel offset
+    const lightView = camera.matrixWorldInverse.clone();
+    const centerLS = playerPos.clone().applyMatrix4(lightView);
+    const offsetX = centerLS.x - Math.round(centerLS.x / texelSizeX) * texelSizeX;
+    const offsetY = centerLS.y - Math.round(centerLS.y / texelSizeY) * texelSizeY;
+
+    // Move the light camera in world space along its right/up axes by the negative offset
+    const rightAxis = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const upAxis = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    camera.position.addScaledVector(rightAxis, -offsetX);
+    camera.position.addScaledVector(upAxis, -offsetY);
+
+    // Recompute matrices after stabilization
+    camera.updateMatrixWorld(true);
   }
 
 
@@ -185,6 +215,8 @@ export class ShadowSystem {
 
     // Only render the first shadow map for stability
     this.renderer.setRenderTarget(this.shadowMaps[0]);
+    // Clear target to avoid artifacts from previous frames
+    this.renderer.clear(true, true, true);
     this.renderer.render(scene, this.shadowCameras[0]);
     this.renderer.setRenderTarget(originalRenderTarget);
 
@@ -205,7 +237,9 @@ export class ShadowSystem {
     
     // Shadow maps
     for (let i = 0; i < this.settings.cascades; i++) {
-      uniforms[`shadowMap${i}`] = { value: this.shadowMaps[i].texture };
+      // Provide the depth texture (actual shadow map) to the shader
+      const rt = this.shadowMaps[i];
+      uniforms[`shadowMap${i}`] = { value: (rt.depthTexture ?? rt.texture) };
       uniforms[`shadowMatrix${i}`] = { 
         value: new THREE.Matrix4()
           .multiply(this.shadowCameras[i].projectionMatrix)
