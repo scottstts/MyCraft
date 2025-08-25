@@ -24,6 +24,7 @@ export function CanvasHost() {
   const setPaused = useUIStore(s => s.setPaused)
   const setInGame = useUIStore(s => s.setInGame)
   const restartToken = useUIStore(s => s.restartToken)
+  const gameStarted = useUIStore(s => s.gameStarted)
 
   useEffect(() => {
     let engineApi: EngineApi | null = null
@@ -33,6 +34,7 @@ export function CanvasHost() {
     const setup = async () => {
       const canvas = canvasRef.current
       if (!canvas || !mounted) return
+      if (!gameStarted) return
       engineApi = await loadEngine()
       await engineApi.start(canvas)
       // After engine starts, initial state is out-of-game until pointer lock
@@ -59,7 +61,7 @@ export function CanvasHost() {
       if (removeListeners) removeListeners()
       engineApi?.stop()
     }
-  }, [restartToken, setPaused, setInGame])
+  }, [restartToken, setPaused, setInGame, gameStarted])
 
   // Prevent context menu on right click over canvas
   const onContextMenu = (e: React.MouseEvent) => e.preventDefault()
@@ -84,5 +86,4 @@ export function CanvasHost() {
 }
 
 export default CanvasHost
-
 

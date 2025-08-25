@@ -31,6 +31,15 @@ export interface MeshChunkRequest {
     chunkData: ChunkData;
     atlasConfig: AtlasConfig;
     blockRegistry: BlockDef[];
+    // Optional neighbor chunk data for border face culling
+    neighbors?: {
+      posX?: ChunkData;
+      negX?: ChunkData;
+      posY?: ChunkData;
+      negY?: ChunkData;
+      posZ?: ChunkData;
+      negZ?: ChunkData;
+    };
   };
 }
 

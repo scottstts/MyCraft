@@ -42,10 +42,14 @@ export class PlayerController {
   // Small epsilon to avoid sticking
   private static readonly EPS = 1e-5;
 
-  constructor(camera: THREE.PerspectiveCamera, world: World, input: InputSystem) {
+  // Optional world bounds (in world units). Inclusive min, exclusive max for center point.
+  private bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
+
+  constructor(camera: THREE.PerspectiveCamera, world: World, input: InputSystem, bounds?: { minX: number; maxX: number; minZ: number; maxZ: number }) {
     this.camera = camera;
     this.world = world;
     this.input = input;
+    if (bounds) this.bounds = bounds;
 
     // Ensure camera uses FPS-friendly rotation order
     this.camera.rotation.order = 'YXZ';
@@ -135,6 +139,34 @@ export class PlayerController {
     const maxY = minY + this.height;
     const minZ = nextZ - this.halfWidth;
     const maxZ = nextZ + this.halfWidth;
+
+    // Enforce world bounds (X/Z only) by clamping proposed center before collision test
+    if (this.bounds && (axis === 'x' || axis === 'z')) {
+      const hw = this.halfWidth + PlayerController.EPS;
+      if (axis === 'x') {
+        const min = this.bounds.minX + hw;
+        const max = this.bounds.maxX - hw;
+        if (nextX < min) {
+          this.camera.position.x = min;
+          return true;
+        }
+        if (nextX > max) {
+          this.camera.position.x = max;
+          return true;
+        }
+      } else if (axis === 'z') {
+        const min = this.bounds.minZ + hw;
+        const max = this.bounds.maxZ - hw;
+        if (nextZ < min) {
+          this.camera.position.z = min;
+          return true;
+        }
+        if (nextZ > max) {
+          this.camera.position.z = max;
+          return true;
+        }
+      }
+    }
 
     if (!this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) {
       // No collision; apply movement
@@ -247,6 +279,10 @@ export class PlayerController {
   isGrounded(): boolean {
     return this.grounded;
   }
-}
 
+  /** Update or clear world bounds */
+  setBounds(bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null): void {
+    this.bounds = bounds;
+  }
+}
 

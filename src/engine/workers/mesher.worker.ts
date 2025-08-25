@@ -41,7 +41,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
 };
 
 function handleMeshChunk(request: MeshChunkRequest): void {
-  const { key, chunkData, atlasConfig: receivedAtlasConfig, blockRegistry: receivedBlockRegistry } = request.payload;
+  const { key, chunkData, atlasConfig: receivedAtlasConfig, blockRegistry: receivedBlockRegistry, neighbors } = request.payload;
   
   // Update atlas config from main thread
   atlasConfig = receivedAtlasConfig;
@@ -61,7 +61,7 @@ function handleMeshChunk(request: MeshChunkRequest): void {
   }
   
   // Build mesh from chunk data
-  const mesh = buildChunkMesh(chunkData);
+  const mesh = buildChunkMesh(chunkData, neighbors);
   
   const response: ChunkMeshResponse = {
     type: 'CHUNK_MESH',
@@ -82,7 +82,14 @@ function handleMeshChunk(request: MeshChunkRequest): void {
 
 // Block registry is now provided from main thread, no hardcoded initialization needed
 
-function buildChunkMesh(chunkData: { voxels: Uint8Array }) {
+function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors?: {
+  posX?: { voxels: Uint8Array };
+  negX?: { voxels: Uint8Array };
+  posY?: { voxels: Uint8Array };
+  negY?: { voxels: Uint8Array };
+  posZ?: { voxels: Uint8Array };
+  negZ?: { voxels: Uint8Array };
+}) {
   const positions: number[] = [];
   const normals: number[] = [];
   const uvs: number[] = [];
@@ -115,8 +122,49 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }) {
           if (neighborX < 0 || neighborX >= CHUNK_SIZE.x ||
               neighborY < 0 || neighborY >= CHUNK_SIZE.y ||
               neighborZ < 0 || neighborZ >= CHUNK_SIZE.z) {
-            // Outside chunk - treat as air for now (V1 behavior)
-            shouldRenderFace = true;
+            // Outside chunk - consult neighbor data if provided
+            let neighborOpaque = false;
+            if (neighbors) {
+              if (neighborX === -1 && neighbors.negX) {
+                const nLx = CHUNK_SIZE.x - 1;
+                const nIndex = localToIndex(nLx, ly, lz);
+                const nId = neighbors.negX.voxels[nIndex];
+                const nDef = blockRegistry.get(nId);
+                neighborOpaque = !!(nDef && nDef.opaque);
+              } else if (neighborX === CHUNK_SIZE.x && neighbors.posX) {
+                const nLx = 0;
+                const nIndex = localToIndex(nLx, ly, lz);
+                const nId = neighbors.posX.voxels[nIndex];
+                const nDef = blockRegistry.get(nId);
+                neighborOpaque = !!(nDef && nDef.opaque);
+              } else if (neighborZ === -1 && neighbors.negZ) {
+                const nLz = CHUNK_SIZE.z - 1;
+                const nIndex = localToIndex(lx, ly, nLz);
+                const nId = neighbors.negZ.voxels[nIndex];
+                const nDef = blockRegistry.get(nId);
+                neighborOpaque = !!(nDef && nDef.opaque);
+              } else if (neighborZ === CHUNK_SIZE.z && neighbors.posZ) {
+                const nLz = 0;
+                const nIndex = localToIndex(lx, ly, nLz);
+                const nId = neighbors.posZ.voxels[nIndex];
+                const nDef = blockRegistry.get(nId);
+                neighborOpaque = !!(nDef && nDef.opaque);
+              } else if (neighborY === -1 && neighbors.negY) {
+                const nLy = CHUNK_SIZE.y - 1;
+                const nIndex = localToIndex(lx, nLy, lz);
+                const nId = neighbors.negY.voxels[nIndex];
+                const nDef = blockRegistry.get(nId);
+                neighborOpaque = !!(nDef && nDef.opaque);
+              } else if (neighborY === CHUNK_SIZE.y && neighbors.posY) {
+                const nLy = 0;
+                const nIndex = localToIndex(lx, nLy, lz);
+                const nId = neighbors.posY.voxels[nIndex];
+                const nDef = blockRegistry.get(nId);
+                neighborOpaque = !!(nDef && nDef.opaque);
+              }
+            }
+            // Render face only if no opaque neighbor present
+            shouldRenderFace = !neighborOpaque;
           } else {
             // Check neighbor block
             const neighborIndex = localToIndex(neighborX, neighborY, neighborZ);

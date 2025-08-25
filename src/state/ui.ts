@@ -34,6 +34,14 @@ export interface UIState {
   // Restart signal: incrementing token triggers restart side-effect in host
   restartToken: number;
   bumpRestartToken: () => void;
+
+  // Game start flow
+  gameStarted: boolean; // false shows StartPanel
+  setGameStarted: (started: boolean) => void;
+
+  // World sizing (non-persistent). User selects total chunks (prefer odd squares: 1, 9, 25...)
+  chunkCount: number; // total chunks to generate (default 9 = 3x3)
+  setChunkCount: (count: number) => void;
 }
 
 const DEFAULT_HOTBAR: number[] = [
@@ -64,11 +72,16 @@ export const useUIStore = create<UIState>((set) => ({
   setDebugVisible: (visible: boolean) => set({ debugVisible: visible }),
   restartToken: 0,
   bumpRestartToken: () => set((s) => ({ restartToken: s.restartToken + 1 })),
+
+  gameStarted: false,
+  setGameStarted: (started: boolean) => set({ gameStarted: started }),
+
+  chunkCount: 9,
+  setChunkCount: (count: number) => set({ chunkCount: Math.max(1, Math.floor(count)) }),
 }));
 
 export function getSelectedBlockId(): number | null {
   const { selectedSlot, hotbar } = useUIStore.getState();
   return hotbar[selectedSlot] ?? null;
 }
-
 

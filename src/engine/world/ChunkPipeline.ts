@@ -29,6 +29,7 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
   private pendingRequests = new Set<ChunkKey>();
   private atlasConfig: AtlasConfig | null = null;
   private blockRegistry: BlockDef[] = [];
+  private chunkDataMap: Map<ChunkKey, ChunkData> = new Map();
   
   constructor() {
     super();
@@ -102,27 +103,76 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
   
   private handleChunkDataResponse(response: ChunkDataResponse): void {
     const { key, payload: chunkData } = response;
-    
     this.pendingRequests.delete(key);
-    
-    // Send chunk data to mesher worker with atlas config and block registry
+
+    // Cache chunk data for neighbor-aware meshing
+    this.chunkDataMap.set(key, chunkData);
+
+    // Send chunk data to mesher worker with atlas config, registry, and neighbors
     if (!this.atlasConfig) {
       throw new Error('[ChunkPipeline] Atlas config must be set before requesting chunks');
     }
-    
+
+    const neighbors = this.buildNeighborsForKey(key);
     const meshRequest: MeshChunkRequest = {
       type: 'MESH_CHUNK',
-      payload: { 
-        key, 
-        chunkData, 
+      payload: {
+        key,
+        chunkData,
         atlasConfig: this.atlasConfig,
-        blockRegistry: this.blockRegistry
-      }
+        blockRegistry: this.blockRegistry,
+        neighbors,
+      },
     };
-    
     this.mesherWorker.postMessage(meshRequest);
-    
+
+    // Also re-mesh any already-present neighbors to cull shared faces now that this chunk exists
+    const [cx, cy, cz] = key.split(',').map((s) => parseInt(s, 10));
+    const neighborCoords: Array<[number, number, number]> = [
+      [cx + 1, cy, cz],
+      [cx - 1, cy, cz],
+      [cx, cy + 1, cz],
+      [cx, cy - 1, cz],
+      [cx, cy, cz + 1],
+      [cx, cy, cz - 1],
+    ];
+    for (const [nx, ny, nz] of neighborCoords) {
+      const nKey = chunkKey(nx, ny, nz);
+      const nData = this.chunkDataMap.get(nKey);
+      if (nData) {
+        const nNeighbors = this.buildNeighborsFor(nx, ny, nz);
+        const remeshReq: MeshChunkRequest = {
+          type: 'MESH_CHUNK',
+          payload: {
+            key: nKey,
+            chunkData: nData,
+            atlasConfig: this.atlasConfig,
+            blockRegistry: this.blockRegistry,
+            neighbors: nNeighbors,
+          },
+        };
+        this.mesherWorker.postMessage(remeshReq);
+      }
+    }
+
+    // Inform world about chunk data
     this.emit('CHUNK_READY', { key, chunkData });
+  }
+
+  private buildNeighborsForKey(key: ChunkKey) {
+    const [cx, cy, cz] = key.split(',').map((s) => parseInt(s, 10));
+    return this.buildNeighborsFor(cx, cy, cz);
+  }
+
+  private buildNeighborsFor(cx: number, cy: number, cz: number) {
+    return {
+      posX: this.chunkDataMap.get(chunkKey(cx + 1, cy, cz)),
+      negX: this.chunkDataMap.get(chunkKey(cx - 1, cy, cz)),
+      posY: this.chunkDataMap.get(chunkKey(cx, cy + 1, cz)),
+      negY: this.chunkDataMap.get(chunkKey(cx, cy - 1, cz)),
+      posZ: this.chunkDataMap.get(chunkKey(cx, cy, cz + 1)),
+      negZ: this.chunkDataMap.get(chunkKey(cx, cy, cz - 1)),
+    } as const;
   }
   
   private handleChunkMeshResponse(response: ChunkMeshResponse): void {
@@ -140,6 +190,8 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
       throw new Error('[ChunkPipeline] Atlas config must be set before meshing');
     }
     const key = chunkKey(cx, cy, cz);
+    this.chunkDataMap.set(key, chunkData);
+    const neighbors = this.buildNeighborsFor(cx, cy, cz);
     const meshRequest: MeshChunkRequest = {
       type: 'MESH_CHUNK',
       payload: {
@@ -147,6 +199,7 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
         chunkData,
         atlasConfig: this.atlasConfig,
         blockRegistry: this.blockRegistry,
+        neighbors,
       },
     };
     this.mesherWorker.postMessage(meshRequest);
@@ -159,5 +212,6 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
     this.generatorWorker.terminate();
     this.mesherWorker.terminate();
     this.pendingRequests.clear();
+    this.chunkDataMap.clear();
   }
 }

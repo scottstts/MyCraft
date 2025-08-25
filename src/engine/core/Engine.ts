@@ -18,6 +18,7 @@ import { SimplePostProcessor, type PostProcessorSettings } from '../render/Simpl
 import { ShadowSystem, type ShadowSettings } from '../render/ShadowSystem';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
+import { CHUNK_SIZE } from '../../config/constants';
 import { InputSystem } from '../systems/Input';
 import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
@@ -242,8 +243,23 @@ async function start(canvas: HTMLCanvasElement) {
     }
   });
 
+  // Determine world size (total chunks -> NxN grid)
+  const totalChunks = Math.max(1, Math.floor(useUIStore.getState().chunkCount || 9));
+  const sideApprox = Math.max(1, Math.round(Math.sqrt(totalChunks)));
+  const side = sideApprox; // UI constrains to odd squares; general handling if not
+  const negRadius = Math.floor(side / 2);
+  const posRadius = side - 1 - negRadius;
+
+  // Configure world bounds for player (invisible force field)
+  const bounds = {
+    minX: -negRadius * CHUNK_SIZE.x,
+    maxX: (posRadius + 1) * CHUNK_SIZE.x,
+    minZ: -negRadius * CHUNK_SIZE.z,
+    maxZ: (posRadius + 1) * CHUNK_SIZE.z,
+  } as const;
+
   // Player controller (movement + gravity + collisions)
-  playerController = new PlayerController(camera, world, inputSystem);
+  playerController = new PlayerController(camera, world, inputSystem, bounds);
   
   // Selection system (raycast + debug outline)
   selectionSystem = new SelectionSystem(camera, world, scene);
@@ -264,11 +280,9 @@ async function start(canvas: HTMLCanvasElement) {
     }
   });
   
-  // Request a grid of chunks around origin for testing terrain generation
-  const gridRadius = 2; // 5x5 grid of chunks
-  for (let cx = -gridRadius; cx <= gridRadius; cx++) {
-    for (let cz = -gridRadius; cz <= gridRadius; cz++) {
-      // Only request chunks at ground level (cy = 0) for now
+  // Request NxN grid of chunks around origin
+  for (let cx = -negRadius; cx <= posRadius; cx++) {
+    for (let cz = -negRadius; cz <= posRadius; cz++) {
       world.ensureChunk(cx, 0, cz);
     }
   }
@@ -407,4 +421,3 @@ console.log('[Engine] Global functions exposed to window:', {
 
 export const engine = { start, stop };
 export type Engine = typeof engine;
-
