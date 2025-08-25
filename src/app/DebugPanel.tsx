@@ -88,25 +88,40 @@ export const DebugPanel: React.FC = () => {
     return (
       <div style={{
         position: 'fixed',
-        top: '52px', // Position under the "Press P to pause" banner
-        left: '12px', // Align with the pause banner
+        top: '52px',
+        left: '12px',
         zIndex: 1000,
       }}>
         <button
           onClick={() => setDebugVisible(true)}
           style={{
-            padding: '6px 8px',
-            backgroundColor: 'rgba(0, 0, 0, 0.35)',
-            color: '#cfe9ef',
-            border: 'none',
-            borderRadius: '6px',
+            padding: '8px 12px',
+            background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+            color: '#f8f9fa',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '8px',
             cursor: 'pointer',
             fontSize: '12px',
-            fontFamily: 'monospace',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            fontWeight: 600,
+            letterSpacing: 0.3,
             pointerEvents: 'auto',
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+            transition: 'all 0.2s ease',
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.transform = 'translateY(-1px)'
+            e.currentTarget.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)'
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)'
+            e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.3)'
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
           }}
         >
-          Graphics Settings
+          ⚙️ Graphics Settings
         </button>
       </div>
     );
@@ -151,51 +166,119 @@ export const DebugPanel: React.FC = () => {
       position: 'fixed',
       top: '52px',
       left: '12px',
-      width: '280px',
-      backgroundColor: 'rgba(0, 0, 0, 0.9)',
-      border: '1px solid #666',
-      borderRadius: '8px',
-      padding: '12px',
-      color: 'white',
-      fontSize: '12px',
-      fontFamily: 'monospace',
+      width: '320px',
+      background: 'linear-gradient(145deg, rgba(32,39,49,0.98), rgba(22,27,35,0.98))',
+      border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: '16px',
+      padding: '20px',
+      color: '#f8f9fa',
+      fontSize: '13px',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       zIndex: 1000,
       maxHeight: '80vh',
       overflowY: 'auto',
+      backdropFilter: 'blur(20px)',
+      boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.4)',
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-        <h3 style={{ margin: 0, fontSize: '14px' }}>Graphics Settings</h3>
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        marginBottom: '20px',
+        paddingBottom: '16px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)'
+      }}>
+        <h3 style={{ 
+          margin: 0, 
+          fontSize: '18px', 
+          fontWeight: 700,
+          background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text'
+        }}>⚙️ Graphics Settings</h3>
         <button
           onClick={() => setDebugVisible(false)}
           style={{
-            background: 'none',
-            border: '1px solid #666',
-            color: 'white',
+            background: 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))',
+            border: '1px solid rgba(255,255,255,0.1)',
+            color: '#f8f9fa',
             cursor: 'pointer',
-            padding: '4px 8px',
-            borderRadius: '3px',
+            padding: '8px 10px',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: 600,
+            transition: 'all 0.2s ease',
+            outline: 'none'
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.08))'
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))'
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
           }}
         >
-          ×
+          ✕
         </button>
       </div>
 
       {/* SSAO Settings */}
-      <div style={{ marginBottom: '16px' }}>
-        <h4 style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#ccc' }}>Screen Space Ambient Occlusion</h4>
+      <div style={{ marginBottom: '20px' }}>
+        <h4 style={{ 
+          margin: '0 0 12px 0', 
+          fontSize: '14px', 
+          color: '#e2e8f0',
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: 0.5,
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          paddingBottom: '6px'
+        }}>Screen Space Ambient Occlusion</h4>
         
-        <label style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
+        <label style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          marginBottom: '10px',
+          cursor: 'pointer',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.03)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          transition: 'all 0.2s ease'
+        }}>
           <input
             type="checkbox"
             checked={settings.ssaoEnabled}
             onChange={(e) => handleSettingChange('ssaoEnabled', e.target.checked)}
-            style={{ marginRight: '8px' }}
+            style={{ 
+              marginRight: '10px',
+              transform: 'scale(1.1)' 
+            }}
           />
-          Enable SSAO
+          <span style={{ fontWeight: 500 }}>Enable SSAO</span>
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.ssaoEnabled ? 1 : 0.5 }}>
-          Intensity: {settings.ssaoIntensity.toFixed(2)}
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px', 
+          opacity: settings.ssaoEnabled ? 1 : 0.5,
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Intensity</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.ssaoIntensity.toFixed(2)}</span>
+          </div>
           <input
             type="range"
             min="0"
@@ -204,12 +287,36 @@ export const DebugPanel: React.FC = () => {
             value={settings.ssaoIntensity}
             onChange={(e) => handleSettingChange('ssaoIntensity', parseFloat(e.target.value))}
             disabled={!settings.ssaoEnabled}
-            style={{ width: '100%', marginTop: '4px' }}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
           />
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.ssaoEnabled ? 1 : 0.5 }}>
-          Radius: {settings.ssaoRadius.toFixed(3)}
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px', 
+          opacity: settings.ssaoEnabled ? 1 : 0.5,
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Radius</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.ssaoRadius.toFixed(3)}</span>
+          </div>
           <input
             type="range"
             min="0.05"
@@ -218,27 +325,73 @@ export const DebugPanel: React.FC = () => {
             value={settings.ssaoRadius}
             onChange={(e) => handleSettingChange('ssaoRadius', parseFloat(e.target.value))}
             disabled={!settings.ssaoEnabled}
-            style={{ width: '100%', marginTop: '4px' }}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
           />
         </label>
       </div>
 
       {/* Bloom Settings */}
-      <div style={{ marginBottom: '16px' }}>
-        <h4 style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#ccc' }}>Bloom Effects</h4>
+      <div style={{ marginBottom: '20px' }}>
+        <h4 style={{ 
+          margin: '0 0 12px 0', 
+          fontSize: '14px', 
+          color: '#e2e8f0',
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: 0.5,
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          paddingBottom: '6px'
+        }}>Bloom Effects</h4>
         
-        <label style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
+        <label style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          marginBottom: '10px',
+          cursor: 'pointer',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.03)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          transition: 'all 0.2s ease'
+        }}>
           <input
             type="checkbox"
             checked={settings.bloomEnabled}
             onChange={(e) => handleSettingChange('bloomEnabled', e.target.checked)}
-            style={{ marginRight: '8px' }}
+            style={{ 
+              marginRight: '10px',
+              transform: 'scale(1.1)' 
+            }}
           />
-          Enable Bloom
+          <span style={{ fontWeight: 500 }}>Enable Bloom</span>
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.bloomEnabled ? 1 : 0.5 }}>
-          Strength: {settings.bloomStrength.toFixed(2)}
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px', 
+          opacity: settings.bloomEnabled ? 1 : 0.5,
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Strength</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.bloomStrength.toFixed(2)}</span>
+          </div>
           <input
             type="range"
             min="0"
@@ -247,12 +400,36 @@ export const DebugPanel: React.FC = () => {
             value={settings.bloomStrength}
             onChange={(e) => handleSettingChange('bloomStrength', parseFloat(e.target.value))}
             disabled={!settings.bloomEnabled}
-            style={{ width: '100%', marginTop: '4px' }}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
           />
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.bloomEnabled ? 1 : 0.5 }}>
-          Threshold: {settings.bloomThreshold.toFixed(2)}
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px', 
+          opacity: settings.bloomEnabled ? 1 : 0.5,
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Threshold</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.bloomThreshold.toFixed(2)}</span>
+          </div>
           <input
             type="range"
             min="0"
@@ -261,28 +438,74 @@ export const DebugPanel: React.FC = () => {
             value={settings.bloomThreshold}
             onChange={(e) => handleSettingChange('bloomThreshold', parseFloat(e.target.value))}
             disabled={!settings.bloomEnabled}
-            style={{ width: '100%', marginTop: '4px' }}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
           />
         </label>
       </div>
 
       {/* Shadow Settings */}
-      <div style={{ marginBottom: '16px' }}>
-        <h4 style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#ccc' }}>Dynamic Shadows</h4>
+      <div style={{ marginBottom: '20px' }}>
+        <h4 style={{ 
+          margin: '0 0 12px 0', 
+          fontSize: '14px', 
+          color: '#e2e8f0',
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: 0.5,
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          paddingBottom: '6px'
+        }}>Dynamic Shadows</h4>
         
-        <label style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
+        <label style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          marginBottom: '10px',
+          cursor: 'pointer',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.03)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          transition: 'all 0.2s ease'
+        }}>
           <input
             type="checkbox"
             checked={settings.shadowEnabled}
             onChange={(e) => handleSettingChange('shadowEnabled', e.target.checked)}
-            style={{ marginRight: '8px' }}
+            style={{ 
+              marginRight: '10px',
+              transform: 'scale(1.1)' 
+            }}
           />
-          Enable Shadows
+          <span style={{ fontWeight: 500 }}>Enable Shadows</span>
         </label>
 
 
-        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
-          Distance: {settings.shadowDistance}
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px', 
+          opacity: settings.shadowEnabled ? 1 : 0.5,
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Distance</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.shadowDistance}</span>
+          </div>
           <input
             type="range"
             min="50"
@@ -291,14 +514,38 @@ export const DebugPanel: React.FC = () => {
             value={settings.shadowDistance}
             onChange={(e) => handleSettingChange('shadowDistance', parseFloat(e.target.value))}
             disabled={!settings.shadowEnabled}
-            style={{ width: '100%', marginTop: '4px' }}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
           />
         </label>
 
         
 
-        <label style={{ display: 'block', marginBottom: '6px', opacity: settings.shadowEnabled ? 1 : 0.5 }}>
-          Intensity: {settings.shadowIntensity.toFixed(2)}
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px', 
+          opacity: settings.shadowEnabled ? 1 : 0.5,
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Intensity</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.shadowIntensity.toFixed(2)}</span>
+          </div>
           <input
             type="range"
             min="0"
@@ -307,17 +554,49 @@ export const DebugPanel: React.FC = () => {
             value={settings.shadowIntensity}
             onChange={(e) => handleSettingChange('shadowIntensity', parseFloat(e.target.value))}
             disabled={!settings.shadowEnabled}
-            style={{ width: '100%', marginTop: '4px' }}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
           />
         </label>
       </div>
 
       {/* Color Settings */}
       <div>
-        <h4 style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#ccc' }}>Color Grading</h4>
+        <h4 style={{ 
+          margin: '0 0 12px 0', 
+          fontSize: '14px', 
+          color: '#e2e8f0',
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: 0.5,
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          paddingBottom: '6px'
+        }}>Color Grading</h4>
         
-        <label style={{ display: 'block', marginBottom: '6px' }}>
-          Exposure: {settings.exposure.toFixed(2)}
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Exposure</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.exposure.toFixed(2)}</span>
+          </div>
           <input
             type="range"
             min="0.5"
@@ -325,12 +604,35 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.exposure}
             onChange={(e) => handleSettingChange('exposure', parseFloat(e.target.value))}
-            style={{ width: '100%', marginTop: '4px' }}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
           />
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
-          Contrast: {settings.contrast.toFixed(2)}
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Contrast</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.contrast.toFixed(2)}</span>
+          </div>
           <input
             type="range"
             min="0.5"
@@ -338,12 +640,35 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.contrast}
             onChange={(e) => handleSettingChange('contrast', parseFloat(e.target.value))}
-            style={{ width: '100%', marginTop: '4px' }}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
           />
         </label>
 
-        <label style={{ display: 'block', marginBottom: '6px' }}>
-          Saturation: {settings.saturation.toFixed(2)}
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Saturation</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.saturation.toFixed(2)}</span>
+          </div>
           <input
             type="range"
             min="0.5"
@@ -351,7 +676,14 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.saturation}
             onChange={(e) => handleSettingChange('saturation', parseFloat(e.target.value))}
-            style={{ width: '100%', marginTop: '4px' }}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
           />
         </label>
       </div>

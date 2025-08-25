@@ -91,17 +91,116 @@ export function PauseMenu() {
   const setGameStarted = useUIStore(s => s.setGameStarted)
   if (!paused) return null
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(2px)' }}>
-      <div style={{ minWidth: 360, padding: 20, background: 'linear-gradient(180deg, rgba(28,31,36,0.98), rgba(18,20,23,0.98))', borderRadius: 10, color: '#eaeaea', boxShadow: '0 12px 36px rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: 0.5 }}>Paused</div>
+    <div style={{ 
+      position: 'absolute', 
+      inset: 0, 
+      display: 'flex', 
+      alignItems: 'center', 
+      justifyContent: 'center', 
+      background: 'rgba(0,0,0,0.75)', 
+      backdropFilter: 'blur(20px)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    }}>
+      <div style={{ 
+        width: 420, 
+        padding: 32, 
+        background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))', 
+        borderRadius: 16, 
+        color: '#f8f9fa', 
+        boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.4)', 
+        border: '1px solid rgba(255,255,255,0.08)'
+      }}>
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          marginBottom: 24,
+          paddingBottom: 16,
+          borderBottom: '1px solid rgba(255,255,255,0.06)'
+        }}>
+          <div style={{ 
+            fontSize: 28, 
+            fontWeight: 800, 
+            letterSpacing: -0.5,
+            background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text'
+          }}>
+            Game Paused
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 12 }}>
-          <button onClick={() => setPaused(false)} style={{ flex: 1, padding: '10px 14px', background: 'linear-gradient(180deg,#2ea043,#1f6f2e)', color: '#fff', border: '1px solid #1d5b28', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>Resume</button>
-          <button onClick={() => { setGameStarted(false); bumpRestartToken(); setPaused(false) }} style={{ flex: 1, padding: '10px 14px', background: 'linear-gradient(180deg,#3a7bd5,#2a5298)', color: '#fff', border: '1px solid #243f7a', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>Restart</button>
+        <div style={{ display: 'flex', gap: 16 }}>
+          <button 
+            onClick={() => setPaused(false)} 
+            style={{ 
+              flex: 1, 
+              padding: '16px 24px', 
+              background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', 
+              color: '#fff', 
+              border: 'none', 
+              borderRadius: 12, 
+              cursor: 'pointer', 
+              fontWeight: 700,
+              fontSize: 14,
+              letterSpacing: 0.5,
+              textTransform: 'uppercase',
+              boxShadow: '0 8px 24px rgba(79,172,254,0.4)',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              outline: 'none'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)'
+              e.currentTarget.style.boxShadow = '0 12px 32px rgba(79,172,254,0.5)'
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.boxShadow = '0 8px 24px rgba(79,172,254,0.4)'
+            }}
+          >
+            Resume
+          </button>
+          <button 
+            onClick={() => { setGameStarted(false); bumpRestartToken(); setPaused(false) }} 
+            style={{ 
+              flex: 1, 
+              padding: '16px 24px', 
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 
+              color: '#fff', 
+              border: 'none', 
+              borderRadius: 12, 
+              cursor: 'pointer', 
+              fontWeight: 700,
+              fontSize: 14,
+              letterSpacing: 0.5,
+              textTransform: 'uppercase',
+              boxShadow: '0 8px 24px rgba(102,126,234,0.4)',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              outline: 'none'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)'
+              e.currentTarget.style.boxShadow = '0 12px 32px rgba(102,126,234,0.5)'
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.boxShadow = '0 8px 24px rgba(102,126,234,0.4)'
+            }}
+          >
+            Restart
+          </button>
         </div>
         {!inGame && (
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>Click the canvas to enter the game.</div>
+          <div style={{ 
+            marginTop: 20, 
+            fontSize: 12, 
+            color: '#64748b',
+            textAlign: 'center',
+            fontStyle: 'italic',
+            lineHeight: 1.4
+          }}>
+            Click the canvas to enter the game and gain camera control.
+          </div>
         )}
       </div>
     </div>
