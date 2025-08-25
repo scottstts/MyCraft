@@ -20,7 +20,10 @@ const ICONS: Record<number, string> = {
 
 export function Hotbar() {
   const selectedSlot = useUIStore(s => s.selectedSlot)
+  const gameStarted = useUIStore(s => s.gameStarted)
   const slots = useInventory(s => s.slots)
+
+  if (!gameStarted) return null
 
   return (
     <div style={{ position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 4, padding: 4, background: 'rgba(0,0,0,0.25)', borderRadius: 6 }}>
@@ -49,8 +52,12 @@ export function Hotbar() {
 }
 
 export function Crosshair() {
+  const gameStarted = useUIStore(s => s.gameStarted)
   const size = 14
   const thickness = 2
+
+  if (!gameStarted) return null
+
   return (
     <div style={{ position: 'absolute', left: '50%', top: '50%', pointerEvents: 'none' }}>
       <div style={{ position: 'absolute', width: size, height: thickness, background: '#fff', transform: 'translate(-50%, -50%)' }} />
