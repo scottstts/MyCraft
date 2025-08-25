@@ -6,18 +6,28 @@
 
 import { createNoise2D } from 'simplex-noise';
 
-// Must roughly mirror generator.worker.ts
-const BASE_HEIGHT = 38;
-const PLAINS_AMPLITUDE = 18;
-const MOUNTAIN_AMPLITUDE = 38;
+// Must roughly mirror generator.worker.ts island configuration
 export const WATER_LEVEL = 42; // keep in sync with generator.worker.ts
+const BEDROCK_LEVEL = 3;
 
-const PLAINS_SCALE = 0.007;
-const HILLS_SCALE = 0.015;
-const MOUNTAIN_SCALE = 0.02;
-const BIOME_SCALE = 0.0025;
-const WARP_SCALE = 0.02;
-const WARP_AMPLITUDE = 8.0;
+// Island shape parameters
+const ISLAND_RADIUS_BASE = 0.7;
+const COASTLINE_NOISE_SCALE = 0.02;
+const COASTLINE_NOISE_AMP = 0.15;
+
+// Terrain noise scales and amplitudes
+const ELEVATION_SCALE = 0.008;
+const ELEVATION_AMPLITUDE = 25;
+const HILLS_SCALE = 0.02;
+const HILLS_AMPLITUDE = 12;
+const DETAIL_SCALE = 0.08;
+const DETAIL_AMPLITUDE = 2;
+const WARP_SCALE = 0.015;
+const WARP_AMPLITUDE = 6.0;
+
+// Lake generation parameters
+const LAKE_THRESHOLD = -0.3;
+const LAKE_DEPTH = 8;
 
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
@@ -40,17 +50,6 @@ function fbm(noise: (x: number, z: number) => number, x: number, z: number, octa
   return sumAmp > 0 ? sum / sumAmp : 0;
 }
 
-function ridge(noise: (x: number, z: number) => number, x: number, z: number, octaves = 3, lacunarity = 2.0, gain = 0.5, exponent = 1.7): number {
-  let amp = 1.0, sum = 0.0, sumAmp = 0.0;
-  let fx = x, fz = z;
-  for (let i = 0; i < octaves; i++) {
-    const n = 1 - Math.abs(noise(fx, fz));
-    sum += Math.pow(n, exponent) * amp;
-    sumAmp += amp;
-    fx *= lacunarity; fz *= lacunarity; amp *= gain;
-  }
-  return sumAmp > 0 ? (sum / sumAmp) * 2 - 1 : 0;
-}
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
@@ -58,40 +57,74 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 }
 
 /**
- * Get terrain height at a specific world position
+ * Get terrain height at a specific world position using island generation
  */
 export function getHeightAtPosition(x: number, z: number, seed: number): number {
-  const rngPlains = mulberry32(seed ^ 0x9e3779b9);
-  const rngHills  = mulberry32(seed ^ 0x85ebca6b);
-  const rngMount  = mulberry32(seed ^ 0xc2b2ae35);
-  const rngBiome  = mulberry32(seed ^ 0x27d4eb2f);
-  const rngWarpX  = mulberry32(seed ^ 0xa24baed6);
-  const rngWarpZ  = mulberry32(seed ^ 0x3bd39e10);
+  const rngCoastline = mulberry32(seed ^ 0x9e3779b9);
+  const rngElevation = mulberry32(seed ^ 0x85ebca6b);
+  const rngHills     = mulberry32(seed ^ 0xc2b2ae35);
+  const rngDetail    = mulberry32(seed ^ 0x27d4eb2f);
+  const rngWarpX     = mulberry32(seed ^ 0xa24baed6);
+  const rngWarpZ     = mulberry32(seed ^ 0x3bd39e10);
+  const rngLakes     = mulberry32(seed ^ 0x1a2b3c4d);
 
-  const nPlains = createNoise2D(rngPlains);
-  const nHills  = createNoise2D(rngHills);
-  const nMount  = createNoise2D(rngMount);
-  const nBiome  = createNoise2D(rngBiome);
-  const nWarpX  = createNoise2D(rngWarpX);
-  const nWarpZ  = createNoise2D(rngWarpZ);
+  const nCoastline = createNoise2D(rngCoastline);
+  const nElevation = createNoise2D(rngElevation);
+  const nHills     = createNoise2D(rngHills);
+  const nDetail    = createNoise2D(rngDetail);
+  const nWarpX     = createNoise2D(rngWarpX);
+  const nWarpZ     = createNoise2D(rngWarpZ);
+  const nLakes     = createNoise2D(rngLakes);
 
+  // Estimate world bounds for island shape (assume 7x7 default, 48x48 chunks)
+  const worldRadius = 7 * 48 / 2;
+
+  // Domain warp for natural terrain variation
   const wx = nWarpX(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;
   const wz = nWarpZ(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;
   const sx = x + wx;
   const sz = z + wz;
 
-  const biome = (nBiome(x * BIOME_SCALE, z * BIOME_SCALE) + 1) * 0.5;
-  const mountainMask = smoothstep(0.35, 0.8, biome);
+  // Distance from center for island shape
+  const distanceFromCenter = Math.sqrt(x * x + z * z);
+  const normalizedDistance = distanceFromCenter / worldRadius;
 
-  const plains = fbm((a, b) => nPlains(a * PLAINS_SCALE, b * PLAINS_SCALE), sx, sz, 4, 2.0, 0.5);
-  const hills  = fbm((a, b) => nHills(a * HILLS_SCALE, b * HILLS_SCALE), sx, sz, 3, 2.0, 0.5);
-  const plainsHills = (plains * 0.7 + hills * 0.3);
-  const mountains = ridge((a, b) => nMount(a * MOUNTAIN_SCALE, b * MOUNTAIN_SCALE), sx, sz, 3, 2.0, 0.5, 1.7);
+  // Island mask with noisy coastline
+  const coastlineNoise = nCoastline(x * COASTLINE_NOISE_SCALE, z * COASTLINE_NOISE_SCALE);
+  const islandRadius = ISLAND_RADIUS_BASE + coastlineNoise * COASTLINE_NOISE_AMP;
+  const isLand = normalizedDistance < islandRadius;
 
-  const hPlains = PLAINS_AMPLITUDE * plainsHills;
-  const hMount  = MOUNTAIN_AMPLITUDE * mountains;
-  const height  = BASE_HEIGHT + (1 - mountainMask) * hPlains + mountainMask * hMount;
-  return Math.floor(height);
+  if (!isLand) {
+    // Ocean floor
+    return WATER_LEVEL - 10;
+  }
+
+  // Island terrain generation
+  const falloffMask = 1.0 - smoothstep(islandRadius * 0.6, islandRadius * 0.95, normalizedDistance);
+  
+  // Base elevation rising from coast to center
+  const baseElevation = WATER_LEVEL + falloffMask * 20;
+  
+  // Large-scale elevation changes
+  const elevation = fbm((a, b) => nElevation(a * ELEVATION_SCALE, b * ELEVATION_SCALE), sx, sz, 4, 2.0, 0.6);
+  const elevationHeight = elevation * ELEVATION_AMPLITUDE * falloffMask;
+  
+  // Hills and valleys
+  const hills = fbm((a, b) => nHills(a * HILLS_SCALE, b * HILLS_SCALE), sx, sz, 3, 2.0, 0.5);
+  const hillHeight = hills * HILLS_AMPLITUDE * falloffMask;
+  
+  // Fine detail
+  const detail = nDetail(sx * DETAIL_SCALE, sz * DETAIL_SCALE);
+  const detailHeight = detail * DETAIL_AMPLITUDE;
+  
+  // Lake generation (depressions in terrain)
+  const lakeNoise = nLakes(x * 0.01, z * 0.01);
+  const lakeDepression = lakeNoise < LAKE_THRESHOLD ? 
+    (lakeNoise - LAKE_THRESHOLD) * LAKE_DEPTH * falloffMask : 0;
+  
+  const totalHeight = baseElevation + elevationHeight + hillHeight + detailHeight + lakeDepression;
+  
+  return Math.floor(Math.max(BEDROCK_LEVEL + 1, totalHeight));
 }
 
 /**

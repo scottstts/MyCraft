@@ -15,19 +15,28 @@ import type {
 import type { ChunkData } from '../../types/index.js';
 import { isGenerateChunkRequest } from '../../types/workers.js';
 
-// Noise configuration (richer terrain)
-const BASE_HEIGHT = 38;                 // Base terrain height
-const PLAINS_AMPLITUDE = 18;            // Plains variation
-const MOUNTAIN_AMPLITUDE = 38;          // Mountain variation
-const BEDROCK_LEVEL = 3;                // Stone below this level
+// Island terrain configuration
 const WATER_LEVEL = 42;                 // Global water table
+const BEDROCK_LEVEL = 3;                // Stone below this level
 
-const PLAINS_SCALE = 0.007;             // Larger scale -> smoother plains
-const HILLS_SCALE = 0.015;              // Mid-scale detail
-const MOUNTAIN_SCALE = 0.02;            // Mountain noise scale
-const BIOME_SCALE = 0.0025;             // Biome blending scale
-const WARP_SCALE = 0.02;                // Domain warp scale
-const WARP_AMPLITUDE = 8.0;             // Domain warp strength (in world units)
+// Island shape parameters
+const ISLAND_RADIUS_BASE = 0.7;         // Base island radius as fraction of world size
+const COASTLINE_NOISE_SCALE = 0.02;     // Coastline variation frequency
+const COASTLINE_NOISE_AMP = 0.15;       // Coastline variation amplitude (fraction of radius)
+
+// Terrain noise scales and amplitudes
+const ELEVATION_SCALE = 0.008;          // Large-scale elevation changes
+const ELEVATION_AMPLITUDE = 25;         // Height variation from elevation noise
+const HILLS_SCALE = 0.02;               // Medium-scale hills and valleys
+const HILLS_AMPLITUDE = 12;             // Hills height variation
+const DETAIL_SCALE = 0.08;              // Fine detail noise
+const DETAIL_AMPLITUDE = 2;             // Small-scale height variation
+const WARP_SCALE = 0.015;               // Domain warp scale
+const WARP_AMPLITUDE = 6.0;             // Domain warp strength
+
+// Lake generation parameters
+const LAKE_THRESHOLD = -0.3;            // Elevation threshold for lakes
+const LAKE_DEPTH = 8;                   // Maximum lake depth
 
 // Seeded RNG for simplex-noise
 function mulberry32(seed: number): () => number {
@@ -56,68 +65,83 @@ function fbm(noise: (x: number, z: number) => number, x: number, z: number, octa
   return sumAmp > 0 ? sum / sumAmp : 0;
 }
 
-function ridge(noise: (x: number, z: number) => number, x: number, z: number, octaves = 3, lacunarity = 2.0, gain = 0.5, exponent = 1.5): number {
-  // Ridged multifractal: 1 - abs(noise)
-  let amp = 1.0;
-  let sum = 0.0;
-  let sumAmp = 0.0;
-  let fx = x;
-  let fz = z;
-  for (let i = 0; i < octaves; i++) {
-    const n = 1 - Math.abs(noise(fx, fz)); // [0,2]
-    sum += Math.pow(n, exponent) * amp;
-    sumAmp += amp;
-    fx *= lacunarity;
-    fz *= lacunarity;
-    amp *= gain;
-  }
-  return sumAmp > 0 ? (sum / sumAmp) * 2 - 1 : 0; // roughly [-1,1]
-}
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
 }
 
-// Height calculation with domain warp and biome blending
+// Island terrain generation with natural features
 function createHeightFunction(seed: number) {
-  const rngPlains = mulberry32(seed ^ 0x9e3779b9);
-  const rngHills  = mulberry32(seed ^ 0x85ebca6b);
-  const rngMount  = mulberry32(seed ^ 0xc2b2ae35);
-  const rngBiome  = mulberry32(seed ^ 0x27d4eb2f);
-  const rngWarpX  = mulberry32(seed ^ 0xa24baed6);
-  const rngWarpZ  = mulberry32(seed ^ 0x3bd39e10);
+  const rngCoastline = mulberry32(seed ^ 0x9e3779b9);
+  const rngElevation = mulberry32(seed ^ 0x85ebca6b);
+  const rngHills     = mulberry32(seed ^ 0xc2b2ae35);
+  const rngDetail    = mulberry32(seed ^ 0x27d4eb2f);
+  const rngWarpX     = mulberry32(seed ^ 0xa24baed6);
+  const rngWarpZ     = mulberry32(seed ^ 0x3bd39e10);
+  const rngLakes     = mulberry32(seed ^ 0x1a2b3c4d);
 
-  const nPlains = createNoise2D(rngPlains);
-  const nHills  = createNoise2D(rngHills);
-  const nMount  = createNoise2D(rngMount);
-  const nBiome  = createNoise2D(rngBiome);
-  const nWarpX  = createNoise2D(rngWarpX);
-  const nWarpZ  = createNoise2D(rngWarpZ);
+  const nCoastline = createNoise2D(rngCoastline);
+  const nElevation = createNoise2D(rngElevation);
+  const nHills     = createNoise2D(rngHills);
+  const nDetail    = createNoise2D(rngDetail);
+  const nWarpX     = createNoise2D(rngWarpX);
+  const nWarpZ     = createNoise2D(rngWarpZ);
+  const nLakes     = createNoise2D(rngLakes);
 
-  return (x: number, z: number): number => {
-    // Domain warp
+  // Estimate world bounds for island shape (assume 7x7 default, 48x48 chunks)
+  const worldRadius = 7 * 48 / 2; // Approximate world radius
+
+  return (x: number, z: number): { height: number; isLand: boolean } => {
+    // Domain warp for natural terrain variation
     const wx = nWarpX(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;
     const wz = nWarpZ(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;
     const sx = x + wx;
     const sz = z + wz;
 
-    // Biome mask in [0,1]
-    const biome = (nBiome(x * BIOME_SCALE, z * BIOME_SCALE) + 1) * 0.5;
-    const mountainMask = smoothstep(0.35, 0.8, biome);
+    // Distance from center for island shape
+    const distanceFromCenter = Math.sqrt(x * x + z * z);
+    const normalizedDistance = distanceFromCenter / worldRadius;
 
-    // Plains + hills
-    const plains = fbm((a, b) => nPlains(a * PLAINS_SCALE, b * PLAINS_SCALE), sx, sz, 4, 2.0, 0.5);
-    const hills  = fbm((a, b) => nHills(a * HILLS_SCALE, b * HILLS_SCALE), sx, sz, 3, 2.0, 0.5);
-    const plainsHills = (plains * 0.7 + hills * 0.3);
+    // Island mask with noisy coastline
+    const coastlineNoise = nCoastline(x * COASTLINE_NOISE_SCALE, z * COASTLINE_NOISE_SCALE);
+    const islandRadius = ISLAND_RADIUS_BASE + coastlineNoise * COASTLINE_NOISE_AMP;
+    const isLand = normalizedDistance < islandRadius;
 
-    // Mountains (ridged)
-    const mountains = ridge((a, b) => nMount(a * MOUNTAIN_SCALE, b * MOUNTAIN_SCALE), sx, sz, 3, 2.0, 0.5, 1.7);
+    if (!isLand) {
+      // Ocean floor
+      return { height: WATER_LEVEL - 10, isLand: false };
+    }
 
-    const hPlains = PLAINS_AMPLITUDE * plainsHills;     // ~[-PLAINS_AMPLITUDE, +PLAINS_AMPLITUDE]
-    const hMount  = MOUNTAIN_AMPLITUDE * mountains;     // ~[-MOUNTAIN_AMPLITUDE, +MOUNTAIN_AMPLITUDE]
-    const height  = BASE_HEIGHT + (1 - mountainMask) * hPlains + mountainMask * hMount;
-    return Math.floor(height);
+    // Island terrain generation
+    const falloffMask = 1.0 - smoothstep(islandRadius * 0.6, islandRadius * 0.95, normalizedDistance);
+    
+    // Base elevation rising from coast to center
+    const baseElevation = WATER_LEVEL + falloffMask * 20;
+    
+    // Large-scale elevation changes
+    const elevation = fbm((a, b) => nElevation(a * ELEVATION_SCALE, b * ELEVATION_SCALE), sx, sz, 4, 2.0, 0.6);
+    const elevationHeight = elevation * ELEVATION_AMPLITUDE * falloffMask;
+    
+    // Hills and valleys
+    const hills = fbm((a, b) => nHills(a * HILLS_SCALE, b * HILLS_SCALE), sx, sz, 3, 2.0, 0.5);
+    const hillHeight = hills * HILLS_AMPLITUDE * falloffMask;
+    
+    // Fine detail
+    const detail = nDetail(sx * DETAIL_SCALE, sz * DETAIL_SCALE);
+    const detailHeight = detail * DETAIL_AMPLITUDE;
+    
+    // Lake generation (depressions in terrain)
+    const lakeNoise = nLakes(x * 0.01, z * 0.01);
+    const lakeDepression = lakeNoise < LAKE_THRESHOLD ? 
+      (lakeNoise - LAKE_THRESHOLD) * LAKE_DEPTH * falloffMask : 0;
+    
+    const totalHeight = baseElevation + elevationHeight + hillHeight + detailHeight + lakeDepression;
+    
+    return { 
+      height: Math.floor(Math.max(BEDROCK_LEVEL + 1, totalHeight)), 
+      isLand: true 
+    };
   };
 }
 
@@ -166,7 +190,7 @@ function generateTerrain(
   cx: number,
   cy: number,
   cz: number,
-  heightAt: (x: number, z: number) => number
+  heightAt: (x: number, z: number) => { height: number; isLand: boolean }
 ): void {
   // Block IDs
   const AIR = 0;
@@ -183,40 +207,68 @@ function generateTerrain(
       const worldX = cx * CHUNK_SIZE.x + lx;
       const worldZ = cz * CHUNK_SIZE.z + lz;
       
-      // Generate terrain height
-      const height = heightAt(worldX, worldZ);
-      // Approximate slope: difference with neighbors (forward differences)
-      const hdx = Math.abs(heightAt(worldX + 1, worldZ) - height);
-      const hdz = Math.abs(heightAt(worldX, worldZ + 1) - height);
-      const slope = Math.max(hdx, hdz);
+      // Generate terrain data
+      const terrainData = heightAt(worldX, worldZ);
+      const { height, isLand } = terrainData;
+      
+      // Calculate slope for surface block determination
+      const heightNeighborX = heightAt(worldX + 1, worldZ).height;
+      const heightNeighborZ = heightAt(worldX, worldZ + 1).height;
+      const slope = Math.max(Math.abs(heightNeighborX - height), Math.abs(heightNeighborZ - height));
+      
+      // Distance from water level for beach determination
+      const distanceFromWater = height - WATER_LEVEL;
       
       // Fill column from bottom up
       for (let ly = 0; ly < CHUNK_SIZE.y; ly++) {
         const worldY = cy * CHUNK_SIZE.y + ly;
         const index = localToIndex(lx, ly, lz);
         
-        // Natural layering rules
-        // - Ground: stone deep, then 2 layers of dirt (or sand near water), then grass top unless steep slope => exposed stone
-        // - Water: fill up to WATER_LEVEL for deeper lakes
         if (worldY <= height) {
+          // Solid blocks (land)
           if (worldY < BEDROCK_LEVEL) {
+            // Bedrock layer
             voxels[index] = STONE;
           } else if (worldY === height) {
-            if (height <= WATER_LEVEL + 1) {
+            // Surface layer - determine block type based on context
+            if (!isLand) {
+              // Ocean floor
+              voxels[index] = SAND;
+            } else if (distanceFromWater <= 3) {
+              // Beach areas near water level
+              voxels[index] = SAND;
+            } else if (slope >= 3) {
+              // Steep slopes expose stone
+              voxels[index] = STONE;
+            } else {
+              // Normal land surface
+              voxels[index] = GRASS;
+            }
+          } else if (worldY > height - 4 && worldY < height) {
+            // Sub-surface layers (dirt or sand)
+            if (!isLand || distanceFromWater <= 3) {
               voxels[index] = SAND;
             } else {
-              // Expose stone on steep slopes
-              voxels[index] = slope >= 2 ? STONE : GRASS;
+              voxels[index] = DIRT;
             }
-          } else if (worldY > height - 3) {
-            voxels[index] = (height <= WATER_LEVEL + 1) ? SAND : DIRT;
           } else {
+            // Deep layers are stone
             voxels[index] = STONE;
           }
-        } else if (worldY <= WATER_LEVEL && height < WATER_LEVEL) {
-          // Fill water from ground+1 up to water level
-          voxels[index] = WATER;
+        } else if (worldY <= WATER_LEVEL) {
+          // Water areas
+          if (isLand && worldY <= WATER_LEVEL && height < worldY) {
+            // Lakes on land
+            voxels[index] = WATER;
+          } else if (!isLand) {
+            // Ocean water
+            voxels[index] = WATER;
+          } else {
+            // Above ground and water level
+            voxels[index] = AIR;
+          }
         } else {
+          // Air above water level
           voxels[index] = AIR;
         }
       }

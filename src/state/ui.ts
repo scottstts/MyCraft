@@ -42,6 +42,10 @@ export interface UIState {
   // World sizing (non-persistent). User selects total chunks (prefer odd squares: 1, 9, 25...)
   chunkCount: number; // total chunks to generate (default 9 = 3x3)
   setChunkCount: (count: number) => void;
+
+  // Chunk sizing options: { x: width, y: height, z: depth } in blocks
+  chunkSize: { x: number; y: number; z: number }; 
+  setChunkSize: (size: { x: number; y: number; z: number }) => void;
 }
 
 const DEFAULT_HOTBAR: number[] = [
@@ -78,6 +82,9 @@ export const useUIStore = create<UIState>((set) => ({
 
   chunkCount: 9,
   setChunkCount: (count: number) => set({ chunkCount: Math.max(1, Math.floor(count)) }),
+
+  chunkSize: { x: 48, y: 96, z: 48 }, // Default from constants
+  setChunkSize: (size: { x: number; y: number; z: number }) => set({ chunkSize: size }),
 }));
 
 export function getSelectedBlockId(): number | null {

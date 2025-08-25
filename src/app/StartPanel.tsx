@@ -2,20 +2,33 @@ import { useState, useEffect } from 'react'
 import { useUIStore } from '../state/ui'
 
 // Allowed total chunk options: odd squares to ensure a single center chunk
-const OPTIONS = [1, 9, 25, 49]
+const CHUNK_COUNT_OPTIONS = [1, 9, 25, 49, 81, 121, 169] // 1x1, 3x3, 5x5, 7x7, 9x9, 11x11, 13x13
+
+// Chunk size options: { label, size }
+const CHUNK_SIZE_OPTIONS = [
+  { label: 'Small (32×64×32)', size: { x: 32, y: 64, z: 32 } },
+  { label: 'Medium (48×96×48)', size: { x: 48, y: 96, z: 48 } }, // Default
+  { label: 'Large (64×128×64)', size: { x: 64, y: 128, z: 64 } },
+]
 
 export function StartPanel() {
   const gameStarted = useUIStore(s => s.gameStarted)
   const setGameStarted = useUIStore(s => s.setGameStarted)
   const chunkCount = useUIStore(s => s.chunkCount)
   const setChunkCount = useUIStore(s => s.setChunkCount)
+  const chunkSize = useUIStore(s => s.chunkSize)
+  const setChunkSize = useUIStore(s => s.setChunkSize)
 
   const [localCount, setLocalCount] = useState<number>(chunkCount || 9)
+  const [localSize, setLocalSize] = useState<{ x: number; y: number; z: number }>(
+    chunkSize || { x: 48, y: 96, z: 48 }
+  )
 
   useEffect(() => {
     // Keep in sync if store changes elsewhere
     setLocalCount(chunkCount)
-  }, [chunkCount])
+    setLocalSize(chunkSize)
+  }, [chunkCount, chunkSize])
 
   if (gameStarted) return null
 
@@ -104,7 +117,7 @@ export function StartPanel() {
                   e.currentTarget.style.background = 'linear-gradient(145deg, #1e2532, #151b26)'
                 }}
               >
-                {OPTIONS.map((opt) => (
+                {CHUNK_COUNT_OPTIONS.map((opt) => (
                   <option key={opt} value={opt} style={{ background: '#1e2532', color: '#f1f5f9' }}>
                     {opt} chunks ({Math.sqrt(opt)}×{Math.sqrt(opt)} grid)
                   </option>
@@ -121,8 +134,65 @@ export function StartPanel() {
             </div>
           </label>
 
+          <label style={{ display: 'grid', gap: 12 }}>
+            <span style={{ 
+              fontSize: 14, 
+              fontWeight: 600,
+              color: '#e2e8f0',
+              textTransform: 'uppercase',
+              letterSpacing: 0.5
+            }}>
+              Chunk Size
+            </span>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <select
+                value={JSON.stringify(localSize)}
+                onChange={(e) => setLocalSize(JSON.parse(e.target.value))}
+                style={{ 
+                  flex: 1, 
+                  padding: '14px 16px', 
+                  background: 'linear-gradient(145deg, #1e2532, #151b26)', 
+                  color: '#f1f5f9', 
+                  border: '1px solid rgba(148,163,184,0.2)', 
+                  borderRadius: 12,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  outline: 'none',
+                  transition: 'all 0.2s ease',
+                  cursor: 'pointer'
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(148,163,184,0.4)'
+                  e.currentTarget.style.background = 'linear-gradient(145deg, #232a3a, #1a212e)'
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(148,163,184,0.2)'
+                  e.currentTarget.style.background = 'linear-gradient(145deg, #1e2532, #151b26)'
+                }}
+              >
+                {CHUNK_SIZE_OPTIONS.map((opt) => (
+                  <option key={opt.label} value={JSON.stringify(opt.size)} style={{ background: '#1e2532', color: '#f1f5f9' }}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ 
+              fontSize: 12, 
+              color: '#64748b',
+              fontStyle: 'italic',
+              lineHeight: 1.4
+            }}>
+              Chunk size affects world detail and performance. Medium size recommended for most systems.
+            </div>
+          </label>
+
           <button
-            onClick={() => { setChunkCount(localCount); setGameStarted(true); }}
+            onClick={() => { 
+              setChunkCount(localCount); 
+              setChunkSize(localSize); 
+              setGameStarted(true); 
+            }}
             style={{ 
               padding: '16px 24px', 
               background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 
