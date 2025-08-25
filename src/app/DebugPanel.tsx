@@ -121,7 +121,7 @@ export const DebugPanel: React.FC = () => {
             e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
           }}
         >
-          ⚙️ Graphics Settings
+          Graphics Settings
         </button>
       </div>
     );
@@ -196,7 +196,7 @@ export const DebugPanel: React.FC = () => {
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           backgroundClip: 'text'
-        }}>⚙️ Graphics Settings</h3>
+        }}>Graphics Settings</h3>
         <button
           onClick={() => setDebugVisible(false)}
           style={{

@@ -69,7 +69,23 @@ export function Crosshair() {
 export function FpsOverlay() {
   const fps = useUIStore(s => s.fps)
   return (
-    <div style={{ position: 'absolute', right: 12, top: 12, color: '#cfe9ef', fontFamily: 'monospace', fontSize: 12, padding: '6px 8px', background: 'rgba(0,0,0,0.35)', borderRadius: 6, pointerEvents: 'none' }}>
+    <div style={{
+      position: 'absolute', 
+      right: 12, 
+      top: 12, 
+      padding: '8px 12px',
+      background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+      color: '#f8f9fa',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: '8px',
+      fontSize: '12px',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontWeight: 600,
+      letterSpacing: 0.3,
+      pointerEvents: 'none',
+      backdropFilter: 'blur(10px)',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.3)'
+    }}>
       {fps} fps
     </div>
   )
@@ -77,7 +93,23 @@ export function FpsOverlay() {
 
 export function PauseHint() {
   return (
-    <div style={{ position: 'absolute', left: 12, top: 12, color: '#cfe9ef', fontFamily: 'monospace', fontSize: 12, padding: '6px 8px', background: 'rgba(0,0,0,0.35)', borderRadius: 6, pointerEvents: 'none' }}>
+    <div style={{
+      position: 'absolute', 
+      left: 12, 
+      top: 12, 
+      padding: '8px 12px',
+      background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+      color: '#f8f9fa',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: '8px',
+      fontSize: '12px',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontWeight: 600,
+      letterSpacing: 0.3,
+      pointerEvents: 'none',
+      backdropFilter: 'blur(10px)',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.3)'
+    }}>
       Press P to pause
     </div>
   )
