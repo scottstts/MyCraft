@@ -627,5 +627,9 @@ console.log('[Engine] Global functions exposed to window:', {
 (window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__getSfxVolume = () => sfx?.getVolume() ?? 0.7;
 (window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__primeSfx = () => { sfx?.tryUnlockOnUserGesture(); };
 
+// Interaction one-shot hooks
+(window as Window & { __sfxBreak?: () => void; __sfxPlace?: () => void }).__sfxBreak = () => { sfx?.playBreak(); };
+(window as Window & { __sfxBreak?: () => void; __sfxPlace?: () => void }).__sfxPlace = () => { sfx?.playPlace(); };
+
 export const engine = { start, stop };
 export type Engine = typeof engine;

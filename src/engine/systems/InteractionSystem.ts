@@ -16,6 +16,8 @@ import { worldToChunk } from '../utils/coords';
 import type { ChunkPipeline } from '../world/ChunkPipeline';
 import { PlayerController } from './PlayerController';
 
+type WindowWithSfxHooks = Window & { __sfxBreak?: () => void; __sfxPlace?: () => void }
+
 export class InteractionSystem {
   private camera: THREE.PerspectiveCamera;
   private world: World;
@@ -51,6 +53,10 @@ export class InteractionSystem {
         const { x, y, z } = sel.hitCell;
         const blockId = this.world.getBlock(x, y, z);
         if (blockId !== this.airId) {
+          // Only play break sound for solid blocks
+          if (this.world.isBlockSolid(x, y, z)) {
+            (window as WindowWithSfxHooks).__sfxBreak?.();
+          }
           this.world.setBlock(x, y, z, this.airId);
           // Add drop to inventory
           addToInventory(blockId, 1);
@@ -75,6 +81,7 @@ export class InteractionSystem {
             }
             this.world.setBlock(x, y, z, placeId);
             this.remeshAffectedChunks(x, y, z);
+            (window as WindowWithSfxHooks).__sfxPlace?.();
           }
         }
       }
@@ -191,5 +198,4 @@ export class InteractionSystem {
     return false;
   }
 }
-
 

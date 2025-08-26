@@ -8,6 +8,7 @@ import type { PlayerController } from '../systems/PlayerController'
 import footstepUrl from '../../assets/sounds/sound_effects/footstep.mp3'
 import waterStepUrl from '../../assets/sounds/sound_effects/water_step.mp3'
 import underwaterUrl from '../../assets/sounds/sound_effects/underwater.mp3'
+import blockUrl from '../../assets/sounds/sound_effects/block.mp3'
 
 function makeLoopingAudio(src: string, volume: number): HTMLAudioElement {
   const a = new Audio(src)
@@ -86,6 +87,10 @@ export class SoundEffects {
       // ignore
     }
   }
+
+  // Public one-shots for interactions (both use the same block sound)
+  playBreak(): void { this.playOneShot(blockUrl, this.sfxVolume) }
+  playPlace(): void { this.playOneShot(blockUrl, this.sfxVolume) }
 
   update(dtSeconds: number, paused: boolean, inGame: boolean) {
     if (paused || !inGame) {
@@ -188,4 +193,3 @@ export class SoundEffects {
     try { this.underLoop.pause() } catch {}
   }
 }
-
