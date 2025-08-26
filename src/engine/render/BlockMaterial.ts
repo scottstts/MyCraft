@@ -254,8 +254,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 color = vec3(0.0);
           
           // Enhanced ambient with AO, modulated by day/night
-          vec3 dayAmb = vec3(0.4, 0.5, 0.6) * 0.4;
-          vec3 nightAmb = vec3(0.02, 0.03, 0.05) * 0.15;
+          vec3 dayAmb = vec3(0.4, 0.5, 0.6) * 0.35;
+          vec3 nightAmb = vec3(0.01, 0.015, 0.02) * 0.05;
           vec3 ambient = mix(nightAmb, dayAmb, clamp(dayLight, 0.0, 1.0)) * vAmbientOcclusion;
           
       // Main sun light (provided via uniforms)
@@ -274,18 +274,18 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           
           // Apply shadow to diffuse lighting
           float wrappedDiffuse = (sunDot + 0.3) / 1.3;
-          vec3 diffuse = sunColor * wrappedDiffuse * shadowFactor;
+          vec3 diffuse = sunColor * wrappedDiffuse * shadowFactor * clamp(dayLight, 0.0, 1.0);
           
           // Fresnel rim lighting
           float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 2.0);
-          vec3 fresnelColor = vec3(0.8, 0.9, 1.0) * fresnel * 0.2;
+          vec3 fresnelColor = vec3(0.8, 0.9, 1.0) * fresnel * 0.2 * clamp(dayLight, 0.0, 1.0);
           
           // Environment reflection (only if envMap is available)
           vec3 reflection = vec3(0.0);
           #ifdef USE_ENVMAP
             vec3 reflectDir = reflect(-viewDir, normal);
           vec3 envColor = textureCube(envMap, reflectDir).rgb;
-          reflection = envColor * envMapIntensity * (1.0 - roughness) * fresnel;
+          reflection = envColor * envMapIntensity * (1.0 - roughness) * fresnel * clamp(dayLight, 0.0, 1.0);
           #endif
           
           // Subsurface scattering
