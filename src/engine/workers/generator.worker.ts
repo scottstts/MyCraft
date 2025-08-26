@@ -268,8 +268,8 @@ function generateTerrain(
           }
         } else if (worldY <= WATER_LEVEL) {
           // Water areas
-          if (isLand && worldY <= WATER_LEVEL && height < worldY) {
-            // Lakes on land
+          if (isLand && worldY === WATER_LEVEL && height < worldY) {
+            // Lakes on land - only at surface level
             voxels[index] = WATER;
           } else if (!isLand && worldY === WATER_LEVEL) {
             // Ocean water - only at surface level
