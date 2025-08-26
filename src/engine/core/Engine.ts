@@ -153,7 +153,7 @@ function update(dtSeconds: number) {
   
   // Update subsystems here (physics, input, etc.)
   if (composer && camera && sunController) {
-    composer.update(camera, sunController.getSunDirection());
+    composer.update(camera, sunController.getSunDirection(), sunController.getSunColor());
     composer.render();
   } else if (postProcessor) {
     if (sunController && camera) {
@@ -234,6 +234,7 @@ async function start(canvas: HTMLCanvasElement) {
     // console.log('[Engine] Configuring composer post-processing settings');
     composer.setSSAO(true, 0.3, 0.01);
     composer.setBloom(true, 0.15, 0.3);
+    composer.setLens(true, 0.6);
     composer.setFog(true, 0.002, 600);
     composer.setVolumetrics(true, 0.1, 32);
   } else {
@@ -363,7 +364,7 @@ async function start(canvas: HTMLCanvasElement) {
   interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);
   
   // Connect world events to chunk renderer
-  world.chunkPipeline.on('CHUNK_READY', (data: ChunkPipelineEvents['CHUNK_READY']) => {
+  world.chunkPipeline.on('CHUNK_READY', () => {
     // console.log(`[Engine] Chunk ready: ${data.key}`);
   });
   

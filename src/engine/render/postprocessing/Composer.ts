@@ -10,6 +10,7 @@ import { SSAOPass } from './passes/SSAOPass'
 import { VolumetricLightingPass } from './passes/VolumetricLightingPass'
 import { BloomWrapperPass } from './passes/BloomPass'
 import { FogPass } from './passes/FogPass'
+import { LensFlarePass } from './passes/LensFlarePass'
 
 export class Composer {
   private composer: EffectComposer
@@ -17,6 +18,7 @@ export class Composer {
   private ssao: SSAOPass
   private vol: VolumetricLightingPass
   private bloom: BloomWrapperPass
+  private lens: LensFlarePass
   private fog: FogPass
   private depthTarget: THREE.WebGLRenderTarget
   private renderer: THREE.WebGLRenderer
@@ -55,6 +57,12 @@ export class Composer {
     this.bloom = new BloomWrapperPass(width, height)
     this.composer.addPass(this.bloom)
 
+    // Lens flare (additive, before fog)
+    this.lens = new LensFlarePass()
+    this.lens.setDepthTexture(this.depthTarget.depthTexture)
+    this.lens.setSize(width, height)
+    this.composer.addPass(this.lens)
+
     this.fog = new FogPass()
     this.fog.setDepthTexture(this.depthTarget.depthTexture)
     this.composer.addPass(this.fog)
@@ -66,8 +74,9 @@ export class Composer {
     this.ssao.setSize(w, h)
     this.vol.setSize(w, h)
     this.bloom.setSize(w, h)
+    this.lens.setSize(w, h)
   }
-  update(camera: THREE.PerspectiveCamera, sunDirWorld: THREE.Vector3) {
+  update(camera: THREE.PerspectiveCamera, sunDirWorld: THREE.Vector3, sunColor?: THREE.Color) {
     // Render depth prepass into separate target to avoid feedback
     const prev = this.renderer.getRenderTarget()
     this.renderer.setRenderTarget(this.depthTarget)
@@ -79,11 +88,14 @@ export class Composer {
     this.ssao.setCamera(camera)
     this.vol.setCamera(camera)
     this.vol.setSunDirWorld(sunDirWorld, camera)
+    this.lens.setCamera(camera)
+    this.lens.setSun(sunDirWorld, sunColor ?? new THREE.Color(1,1,0.95), camera)
     this.fog.setCamera(camera)
   }
   setSSAO(enabled: boolean, intensity: number, radius: number) { this.ssao.setSettings({ enabled, intensity, radius }) }
   setVolumetrics(enabled: boolean, intensity: number, steps: number) { this.vol.setSettings({ enabled, intensity, steps }) }
   setBloom(enabled: boolean, strength: number, threshold: number) { this.bloom.setSettings({ enabled, strength, threshold }) }
+  setLens(enabled: boolean, intensity: number) { this.lens.setEnabled(enabled); this.lens.setIntensity(intensity) }
   setFog(enabled: boolean, baseDensity: number, maxDistance: number) { this.fog.setSettings({ enabled, baseDensity, maxDistance }) }
   render() { this.composer.render() }
 }
