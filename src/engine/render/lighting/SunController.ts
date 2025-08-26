@@ -80,20 +80,17 @@ export class SunController {
   }
 
   private recomputeLighting(): void {
-    // Fixed azimuth (east->west along +X), elevation by sin
-    const theta = this.t * Math.PI * 2; // 0..2pi
-    const elevation = Math.sin(theta); // -1..1, where >0 is above horizon
+    // Parametric sun path: rotate in the plane spanned by world up and an east vector
+    // t in [0,1) -> theta in [0, 2π); theta=π/2 ≈ zenith (default initialTime=0.25)
+    const theta = this.t * Math.PI * 2;
 
-    // Sun direction in world space (unit)
-    // Choose azimuth so the sun travels roughly along +X with some Z offset
-    const azimuth = Math.PI * 0.25; // 45°
-    const y = Math.max(0, elevation); // clamp below horizon
-    const horiz = Math.sqrt(Math.max(0, 1 - y * y));
-    this.sunDir.set(
-      Math.cos(azimuth) * horiz,
-      y,
-      Math.sin(azimuth) * horiz,
-    ).normalize();
+    // Define horizontal east vector by azimuth; sun moves east->up->west->down
+    const azimuth = Math.PI * 0.25; // 45° rotation around Y
+    const east = new THREE.Vector3(Math.cos(azimuth), 0, Math.sin(azimuth)); // unit
+    const up = new THREE.Vector3(0, 1, 0);
+
+    // Sun direction on the unit circle in the east-up plane
+    this.sunDir.copy(east).multiplyScalar(Math.cos(theta)).addScaledVector(up, Math.sin(theta)).normalize();
 
     // Update sun light position far along its direction and target to origin
     const dist = 500; // far enough for consistent lighting
@@ -101,16 +98,20 @@ export class SunController {
     this.sun.target.position.set(0, 0, 0);
     this.sun.target.updateMatrixWorld();
 
+    // Elevation for color/intensity control (clamped to [0,1] for day metrics)
+    const y = Math.sin(theta);
+    const yDay = THREE.MathUtils.clamp(y, 0, 1);
+
     // Compute a plausible sun color by elevation
-    this.sunColor.copy(elevationToSunColor(y));
+    this.sunColor.copy(elevationToSunColor(yDay));
 
     // Intensity: brighter mid-day, near-zero at night
-    const intensity = THREE.MathUtils.lerp(0.0, 1.1, smoothStep(0.0, 0.7, y));
+    const intensity = THREE.MathUtils.lerp(0.0, 1.1, smoothStep(0.0, 0.7, yDay));
     this.sun.intensity = intensity;
     this.sun.color.copy(this.sunColor);
 
-    // Night ambient via hemi
-    const nightAmt = 1.0 - smoothStep(0.05, 0.2, y);
+    // Night ambient via hemi (stronger when below horizon)
+    const nightAmt = 1.0 - smoothStep(0.05, 0.2, yDay);
     this.hemi.intensity = THREE.MathUtils.lerp(0.05, 0.15, nightAmt);
     this.hemi.color.setRGB(0.16, 0.20, 0.26);
     this.hemi.groundColor.setRGB(0.05, 0.05, 0.06);
@@ -137,4 +138,3 @@ function elevationToSunColor(y: number): THREE.Color {
   const c2 = mid.clone().lerp(cool, tCool);
   return c1.lerp(c2, tCool);
 }
-
