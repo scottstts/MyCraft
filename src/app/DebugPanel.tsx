@@ -56,15 +56,36 @@ export const DebugPanel: React.FC = () => {
     fogEnabled: true,
     fogBaseDensity: 0.002,
     fogMaxDistance: 600,
-    volumetricsEnabled: false,
-    volumetricsIntensity: 0.5,
+    volumetricsEnabled: true,
+    volumetricsIntensity: 0.1,
     volumetricsSteps: 32,
   });
+  const [cloudsEnabled, setCloudsEnabled] = useState(true);
+  const [cloudsCoverage, setCloudsCoverage] = useState(0.45);
+  const [cloudsDensity, setCloudsDensity] = useState(0.65);
 
   // Time-of-day UI local state
   const [timeOfDay, setTimeOfDay] = useState(0.25); // morning
   const [timePaused, setTimePaused] = useState(false);
   const [cycleSeconds, setCycleSeconds] = useState(180);
+
+  // Auto-sync time slider with engine time-of-day
+  useEffect(() => {
+    let raf = 0;
+    const step = () => {
+      const getFn = (window as WindowWithEngineGlobals & { getGraphicsSettings?: () => { timeOfDay: { t: number; paused: boolean; cycleSeconds: number } } }).getGraphicsSettings;
+      if (getFn) {
+        const gs = getFn();
+        const t = gs.timeOfDay.t;
+        if (typeof t === 'number' && !Number.isNaN(t)) {
+          setTimeOfDay(prev => (Math.abs(prev - t) > 0.0001 ? t : prev));
+        }
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   // Initialize settings on mount
   useEffect(() => {
@@ -106,6 +127,15 @@ export const DebugPanel: React.FC = () => {
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
+
+  // Clouds controls via simple global hooks on Engine (temporary)
+  // IMPORTANT: Hooks must not be placed after any conditional return.
+  useEffect(() => {
+    // Ensure global exists; Engine overwrites with real impl when ready
+    if (!(window as any).__setClouds) {
+      (window as any).__setClouds = () => {};
+    }
+  }, []);
 
   if (!debugVisible) {
     return (
@@ -700,6 +730,33 @@ export const DebugPanel: React.FC = () => {
             <span style={{ color: '#e2e8f0' }}>{settings.volumetricsSteps}</span>
           </div>
           <input type="range" min="8" max="64" step="1" value={settings.volumetricsSteps ?? 32} onChange={(e) => handleSettingChange('volumetricsSteps', parseInt(e.target.value, 10))} disabled={!settings.volumetricsEnabled} style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }} />
+        </label>
+      </div>
+
+      {/* Clouds */}
+      <div style={{ marginTop: '20px' }}>
+        <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#e2e8f0', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '6px' }}>Clouds</h4>
+        <label style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', cursor: 'pointer', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <input type="checkbox" checked={cloudsEnabled} onChange={(e) => setCloudsEnabled(e.target.checked)} style={{ marginRight: '10px', transform: 'scale(1.1)' }} />
+          <span style={{ fontWeight: 500 }}>Enable Clouds</span>
+        </label>
+        <label style={{ display: 'block', marginBottom: '12px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', opacity: cloudsEnabled ? 1 : 0.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+            <span>Coverage</span>
+            <span style={{ color: '#e2e8f0' }}>{cloudsCoverage.toFixed(2)}</span>
+          </div>
+          <input type="range" min="0" max="1" step="0.01" value={cloudsCoverage} onChange={(e) => {
+            const v = parseFloat(e.target.value); setCloudsCoverage(v); (window as any).__setClouds?.(v, undefined);
+          }} disabled={!cloudsEnabled} style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }} />
+        </label>
+        <label style={{ display: 'block', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', opacity: cloudsEnabled ? 1 : 0.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+            <span>Density</span>
+            <span style={{ color: '#e2e8f0' }}>{cloudsDensity.toFixed(2)}</span>
+          </div>
+          <input type="range" min="0" max="1" step="0.01" value={cloudsDensity} onChange={(e) => {
+            const v = parseFloat(e.target.value); setCloudsDensity(v); (window as any).__setClouds?.(undefined, v);
+          }} disabled={!cloudsEnabled} style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }} />
         </label>
       </div>
 

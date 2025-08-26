@@ -61,13 +61,7 @@ export class ShadowSystem {
   }
 
   private initializeCascades(): void {
-    // Calculate cascade distances (logarithmic distribution)
-    this.cascadeDistances = [];
-    for (let i = 0; i < this.settings.cascades; i++) {
-      const ratio = (i + 1) / this.settings.cascades;
-      const distance = this.settings.shadowDistance * Math.pow(ratio, 1.5);
-      this.cascadeDistances.push(distance);
-    }
+    this.recomputeCascadeSplits();
 
     // Create shadow cameras and render targets for each cascade
     this.shadowCameras = [];
@@ -75,7 +69,7 @@ export class ShadowSystem {
     
     for (let i = 0; i < this.settings.cascades; i++) {
       // Create orthographic camera for this cascade
-      const camera = new THREE.OrthographicCamera(-50, 50, 50, -50, 0.5, this.cascadeDistances[i]);
+      const camera = new THREE.OrthographicCamera(-50, 50, 50, -50, 0.1, this.cascadeDistances[i]);
       this.shadowCameras.push(camera);
 
       // Create shadow map render target with a depth texture for proper shadow sampling
@@ -101,6 +95,22 @@ export class ShadowSystem {
       shadowMap.depthTexture.format = THREE.DepthFormat;
 
       this.shadowMaps.push(shadowMap);
+    }
+  }
+
+  private recomputeCascadeSplits(): void {
+    // Practical split scheme between uniform and logarithmic
+    const n = this.settings.cascades;
+    const near = 0.1;
+    const far = this.settings.shadowDistance;
+    const lambda = 0.7;
+    this.cascadeDistances = [];
+    for (let i = 1; i <= n; i++) {
+      const p = i / n;
+      const log = near * Math.pow(far / near, p);
+      const uni = near + (far - near) * p;
+      const d = lambda * (log - uni) + uni;
+      this.cascadeDistances.push(d);
     }
   }
 
@@ -130,7 +140,9 @@ export class ShadowSystem {
     this.updateShadowLightPosition();
 
     // Update cascade cameras based on main camera
-    this.updateCascadeCameras(camera);
+    if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
+      this.updateCascadeCameras(camera as THREE.PerspectiveCamera);
+    }
 
     // Render shadow maps
     this.renderShadowMaps(scene);
@@ -147,47 +159,87 @@ export class ShadowSystem {
     this.shadowLight.target.updateMatrixWorld();
   }
 
-  private updateCascadeCameras(viewCamera: THREE.Camera): void {
-    // Use only the first shadow camera for simplicity and stability
-    const camera = this.shadowCameras[0];
-    const playerPos = viewCamera.position.clone();
-    
-    // Fixed shadow camera size based on shadowDistance
-    const shadowSize = this.settings.shadowDistance * 0.5;
-    camera.left = -shadowSize;
-    camera.right = shadowSize;
-    camera.top = shadowSize;
-    camera.bottom = -shadowSize;
-    camera.near = 0.5;
-    camera.far = this.settings.shadowDistance * 2; // Generous far plane
-    
-    // Position shadow camera to look at player from sun direction
-    const sunOffset = this.sunDir.clone().normalize().multiplyScalar(this.settings.shadowDistance);
-    camera.position.copy(playerPos).add(sunOffset);
-    camera.lookAt(playerPos);
-    camera.updateProjectionMatrix();
-    camera.updateMatrixWorld(true);
+  private updateCascadeCameras(viewCamera: THREE.PerspectiveCamera): void {
+    const cam = viewCamera as THREE.PerspectiveCamera;
+    const lightDir = this.sunDir.clone().normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    // Recompute splits if needed
+    this.recomputeCascadeSplits();
 
-    // Shadow map texel-grid stabilization to prevent shimmering/"venetian blinds"
-    const frustumWidth = (camera.right as number) - (camera.left as number);
-    const frustumHeight = (camera.top as number) - (camera.bottom as number);
-    const texelSizeX = frustumWidth / this.settings.resolution;
-    const texelSizeY = frustumHeight / this.settings.resolution;
+    let prevSplitDist = cam.near;
+    for (let i = 0; i < this.settings.cascades; i++) {
+      const splitDist = this.cascadeDistances[i];
 
-    // Transform the center (playerPos) into light view space to compute sub-texel offset
-    const lightView = camera.matrixWorldInverse.clone();
-    const centerLS = playerPos.clone().applyMatrix4(lightView);
-    const offsetX = centerLS.x - Math.round(centerLS.x / texelSizeX) * texelSizeX;
-    const offsetY = centerLS.y - Math.round(centerLS.y / texelSizeY) * texelSizeY;
+      // Compute frustum corners in world space for this slice [prevSplitDist, splitDist]
+      const corners = this.getSliceCornersWorld(cam, prevSplitDist, splitDist);
 
-    // Move the light camera in world space along its right/up axes by the negative offset
-    const rightAxis = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
-    const upAxis = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
-    camera.position.addScaledVector(rightAxis, -offsetX);
-    camera.position.addScaledVector(upAxis, -offsetY);
+      // Build light view matrix that looks from opposite sun direction
+      const centroid = corners.reduce((acc, v) => acc.add(v), new THREE.Vector3()).multiplyScalar(1 / corners.length);
+      const lightPos = centroid.clone().sub(lightDir.clone().multiplyScalar(200));
+      const lightView = new THREE.Matrix4().lookAt(lightPos, centroid, up);
 
-    // Recompute matrices after stabilization
-    camera.updateMatrixWorld(true);
+      // Transform corners to light space and compute bounds
+      let min = new THREE.Vector3(+Infinity, +Infinity, +Infinity);
+      let max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+      for (const c of corners) {
+        const ls = c.clone().applyMatrix4(lightView);
+        min.min(ls);
+        max.max(ls);
+      }
+
+      // Stabilize to texel grid
+      const camera = this.shadowCameras[i];
+      const extents = new THREE.Vector3().subVectors(max, min);
+      const texelX = extents.x / this.settings.resolution;
+      const texelY = extents.y / this.settings.resolution;
+      min.x = Math.floor(min.x / texelX) * texelX;
+      min.y = Math.floor(min.y / texelY) * texelY;
+      max.x = Math.floor(max.x / texelX) * texelX;
+      max.y = Math.floor(max.y / texelY) * texelY;
+
+      // Configure ortho camera in light space
+      camera.left = min.x;
+      camera.right = max.x;
+      camera.bottom = min.y;
+      camera.top = max.y;
+      camera.near = -max.z - 50; // ensure all corners are inside
+      camera.far = -min.z + 50;
+      camera.updateProjectionMatrix();
+
+      // Set camera world matrix from lightView inverse
+      camera.matrixWorld.copy(new THREE.Matrix4().copy(lightView).invert());
+      camera.matrixWorldInverse.copy(lightView);
+      camera.updateMatrixWorld(true);
+
+      prevSplitDist = splitDist;
+    }
+  }
+
+  private getSliceCornersWorld(cam: THREE.PerspectiveCamera, near: number, far: number): THREE.Vector3[] {
+    const corners: THREE.Vector3[] = [];
+    const pos = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
+    const forward = new THREE.Vector3(); cam.getWorldDirection(forward);
+    const up = new THREE.Vector3(0,1,0).applyQuaternion(cam.quaternion);
+    const right = new THREE.Vector3().crossVectors(forward, up).normalize().multiplyScalar(-1);
+
+    const nearCenter = pos.clone().addScaledVector(forward, near);
+    const farCenter = pos.clone().addScaledVector(forward, far);
+    const tan = Math.tan(THREE.MathUtils.degToRad(cam.fov) * 0.5);
+    const nearH = tan * near; const nearW = nearH * cam.aspect;
+    const farH = tan * far; const farW = farH * cam.aspect;
+
+    // Near plane corners
+    corners.push(nearCenter.clone().addScaledVector(up,  nearH).addScaledVector(right, -nearW)); // left top
+    corners.push(nearCenter.clone().addScaledVector(up, -nearH).addScaledVector(right, -nearW)); // left bottom
+    corners.push(nearCenter.clone().addScaledVector(up, -nearH).addScaledVector(right,  nearW)); // right bottom
+    corners.push(nearCenter.clone().addScaledVector(up,  nearH).addScaledVector(right,  nearW)); // right top
+    // Far plane corners
+    corners.push(farCenter.clone().addScaledVector(up,  farH).addScaledVector(right, -farW));
+    corners.push(farCenter.clone().addScaledVector(up, -farH).addScaledVector(right, -farW));
+    corners.push(farCenter.clone().addScaledVector(up, -farH).addScaledVector(right,  farW));
+    corners.push(farCenter.clone().addScaledVector(up,  farH).addScaledVector(right,  farW));
+
+    return corners;
   }
 
 
@@ -205,7 +257,7 @@ export class ShadowSystem {
           const u = shaderMat.uniforms as Record<string, { value: unknown }>;
           const touched: Record<string, unknown> = {};
           let hasTouch = false;
-          ['shadowMap0', 'shadowMap1', 'shadowMap2'].forEach((key) => {
+          ['shadowMap0', 'shadowMap1', 'shadowMap2', 'shadowMap3'].forEach((key) => {
             if (u[key]) {
               touched[key] = u[key].value;
               u[key].value = this.dummyTexture;
@@ -217,11 +269,11 @@ export class ShadowSystem {
       });
     });
 
-    // Only render the first shadow map for stability
-    this.renderer.setRenderTarget(this.shadowMaps[0]);
-    // Clear target to avoid artifacts from previous frames
-    this.renderer.clear(true, true, true);
-    this.renderer.render(scene, this.shadowCameras[0]);
+    for (let i = 0; i < this.shadowMaps.length; i++) {
+      this.renderer.setRenderTarget(this.shadowMaps[i]);
+      this.renderer.clear(true, true, true);
+      this.renderer.render(scene, this.shadowCameras[i]);
+    }
     this.renderer.setRenderTarget(originalRenderTarget);
 
     // Restore original uniforms

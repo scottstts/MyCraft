@@ -1,3 +1,4 @@
+import React from 'react'
 import { useUIStore } from '../state/ui'
 import { useInventory } from '../state/inventory'
 import grassIcon from '../assets/material_icons/grass.png'
@@ -87,6 +88,74 @@ export function FpsOverlay() {
       boxShadow: '0 4px 16px rgba(0,0,0,0.3)'
     }}>
       {fps} fps
+    </div>
+  )
+}
+
+export function ClockOverlay() {
+  // Read time from engine globals
+  const [t, setT] = React.useState(0);
+  React.useEffect(() => {
+    let raf = 0
+    const step = () => {
+      const getFn = (window as unknown as { getGraphicsSettings?: () => { timeOfDay: { t: number } } }).getGraphicsSettings
+      if (getFn) {
+        const gs = getFn()
+        if (gs && gs.timeOfDay) setT(gs.timeOfDay.t)
+      }
+      raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [])
+
+  // Convert t [0,1) to analog clock (12h)
+  const hours = t * 12
+  const minutes = (t * 12) % 1 * 60
+  const hourAngle = (hours / 12) * 360 // deg
+  const minuteAngle = (minutes / 60) * 360
+
+  const size = 44
+  const center = size / 2
+
+  return (
+    <div style={{ position: 'absolute', right: 12, top: 52, pointerEvents: 'none' }}>
+      <div style={{
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        border: '2px solid rgba(255,255,255,0.6)',
+        background: 'rgba(0,0,0,0.35)',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+        position: 'relative',
+      }}>
+        {/* hour hand */}
+        <div style={{
+          position: 'absolute',
+          left: center - 2,
+          top: center - 12,
+          width: 4,
+          height: 12,
+          background: '#fff',
+          transformOrigin: '50% 100%',
+          transform: `rotate(${hourAngle}deg)`,
+          borderRadius: 2,
+        }} />
+        {/* minute hand */}
+        <div style={{
+          position: 'absolute',
+          left: center - 1,
+          top: center - 18,
+          width: 2,
+          height: 18,
+          background: '#dde6ff',
+          transformOrigin: '50% 100%',
+          transform: `rotate(${minuteAngle}deg)`,
+          borderRadius: 2,
+        }} />
+        {/* center dot */}
+        <div style={{ position: 'absolute', left: center - 2, top: center - 2, width: 4, height: 4, background: '#fff', borderRadius: '50%' }} />
+      </div>
     </div>
   )
 }
@@ -238,4 +307,3 @@ export function PauseMenu() {
     </div>
   )
 }
-

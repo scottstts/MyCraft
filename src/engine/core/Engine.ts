@@ -19,6 +19,7 @@ import { ShadowSystem, type ShadowSettings } from '../render/ShadowSystem';
 import { SunController } from '../render/lighting/SunController';
 import { SkyDome } from '../render/atmosphere/SkyDome';
 import { StarDome } from '../render/atmosphere/StarDome';
+import { CloudsLayer } from '../render/atmosphere/CloudsLayer';
 import { applyGraphicsSettings, type GraphicsSettings } from '../render/settings/GraphicsSettings';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
@@ -45,6 +46,7 @@ let shadowSystem: ShadowSystem | null = null;
 let sunController: SunController | null = null;
 let skyDome: SkyDome | null = null;
 let starDome: StarDome | null = null;
+let clouds: CloudsLayer | null = null;
 let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
@@ -120,6 +122,7 @@ function update(dtSeconds: number) {
     const vis = THREE.MathUtils.clamp((0.1 - elev) / (0.1 + 0.05), 0, 1); // smoothstep-ish
     starDome.setVisibility(vis);
   }
+  if (clouds) clouds.update();
 
   // Update shadow system
   if (shadowSystem && scene && camera) {
@@ -241,8 +244,8 @@ async function start(canvas: HTMLCanvasElement) {
     fogEnabled: true,
     fogBaseDensity: 0.002,
     fogMaxDistance: 600,
-    volumetricsEnabled: false,
-    volumetricsIntensity: 0.5,
+    volumetricsEnabled: true,
+    volumetricsIntensity: 0.1,
     volumetricsSteps: 32,
   });
 
@@ -255,6 +258,13 @@ async function start(canvas: HTMLCanvasElement) {
   // Sky dome for physical sky colors
   skyDome = new SkyDome(scene, { turbidity: 2.0, rayleigh: 1.5, mieCoefficient: 0.005, mieDirectionalG: 0.8 });
   starDome = new StarDome(scene, { intensity: 1.2 });
+  clouds = new CloudsLayer(scene, { altitude: 200, coverage: 0.45, density: 0.65, windDirection: Math.PI * 0.25, windSpeed: 5 });
+  // Temporary global hooks for clouds adjustments from DebugPanel
+  (window as unknown as { __setClouds?: (cov?: number, dens?: number) => void }).__setClouds = (cov?: number, dens?: number) => {
+    if (!clouds) return;
+    if (typeof cov === 'number') clouds.setCoverage(cov);
+    if (typeof dens === 'number') clouds.setDensity(dens);
+  };
   
   // Configure shadows for optimal minecraft-style visuals
   console.log('[Engine] Configuring shadow settings');
@@ -439,6 +449,18 @@ function stop() {
   camera = null;
 }
 
+// Global function for UI to read current graphics state
+function getGraphicsSettings(): GraphicsSettings {
+  return {
+    timeOfDay: {
+      t: sunController ? sunController.getTime() : 0,
+      paused: false,
+      cycleSeconds: 180,
+    },
+    renderer: { exposure: renderer ? renderer.getRenderer().toneMappingExposure : 1.0 },
+  };
+}
+
 // Global function for UI to update post-processing settings
 function updatePostProcessingSettings(settings: PostProcessorSettings) {
   console.log('[Engine] Received post-processing settings:', settings);
@@ -478,6 +500,7 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
   updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
   updateShadowSettings?: (settings: ShadowSettings) => void;
   updateGraphicsSettings?: (settings: GraphicsSettings) => void;
+  getGraphicsSettings?: () => GraphicsSettings;
 }).updatePostProcessingSettings = updatePostProcessingSettings;
 (window as Window & {
   updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
@@ -488,12 +511,17 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
   updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
   updateShadowSettings?: (settings: ShadowSettings) => void;
   updateGraphicsSettings?: (settings: GraphicsSettings) => void;
+  getGraphicsSettings?: () => GraphicsSettings;
 }).updateGraphicsSettings = updateGraphicsSettings;
+(window as Window & {
+  getGraphicsSettings?: () => GraphicsSettings;
+}).getGraphicsSettings = getGraphicsSettings;
 
 console.log('[Engine] Global functions exposed to window:', {
   updatePostProcessingSettings: !!(window as Window & { updatePostProcessingSettings?: unknown }).updatePostProcessingSettings,
   updateShadowSettings: !!(window as Window & { updateShadowSettings?: unknown }).updateShadowSettings,
-  updateGraphicsSettings: !!(window as Window & { updateGraphicsSettings?: unknown }).updateGraphicsSettings
+  updateGraphicsSettings: !!(window as Window & { updateGraphicsSettings?: unknown }).updateGraphicsSettings,
+  getGraphicsSettings: !!(window as Window & { getGraphicsSettings?: unknown }).getGraphicsSettings,
 });
 
 export const engine = { start, stop };

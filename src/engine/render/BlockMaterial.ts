@@ -83,11 +83,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform sampler2D shadowMap0;
       uniform sampler2D shadowMap1;
       uniform sampler2D shadowMap2;
+      uniform sampler2D shadowMap3;
       uniform mat4 shadowMatrix0;
       uniform mat4 shadowMatrix1;
       uniform mat4 shadowMatrix2;
+      uniform mat4 shadowMatrix3;
       uniform int shadowCascades;
-      uniform float shadowDistances[3];
+      uniform float shadowDistances[4];
       uniform float shadowSoftness;
       uniform float shadowBias;
       uniform float shadowNormalBias;
@@ -106,28 +108,31 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       const int POISSON_COUNT = 8;
       vec2 poisson[POISSON_COUNT];
 
-      // Compute a rotated, Poisson-disk PCF for softer, less banded shadows
-      float sampleShadow(vec3 worldPos, vec3 normal, vec3 sunDir) {
-          // Return 1.0 (no shadow) if shadow system is disabled
-          if (shadowIntensity <= 0.0) return 1.0;
-          
-          // Transform world position to shadow map space using first shadow map
-          vec4 shadowCoord = shadowMatrix0 * vec4(worldPos, 1.0);
-          // For orthographic light cameras w==1, but keep perspective divide for correctness/safety
-          shadowCoord.xyz /= shadowCoord.w;
-          shadowCoord = shadowCoord * 0.5 + 0.5; // Convert to [0,1] range
-          
-          if (shadowCoord.x < 0.0 || shadowCoord.x > 1.0 || 
-              shadowCoord.y < 0.0 || shadowCoord.y > 1.0 || 
-              shadowCoord.z < 0.0 || shadowCoord.z > 1.0) {
-              return 1.0; // Outside shadow map
-          }
-          
-          // Apply bias to prevent shadow acne
-          float bias = shadowBias + shadowNormalBias * (1.0 - max(dot(normal, sunDir), 0.0));
-          float shadowDepth = shadowCoord.z - bias;
-          
-          // Prepare Poisson disk
+      // Helpers to select cascade-specific matrix and sampler without non-uniform sampler variables
+      vec4 getShadowCoord(int ci, vec3 worldPos) {
+          if (ci == 0) return shadowMatrix0 * vec4(worldPos, 1.0);
+          if (ci == 1) return shadowMatrix1 * vec4(worldPos, 1.0);
+          if (ci == 2) return shadowMatrix2 * vec4(worldPos, 1.0);
+          return shadowMatrix3 * vec4(worldPos, 1.0);
+      }
+      float sampleShadowMap(int ci, vec2 uv) {
+          if (ci == 0) return texture2D(shadowMap0, uv).r;
+          if (ci == 1) return texture2D(shadowMap1, uv).r;
+          if (ci == 2) return texture2D(shadowMap2, uv).r;
+          return texture2D(shadowMap3, uv).r;
+      }
+
+      // Compute PCSS-style soft shadow with cascade selection
+      float sampleShadowCascade(int ci, vec3 worldPos, vec3 normal, float bias) {
+          vec4 sc = getShadowCoord(ci, worldPos);
+          sc.xyz /= sc.w;
+          sc = sc * 0.5 + 0.5;
+          if (sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z < 0.0 || sc.z > 1.0) return 1.0;
+
+          float texelSize = max(1.0 / shadowResolution, 0.0004);
+          float receiver = sc.z - bias;
+
+          // Poisson disk
           poisson[0] = vec2(-0.613392, 0.617481);
           poisson[1] = vec2(0.170019, -0.040254);
           poisson[2] = vec2(-0.299417, 0.791925);
@@ -137,23 +142,48 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           poisson[6] = vec2(0.161360, -0.914412);
           poisson[7] = vec2(-0.725000, -0.045000);
 
-          // Kernel scale in texels, stable across resolutions
-          float texelSize = max(1.0 / shadowResolution, 0.0004);
-          float radius = max(shadowSoftness, 1.0) * texelSize * 2.5;
-
-          // Random rotation per-fragment to break banding
-          float angle = hash12(shadowCoord.xy * 1024.0) * 6.2831853; // 2*pi
+          // Blocker search (PCSS)
+          float searchRadius = shadowSoftness * 4.0 * texelSize;
+          float angle = hash12(sc.xy * 1024.0) * 6.2831853;
           float s = sin(angle), c = cos(angle);
           mat2 rot = mat2(c, -s, s, c);
+          float blockerSum = 0.0;
+          float blockerCount = 0.0;
+          for (int i = 0; i < POISSON_COUNT; i++) {
+            vec2 o = rot * poisson[i] * searchRadius;
+            float d = sampleShadowMap(ci, sc.xy + o);
+            if (d < receiver) { blockerSum += d; blockerCount += 1.0; }
+          }
+          float avgBlocker = blockerCount > 0.0 ? (blockerSum / blockerCount) : receiver;
+          float penumbra = blockerCount > 0.0 ? clamp((receiver - avgBlocker) / max(avgBlocker, 1e-3), 0.0, 1.0) : 0.0;
 
+          float radius = texelSize * (2.5 + 12.0 * penumbra);
           float shadow = 0.0;
           for (int i = 0; i < POISSON_COUNT; i++) {
-              vec2 offset = rot * poisson[i] * radius;
-              float sampleDepth = texture2D(shadowMap0, shadowCoord.xy + offset).r;
-              shadow += shadowDepth <= sampleDepth ? 1.0 : 0.0;
+            vec2 o = rot * poisson[i] * radius;
+            float sd = sampleShadowMap(ci, sc.xy + o);
+            shadow += receiver <= sd ? 1.0 : 0.0;
           }
           shadow /= float(POISSON_COUNT);
-          return mix(1.0 - shadowIntensity, 1.0, shadow);
+          return shadow;
+      }
+
+      float sampleShadow(vec3 worldPos, vec3 normal, vec3 sunDir) {
+          // Return 1.0 (no shadow) if shadow system is disabled
+          if (shadowIntensity <= 0.0) return 1.0;
+          // Normal-bias adjustment
+          float nb = shadowNormalBias * (1.0 - max(dot(normal, sunDir), 0.0));
+
+          // Determine cascade by view depth
+          float viewDepth = -vViewPosition.z; // perspective-friendly metric
+          int ci = 0;
+          if (shadowCascades > 1 && viewDepth > shadowDistances[0]) ci = 1;
+          if (shadowCascades > 2 && viewDepth > shadowDistances[1]) ci = 2;
+          if (shadowCascades > 3 && viewDepth > shadowDistances[2]) ci = 3;
+
+          float bias = shadowBias + nb;
+          float s0 = sampleShadowCascade(ci, worldPos + normal * nb, normal, bias);
+          return mix(1.0 - shadowIntensity, 1.0, s0);
       }
 
       // Enhanced lighting calculation with shadows
@@ -243,11 +273,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowMap0: { value: null },
         shadowMap1: { value: null },
         shadowMap2: { value: null },
+        shadowMap3: { value: null },
         shadowMatrix0: { value: new THREE.Matrix4() },
         shadowMatrix1: { value: new THREE.Matrix4() },
         shadowMatrix2: { value: new THREE.Matrix4() },
+        shadowMatrix3: { value: new THREE.Matrix4() },
         shadowCascades: { value: 3 },
-        shadowDistances: { value: [25, 50, 100] },
+        shadowDistances: { value: [25, 50, 100, 200] },
         shadowSoftness: { value: 2.0 },
         shadowBias: { value: 0.0005 },
         shadowNormalBias: { value: 0.02 },
