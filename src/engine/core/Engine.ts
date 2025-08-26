@@ -15,6 +15,7 @@ import { loadFullAtlas } from '../render/Atlas';
 import { Environment } from '../render/Environment';
 import { BlockMaterial } from '../render/BlockMaterial';
 import { SimplePostProcessor, type PostProcessorSettings } from '../render/SimplePostProcessor';
+import { Composer } from '../render/postprocessing/Composer';
 import { ShadowSystem, type ShadowSettings } from '../render/ShadowSystem';
 import { SunController } from '../render/lighting/SunController';
 import { SkyDome } from '../render/atmosphere/SkyDome';
@@ -29,6 +30,7 @@ import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { useUIStore } from '../../state/ui';
+import { USE_EFFECT_COMPOSER } from '../../config/flags';
 
 let rafId: number | null = null;
 let running = false;
@@ -42,6 +44,7 @@ let chunkRenderer: ChunkRenderer | null = null;
 let environment: Environment | null = null;
 let blockMaterial: BlockMaterial | null = null;
 let postProcessor: SimplePostProcessor | null = null;
+let composer: Composer | null = null;
 let shadowSystem: ShadowSystem | null = null;
 let sunController: SunController | null = null;
 let skyDome: SkyDome | null = null;
@@ -147,11 +150,13 @@ function update(dtSeconds: number) {
   }
   
   // Update subsystems here (physics, input, etc.)
-  if (postProcessor) {
+  if (composer && camera && sunController) {
+    composer.update(camera, sunController.getSunDirection());
+    composer.render();
+  } else if (postProcessor) {
     if (sunController && camera) {
       postProcessor.setSunLighting(sunController.getSunDirection(), camera);
     }
-    // Use post-processed rendering
     postProcessor.render();
   } else if (renderer && scene && camera) {
     // Fallback to basic rendering
@@ -221,33 +226,41 @@ async function start(canvas: HTMLCanvasElement) {
 
   // Initialize post-processing pipeline
   const canvasSize = renderer.getCanvasSize();
-  postProcessor = new SimplePostProcessor(
-    renderer.getRenderer(),
-    scene,
-    camera,
-    canvasSize.width,
-    canvasSize.height
-  );
-
-  // Configure post-processing for minecraft-style visuals
-  console.log('[Engine] Configuring post-processing settings');
-  postProcessor.updateSettings({
-    ssaoEnabled: true,
-    ssaoIntensity: 0.3,
-    ssaoRadius: 0.01,
-    bloomEnabled: true,
-    bloomStrength: 0.4,
-    bloomThreshold: 0.3,
-    exposure: 0.9,
-    contrast: 1.05,
-    saturation: 1.0,
-    fogEnabled: true,
-    fogBaseDensity: 0.002,
-    fogMaxDistance: 600,
-    volumetricsEnabled: true,
-    volumetricsIntensity: 0.1,
-    volumetricsSteps: 32,
-  });
+  if (USE_EFFECT_COMPOSER) {
+    composer = new Composer(renderer.getRenderer(), scene, camera, canvasSize.width, canvasSize.height);
+    // Configure composer defaults
+    console.log('[Engine] Configuring composer post-processing settings');
+    composer.setSSAO(true, 0.3, 0.01);
+    composer.setBloom(true, 0.15, 0.3);
+    composer.setFog(true, 0.002, 600);
+    composer.setVolumetrics(true, 0.1, 32);
+  } else {
+    postProcessor = new SimplePostProcessor(
+      renderer.getRenderer(),
+      scene,
+      camera,
+      canvasSize.width,
+      canvasSize.height
+    );
+    console.log('[Engine] Configuring post-processing settings');
+    postProcessor.updateSettings({
+      ssaoEnabled: true,
+      ssaoIntensity: 0.3,
+      ssaoRadius: 0.01,
+      bloomEnabled: true,
+      bloomStrength: 0.15,
+      bloomThreshold: 0.3,
+      exposure: 0.9,
+      contrast: 1.05,
+      saturation: 1.0,
+      fogEnabled: true,
+      fogBaseDensity: 0.002,
+      fogMaxDistance: 600,
+      volumetricsEnabled: true,
+      volumetricsIntensity: 0.1,
+      volumetricsSteps: 32,
+    });
+  }
 
   // Initialize shadow system (temporarily disabled to avoid WebGL feedback loops)
   shadowSystem = new ShadowSystem(renderer.getRenderer(), scene);
@@ -362,7 +375,9 @@ async function start(canvas: HTMLCanvasElement) {
       camera.updateProjectionMatrix();
       
       // Update post-processor size
-      if (postProcessor) {
+      if (composer) {
+        composer.setSize(canvas.clientWidth, canvas.clientHeight);
+      } else if (postProcessor) {
         postProcessor.setSize(canvas.clientWidth, canvas.clientHeight);
       }
     }
@@ -464,7 +479,13 @@ function getGraphicsSettings(): GraphicsSettings {
 // Global function for UI to update post-processing settings
 function updatePostProcessingSettings(settings: PostProcessorSettings) {
   console.log('[Engine] Received post-processing settings:', settings);
-  if (postProcessor) {
+  if (composer) {
+    composer.setSSAO(!!settings.ssaoEnabled, settings.ssaoIntensity, settings.ssaoRadius);
+    composer.setBloom(!!settings.bloomEnabled, settings.bloomStrength, settings.bloomThreshold);
+    composer.setFog(!!settings.fogEnabled, settings.fogBaseDensity ?? 0.002, settings.fogMaxDistance ?? 600);
+    composer.setVolumetrics(!!settings.volumetricsEnabled, settings.volumetricsIntensity ?? 0.1, settings.volumetricsSteps ?? 32);
+    console.log('[Engine] Applied composer post-processing settings');
+  } else if (postProcessor) {
     postProcessor.updateSettings(settings);
     console.log('[Engine] Applied post-processing settings successfully');
   } else {
@@ -492,6 +513,16 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
     setRendererExposure: (exp: number) => {
       if (renderer) renderer.getRenderer().toneMappingExposure = exp;
     },
+    setClouds: (p) => {
+      if (!clouds) return;
+      if (p.coverage !== undefined) clouds.setCoverage(p.coverage);
+      if (p.density !== undefined) clouds.setDensity(p.density);
+      if (p.windDirection !== undefined || p.windSpeed !== undefined) {
+        const dir = p.windDirection ?? Math.PI * 0.25;
+        const sp = p.windSpeed ?? 5;
+        clouds.setWind(dir, sp);
+      }
+    }
   });
 }
 

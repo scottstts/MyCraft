@@ -95,6 +95,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float shadowNormalBias;
       uniform float shadowIntensity;
       uniform float shadowResolution;
+      uniform float shadowBlendFraction;
 
       // Hash-based noise for kernel rotation
       float hash12(vec2 p) {
@@ -182,8 +183,21 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           if (shadowCascades > 3 && viewDepth > shadowDistances[2]) ci = 3;
 
           float bias = shadowBias + nb;
-          float s0 = sampleShadowCascade(ci, worldPos + normal * nb, normal, bias);
-          return mix(1.0 - shadowIntensity, 1.0, s0);
+
+          // Cross-fade at boundaries to hide seams
+          float sCur = sampleShadowCascade(ci, worldPos + normal * nb, normal, bias);
+          if (ci > 0) {
+            float nearBound = shadowDistances[ci-1];
+            float farBound = shadowDistances[ci];
+            float width = max(1.0, (farBound - nearBound) * shadowBlendFraction);
+            float t = clamp((viewDepth - nearBound) / width, 0.0, 1.0);
+            if (t < 1.0) {
+              int pi = ci - 1;
+              float sPrev = sampleShadowCascade(pi, worldPos + normal * nb, normal, bias);
+              sCur = mix(sPrev, sCur, t);
+            }
+          }
+          return mix(1.0 - shadowIntensity, 1.0, sCur);
       }
 
       // Enhanced lighting calculation with shadows
@@ -285,6 +299,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowNormalBias: { value: 0.02 },
         shadowIntensity: { value: 0.0 }, // Start with shadows disabled
         shadowResolution: { value: 1024 }, // Default shadow resolution
+        shadowBlendFraction: { value: 0.15 },
         materialFogEnabled: { value: false }
       },
       defines: envMap ? { USE_ENVMAP: true } : {},

@@ -39,7 +39,7 @@ export class SimplePostProcessor {
     ssaoIntensity: 0.3,
     ssaoRadius: 0.01,
     bloomEnabled: true,
-    bloomStrength: 0.4,
+    bloomStrength: 0.15,
     bloomThreshold: 0.3,
     exposure: 0.9,
     contrast: 1.05,

@@ -43,7 +43,7 @@ export const DebugPanel: React.FC = () => {
     ssaoIntensity: 0.3,
     ssaoRadius: 0.01,
     bloomEnabled: true,
-    bloomStrength: 0.4,
+    bloomStrength: 0.15,
     bloomThreshold: 0.3,
     exposure: 0.9,
     contrast: 1.05,
@@ -128,14 +128,13 @@ export const DebugPanel: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
 
-  // Clouds controls via simple global hooks on Engine (temporary)
-  // IMPORTANT: Hooks must not be placed after any conditional return.
+  // Keep clouds state in sync with engine
   useEffect(() => {
-    // Ensure global exists; Engine overwrites with real impl when ready
-    if (!(window as any).__setClouds) {
-      (window as any).__setClouds = () => {};
-    }
-  }, []);
+    (window as unknown as { updateGraphicsSettings?: (s: any) => void }).updateGraphicsSettings?.({
+      timeOfDay: { t: timeOfDay, paused: timePaused, cycleSeconds },
+      clouds: { enabled: cloudsEnabled, coverage: cloudsCoverage, density: cloudsDensity }
+    })
+  }, [cloudsEnabled, cloudsCoverage, cloudsDensity])
 
   if (!debugVisible) {
     return (
@@ -746,7 +745,7 @@ export const DebugPanel: React.FC = () => {
             <span style={{ color: '#e2e8f0' }}>{cloudsCoverage.toFixed(2)}</span>
           </div>
           <input type="range" min="0" max="1" step="0.01" value={cloudsCoverage} onChange={(e) => {
-            const v = parseFloat(e.target.value); setCloudsCoverage(v); (window as any).__setClouds?.(v, undefined);
+            const v = parseFloat(e.target.value); setCloudsCoverage(v);
           }} disabled={!cloudsEnabled} style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }} />
         </label>
         <label style={{ display: 'block', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', opacity: cloudsEnabled ? 1 : 0.5 }}>
@@ -755,7 +754,7 @@ export const DebugPanel: React.FC = () => {
             <span style={{ color: '#e2e8f0' }}>{cloudsDensity.toFixed(2)}</span>
           </div>
           <input type="range" min="0" max="1" step="0.01" value={cloudsDensity} onChange={(e) => {
-            const v = parseFloat(e.target.value); setCloudsDensity(v); (window as any).__setClouds?.(undefined, v);
+            const v = parseFloat(e.target.value); setCloudsDensity(v);
           }} disabled={!cloudsEnabled} style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }} />
         </label>
       </div>

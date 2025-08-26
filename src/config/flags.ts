@@ -10,4 +10,4 @@ export const USE_GREEDY_MESH = false;
 export const SHOW_CHUNK_BOUNDS = false;
 export const ENABLE_NOCLIP = false;
 export const CHUNK_RADIUS = 6;
-
+export const USE_EFFECT_COMPOSER = true;
