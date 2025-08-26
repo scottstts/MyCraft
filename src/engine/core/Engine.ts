@@ -16,6 +16,10 @@ import { Environment } from '../render/Environment';
 import { BlockMaterial } from '../render/BlockMaterial';
 import { SimplePostProcessor, type PostProcessorSettings } from '../render/SimplePostProcessor';
 import { ShadowSystem, type ShadowSettings } from '../render/ShadowSystem';
+import { SunController } from '../render/lighting/SunController';
+import { SkyDome } from '../render/atmosphere/SkyDome';
+import { StarDome } from '../render/atmosphere/StarDome';
+import { applyGraphicsSettings, type GraphicsSettings } from '../render/settings/GraphicsSettings';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
 import { CHUNK_SIZE } from '../../config/constants';
@@ -38,6 +42,9 @@ let environment: Environment | null = null;
 let blockMaterial: BlockMaterial | null = null;
 let postProcessor: SimplePostProcessor | null = null;
 let shadowSystem: ShadowSystem | null = null;
+let sunController: SunController | null = null;
+let skyDome: SkyDome | null = null;
+let starDome: StarDome | null = null;
 let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
@@ -100,8 +107,26 @@ function update(dtSeconds: number) {
     blockMaterial.updateUniforms(camera);
   }
 
+  // Time-of-day and lighting
+  if (sunController) {
+    sunController.update(dtSeconds);
+  }
+  if (skyDome && sunController) {
+    skyDome.setSunDirection(sunController.getSunDirection());
+  }
+  if (starDome && sunController) {
+    starDome.update();
+    const elev = sunController.getElevationRadians();
+    const vis = THREE.MathUtils.clamp((0.1 - elev) / (0.1 + 0.05), 0, 1); // smoothstep-ish
+    starDome.setVisibility(vis);
+  }
+
   // Update shadow system
   if (shadowSystem && scene && camera) {
+    if (sunController) {
+      const sunDir = sunController.getSunDirection();
+      shadowSystem.setSunDirection(sunDir);
+    }
     shadowSystem.update(camera, scene);
     
     // Update block material with shadow uniforms
@@ -110,9 +135,19 @@ function update(dtSeconds: number) {
       blockMaterial.updateShadowUniforms(shadowUniforms);
     }
   }
+  // Update block material with sun uniforms
+  if (blockMaterial && sunController) {
+    blockMaterial.setSunUniforms(
+      sunController.getSunDirection(),
+      sunController.getSunColor()
+    );
+  }
   
   // Update subsystems here (physics, input, etc.)
   if (postProcessor) {
+    if (sunController && camera) {
+      postProcessor.setSunLighting(sunController.getSunDirection(), camera);
+    }
     // Use post-processed rendering
     postProcessor.render();
   } else if (renderer && scene && camera) {
@@ -202,11 +237,24 @@ async function start(canvas: HTMLCanvasElement) {
     bloomThreshold: 0.3,
     exposure: 0.9,
     contrast: 1.05,
-    saturation: 1.0
+    saturation: 1.0,
+    fogEnabled: true,
+    fogBaseDensity: 0.002,
+    fogMaxDistance: 600,
+    volumetricsEnabled: false,
+    volumetricsIntensity: 0.5,
+    volumetricsSteps: 32,
   });
 
   // Initialize shadow system (temporarily disabled to avoid WebGL feedback loops)
   shadowSystem = new ShadowSystem(renderer.getRenderer(), scene);
+
+  // Initialize sun controller (day/night cycle)
+  sunController = new SunController(scene, { cycleSeconds: 180, initialTime: 0.25 });
+
+  // Sky dome for physical sky colors
+  skyDome = new SkyDome(scene, { turbidity: 2.0, rayleigh: 1.5, mieCoefficient: 0.005, mieDirectionalG: 0.8 });
+  starDome = new StarDome(scene, { intensity: 1.2 });
   
   // Configure shadows for optimal minecraft-style visuals
   console.log('[Engine] Configuring shadow settings');
@@ -413,19 +461,39 @@ function updateShadowSettings(settings: ShadowSettings) {
   }
 }
 
+// Global function for UI to update graphics settings (time of day, exposure, etc.)
+function updateGraphicsSettings(settings: GraphicsSettings) {
+  applyGraphicsSettings(settings, {
+    setTime: (t: number) => { sunController?.setTime(t); },
+    setTimePaused: (p: boolean) => { sunController?.pause(p); },
+    setCycleSeconds: (sec: number) => { sunController?.setCycleSeconds(sec); },
+    setRendererExposure: (exp: number) => {
+      if (renderer) renderer.getRenderer().toneMappingExposure = exp;
+    },
+  });
+}
+
 // Expose to global scope for UI communication
 (window as Window & {
   updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
   updateShadowSettings?: (settings: ShadowSettings) => void;
+  updateGraphicsSettings?: (settings: GraphicsSettings) => void;
 }).updatePostProcessingSettings = updatePostProcessingSettings;
 (window as Window & {
   updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
   updateShadowSettings?: (settings: ShadowSettings) => void;
+  updateGraphicsSettings?: (settings: GraphicsSettings) => void;
 }).updateShadowSettings = updateShadowSettings;
+(window as Window & {
+  updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
+  updateShadowSettings?: (settings: ShadowSettings) => void;
+  updateGraphicsSettings?: (settings: GraphicsSettings) => void;
+}).updateGraphicsSettings = updateGraphicsSettings;
 
 console.log('[Engine] Global functions exposed to window:', {
   updatePostProcessingSettings: !!(window as Window & { updatePostProcessingSettings?: unknown }).updatePostProcessingSettings,
-  updateShadowSettings: !!(window as Window & { updateShadowSettings?: unknown }).updateShadowSettings
+  updateShadowSettings: !!(window as Window & { updateShadowSettings?: unknown }).updateShadowSettings,
+  updateGraphicsSettings: !!(window as Window & { updateGraphicsSettings?: unknown }).updateGraphicsSettings
 });
 
 export const engine = { start, stop };

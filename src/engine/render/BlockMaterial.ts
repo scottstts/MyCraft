@@ -74,6 +74,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float metalness;
       uniform float envMapIntensity;
       uniform float time;
+      
+      // Sun uniforms (directional light driven by SunController)
+      uniform vec3 sunDirection;
+      uniform vec3 sunColor;
 
       // Shadow uniforms
       uniform sampler2D shadowMap0;
@@ -159,11 +163,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           // Enhanced ambient with AO
           vec3 ambient = vec3(0.4, 0.5, 0.6) * 0.4 * vAmbientOcclusion;
           
-          // Main sun light
-          // Match sun direction to shadow light (50,120,50)
-          vec3 sunDir = normalize(vec3(50.0, 120.0, 50.0));
-          vec3 sunColor = vec3(1.0, 0.95, 0.8) * 1.2;
-          float sunDot = max(dot(normal, sunDir), 0.0);
+      // Main sun light (provided via uniforms)
+      vec3 sunDir = normalize(sunDirection);
+      float sunDot = max(dot(normal, sunDir), 0.0);
           
           // Sample shadow
           float shadowFactor = sampleShadow(vWorldPosition, normal, sunDir);
@@ -180,8 +182,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 reflection = vec3(0.0);
           #ifdef USE_ENVMAP
             vec3 reflectDir = reflect(-viewDir, normal);
-            vec3 envColor = textureCube(envMap, reflectDir).rgb;
-            reflection = envColor * envMapIntensity * (1.0 - roughness) * fresnel;
+          vec3 envColor = textureCube(envMap, reflectDir).rgb;
+          reflection = envColor * envMapIntensity * (1.0 - roughness) * fresnel;
           #endif
           
           // Subsurface scattering
@@ -191,13 +193,14 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           return ambient + diffuse + fresnelColor + reflection + subsurface;
       }
 
-      // Atmospheric fog
+      // Atmospheric fog (legacy per-material; disabled by default in favor of post-process fog)
+      uniform bool materialFogEnabled;
       vec3 applyAtmosphericFog(vec3 color, float distance) {
-          float fogDensity = 0.0003;
+          if (!materialFogEnabled) return color;
+          float fogDensity = 0.0002;
           float fogFactor = 1.0 - exp(-distance * fogDensity);
           vec3 fogColor = vec3(0.7, 0.8, 0.9);
-          
-          return mix(color, fogColor, clamp(fogFactor, 0.0, 0.8));
+          return mix(color, fogColor, clamp(fogFactor, 0.0, 0.6));
       }
 
       void main() {
@@ -232,6 +235,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         envMapIntensity: { value: 0.3 },
         time: { value: 0.0 },
         
+        // Sun uniforms (updated by Engine via SunController)
+        sunDirection: { value: new THREE.Vector3(50, 120, 50).normalize() },
+        sunColor: { value: new THREE.Color(1.0, 0.95, 0.8) },
+        
         // Shadow uniforms (will be updated by ShadowSystem) - start disabled
         shadowMap0: { value: null },
         shadowMap1: { value: null },
@@ -245,7 +252,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowBias: { value: 0.0005 },
         shadowNormalBias: { value: 0.02 },
         shadowIntensity: { value: 0.0 }, // Start with shadows disabled
-        shadowResolution: { value: 1024 } // Default shadow resolution
+        shadowResolution: { value: 1024 }, // Default shadow resolution
+        materialFogEnabled: { value: false }
       },
       defines: envMap ? { USE_ENVMAP: true } : {},
       side: THREE.FrontSide,
@@ -271,6 +279,15 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     uniforms.roughness.value = roughness;
     uniforms.metalness.value = metalness;
     uniforms.envMapIntensity.value = envMapIntensity;
+  }
+
+  /**
+   * Update sun lighting uniforms (direction + color)
+   */
+  setSunUniforms(direction: THREE.Vector3, color: THREE.Color): void {
+    const uniforms = this.uniforms as Record<string, { value: unknown }>;
+    (uniforms.sunDirection.value as THREE.Vector3).copy(direction);
+    (uniforms.sunColor.value as THREE.Color).copy(color);
   }
 
   /**

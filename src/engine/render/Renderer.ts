@@ -23,6 +23,9 @@ export class Renderer {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.8;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // three r179 uses useLegacyLights (false = physically correct)
+    // @ts-expect-error - property exists in r179 types
+    this.renderer.useLegacyLights = false;
     
     // Optional: Enable shadow mapping (will be used in Phase 4)
     this.renderer.shadowMap.enabled = false; // Will enable in Phase 4

@@ -10,6 +10,7 @@ import type { ShadowSettings } from '../engine/render/ShadowSystem';
 interface WindowWithEngineGlobals extends Window {
   updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
   updateShadowSettings?: (settings: ShadowSettings) => void;
+  updateGraphicsSettings?: (settings: { timeOfDay: { t: number; paused: boolean; cycleSeconds: number }; renderer?: { exposure?: number } }) => void;
 }
 
 interface PostProcessingSettings {
@@ -27,6 +28,12 @@ interface PostProcessingSettings {
   shadowDistance: number;
   shadowSoftness: number;
   shadowIntensity: number;
+  fogEnabled?: boolean;
+  fogBaseDensity?: number;
+  fogMaxDistance?: number;
+  volumetricsEnabled?: boolean;
+  volumetricsIntensity?: number;
+  volumetricsSteps?: number;
 }
 
 export const DebugPanel: React.FC = () => {
@@ -46,7 +53,18 @@ export const DebugPanel: React.FC = () => {
     shadowDistance: 1000,
     shadowSoftness: 2.5,
     shadowIntensity: 0.6,
+    fogEnabled: true,
+    fogBaseDensity: 0.002,
+    fogMaxDistance: 600,
+    volumetricsEnabled: false,
+    volumetricsIntensity: 0.5,
+    volumetricsSteps: 32,
   });
+
+  // Time-of-day UI local state
+  const [timeOfDay, setTimeOfDay] = useState(0.25); // morning
+  const [timePaused, setTimePaused] = useState(false);
+  const [cycleSeconds, setCycleSeconds] = useState(180);
 
   // Initialize settings on mount
   useEffect(() => {
@@ -78,6 +96,11 @@ export const DebugPanel: React.FC = () => {
       } else {
         console.warn('[DebugPanel] Shadow system not available during initialization');
       }
+      // Initialize time-of-day controls
+      (window as WindowWithEngineGlobals).updateGraphicsSettings?.({
+        timeOfDay: { t: timeOfDay, paused: timePaused, cycleSeconds },
+        renderer: { exposure: settings.exposure }
+      });
     }, 1000);
     
     return () => clearTimeout(timer);
@@ -222,6 +245,74 @@ export const DebugPanel: React.FC = () => {
         >
           ✕
         </button>
+      </div>
+
+      {/* Day/Night Cycle */}
+      <div style={{ marginBottom: '20px' }}>
+        <h4 style={{
+          margin: '0 0 12px 0',
+          fontSize: '14px',
+          color: '#e2e8f0',
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: 0.5,
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          paddingBottom: '6px'
+        }}>Day/Night Cycle</h4>
+
+        <label style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', cursor: 'pointer', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <input
+            type="checkbox"
+            checked={timePaused}
+            onChange={(e) => {
+              const paused = e.target.checked;
+              setTimePaused(paused);
+              (window as WindowWithEngineGlobals).updateGraphicsSettings?.({ timeOfDay: { t: timeOfDay, paused, cycleSeconds }, renderer: { exposure: settings.exposure } });
+            }}
+            style={{ marginRight: '10px', transform: 'scale(1.1)' }}
+          />
+          <span style={{ fontWeight: 500 }}>Pause Cycle</span>
+        </label>
+
+        <label style={{ display: 'block', marginBottom: '12px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+            <span>Time</span>
+            <span style={{ color: '#e2e8f0' }}>{timeOfDay.toFixed(2)}</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={timeOfDay}
+            onChange={(e) => {
+              const t = parseFloat(e.target.value);
+              setTimeOfDay(t);
+              (window as WindowWithEngineGlobals).updateGraphicsSettings?.({ timeOfDay: { t, paused: timePaused, cycleSeconds }, renderer: { exposure: settings.exposure } });
+            }}
+            style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }}
+          />
+        </label>
+
+        <label style={{ display: 'block', marginBottom: '12px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+            <span>Cycle Length (s)</span>
+            <span style={{ color: '#e2e8f0' }}>{cycleSeconds}</span>
+          </div>
+          <input
+            type="range"
+            min="30"
+            max="600"
+            step="10"
+            value={cycleSeconds}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              setCycleSeconds(v);
+              (window as WindowWithEngineGlobals).updateGraphicsSettings?.({ timeOfDay: { t: timeOfDay, paused: timePaused, cycleSeconds: v }, renderer: { exposure: settings.exposure } });
+            }}
+            style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }}
+          />
+        </label>
       </div>
 
       {/* SSAO Settings */}
@@ -563,6 +654,52 @@ export const DebugPanel: React.FC = () => {
               cursor: 'pointer'
             }}
           />
+        </label>
+      </div>
+
+      {/* Fog */}
+      <div style={{ marginBottom: '20px' }}>
+        <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#e2e8f0', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '6px' }}>Height Fog</h4>
+        <label style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', cursor: 'pointer', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <input type="checkbox" checked={!!settings.fogEnabled} onChange={(e) => handleSettingChange('fogEnabled', e.target.checked)} style={{ marginRight: '10px', transform: 'scale(1.1)' }} />
+          <span style={{ fontWeight: 500 }}>Enable Fog</span>
+        </label>
+        <label style={{ display: 'block', marginBottom: '12px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', opacity: settings.fogEnabled ? 1 : 0.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+            <span>Base Density</span>
+            <span style={{ color: '#e2e8f0' }}>{(settings.fogBaseDensity ?? 0).toFixed(4)}</span>
+          </div>
+          <input type="range" min="0" max="0.01" step="0.0005" value={settings.fogBaseDensity ?? 0} onChange={(e) => handleSettingChange('fogBaseDensity', parseFloat(e.target.value))} disabled={!settings.fogEnabled} style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }} />
+        </label>
+        <label style={{ display: 'block', marginBottom: '12px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', opacity: settings.fogEnabled ? 1 : 0.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+            <span>Max Distance</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.fogMaxDistance}</span>
+          </div>
+          <input type="range" min="50" max="2000" step="10" value={settings.fogMaxDistance ?? 600} onChange={(e) => handleSettingChange('fogMaxDistance', parseFloat(e.target.value))} disabled={!settings.fogEnabled} style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }} />
+        </label>
+      </div>
+
+      {/* Volumetrics */}
+      <div>
+        <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#e2e8f0', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '6px' }}>Volumetric Lighting</h4>
+        <label style={{ display: 'flex', alignItems: 'center', marginBottom: '10px', cursor: 'pointer', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <input type="checkbox" checked={!!settings.volumetricsEnabled} onChange={(e) => handleSettingChange('volumetricsEnabled', e.target.checked)} style={{ marginRight: '10px', transform: 'scale(1.1)' }} />
+          <span style={{ fontWeight: 500 }}>Enable Volumetrics</span>
+        </label>
+        <label style={{ display: 'block', marginBottom: '12px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', opacity: settings.volumetricsEnabled ? 1 : 0.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+            <span>Intensity</span>
+            <span style={{ color: '#e2e8f0' }}>{(settings.volumetricsIntensity ?? 0).toFixed(2)}</span>
+          </div>
+          <input type="range" min="0" max="2" step="0.05" value={settings.volumetricsIntensity ?? 0.5} onChange={(e) => handleSettingChange('volumetricsIntensity', parseFloat(e.target.value))} disabled={!settings.volumetricsEnabled} style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }} />
+        </label>
+        <label style={{ display: 'block', marginBottom: '12px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', opacity: settings.volumetricsEnabled ? 1 : 0.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+            <span>Steps</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.volumetricsSteps}</span>
+          </div>
+          <input type="range" min="8" max="64" step="1" value={settings.volumetricsSteps ?? 32} onChange={(e) => handleSettingChange('volumetricsSteps', parseInt(e.target.value, 10))} disabled={!settings.volumetricsEnabled} style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }} />
         </label>
       </div>
 

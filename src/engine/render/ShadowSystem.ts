@@ -23,6 +23,7 @@ export class ShadowSystem {
   private shadowMaps: THREE.WebGLRenderTarget[] = [];
   private cascadeDistances: number[] = [];
   private dummyTexture: THREE.DataTexture;
+  private sunDir: THREE.Vector3 = new THREE.Vector3(50, 120, 50).normalize();
   
   private settings: ShadowSettings = {
     enabled: true,
@@ -136,8 +137,10 @@ export class ShadowSystem {
   }
 
   private updateShadowLightPosition(): void {
-    // Static sun position for consistent shadows
-    this.shadowLight.position.set(50, 120, 50);
+    // Position shadow light along current sun direction
+    const dist = Math.max(50, this.settings.shadowDistance);
+    const pos = this.sunDir.clone().multiplyScalar(dist);
+    this.shadowLight.position.copy(pos);
 
     // Update shadow light target
     this.shadowLight.target.position.set(0, 0, 0);
@@ -159,7 +162,7 @@ export class ShadowSystem {
     camera.far = this.settings.shadowDistance * 2; // Generous far plane
     
     // Position shadow camera to look at player from sun direction
-    const sunOffset = new THREE.Vector3(50, 120, 50).normalize().multiplyScalar(this.settings.shadowDistance);
+    const sunOffset = this.sunDir.clone().normalize().multiplyScalar(this.settings.shadowDistance);
     camera.position.copy(playerPos).add(sunOffset);
     camera.lookAt(playerPos);
     camera.updateProjectionMatrix();
@@ -258,6 +261,12 @@ export class ShadowSystem {
     uniforms.shadowResolution = { value: this.settings.resolution };
 
     return uniforms;
+  }
+
+  /** Set the current sun direction for shadowing */
+  setSunDirection(dir: THREE.Vector3): void {
+    // Avoid allocation by copying into our vector
+    this.sunDir.copy(dir).normalize();
   }
 
   /**
