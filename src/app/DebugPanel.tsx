@@ -108,7 +108,7 @@ export const DebugPanel: React.FC = () => {
           cascades: 3,
           shadowDistance: settings.shadowDistance,
           softness: settings.shadowSoftness,
-          bias: -0.0005,
+          bias: 0.0005,
           normalBias: 0.02,
           intensity: settings.shadowIntensity,
         };
@@ -202,7 +202,7 @@ export const DebugPanel: React.FC = () => {
         cascades: 3, // Fixed value for now
         shadowDistance: newSettings.shadowDistance,
         softness: newSettings.shadowSoftness,
-        bias: -0.0005, // Fixed value for now
+        bias: 0.0005, // Fixed value for now
         normalBias: 0.02, // Fixed value for now
         intensity: newSettings.shadowIntensity,
       };

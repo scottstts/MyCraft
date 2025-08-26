@@ -176,8 +176,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           float nb = shadowNormalBias * (1.0 - max(dot(normal, sunDir), 0.0));
 
           // Determine cascade by view depth
-          // Prefer world-space distance from camera to reduce view-rotation artifacts
-          float viewDepth = distance(cameraPosition, vWorldPosition);
+          // Use camera-space depth (consistent with cascade splits)
+          float viewDepth = -vViewPosition.z;
           int ci = 0;
           if (shadowCascades > 1 && viewDepth > shadowDistances[0]) ci = 1;
           if (shadowCascades > 2 && viewDepth > shadowDistances[1]) ci = 2;
