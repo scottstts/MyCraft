@@ -29,6 +29,12 @@ const WARP_AMPLITUDE = 6.0;
 const LAKE_THRESHOLD = -0.3;
 const LAKE_DEPTH = 8;
 
+// Ocean floor generation parameters
+const OCEAN_DEPTH_MIN = 5;              // Minimum ocean depth below water level
+const OCEAN_DEPTH_MAX = 15;             // Maximum ocean depth below water level
+const OCEAN_FLOOR_SCALE = 0.012;        // Ocean floor variation frequency
+const OCEAN_FLOOR_AMPLITUDE = 0.6;      // Ocean floor height variation (0-1)
+
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
   return () => {
@@ -67,6 +73,7 @@ export function getHeightAtPosition(x: number, z: number, seed: number, worldRad
   const rngWarpX     = mulberry32(seed ^ 0xa24baed6);
   const rngWarpZ     = mulberry32(seed ^ 0x3bd39e10);
   const rngLakes     = mulberry32(seed ^ 0x1a2b3c4d);
+  const rngOceanFloor = mulberry32(seed ^ 0x5f7a2e1c);
 
   const nCoastline = createNoise2D(rngCoastline);
   const nElevation = createNoise2D(rngElevation);
@@ -75,6 +82,7 @@ export function getHeightAtPosition(x: number, z: number, seed: number, worldRad
   const nWarpX     = createNoise2D(rngWarpX);
   const nWarpZ     = createNoise2D(rngWarpZ);
   const nLakes     = createNoise2D(rngLakes);
+  const nOceanFloor = createNoise2D(rngOceanFloor);
 
   // Use provided world radius or estimate from chunk size (7x7 default, 48x48 chunks)
   const estimatedRadius = worldRadius || (7 * 48 / 2);
@@ -95,8 +103,11 @@ export function getHeightAtPosition(x: number, z: number, seed: number, worldRad
   const isLand = normalizedDistance < islandRadius;
 
   if (!isLand) {
-    // Ocean floor
-    return WATER_LEVEL - 10;
+    // Ocean floor with varied terrain
+    const oceanFloorNoise = fbm((a, b) => nOceanFloor(a * OCEAN_FLOOR_SCALE, b * OCEAN_FLOOR_SCALE), x, z, 3, 2.0, 0.5);
+    const depthVariation = OCEAN_DEPTH_MIN + (OCEAN_DEPTH_MAX - OCEAN_DEPTH_MIN) * (oceanFloorNoise * OCEAN_FLOOR_AMPLITUDE + 0.5);
+    const oceanFloorHeight = WATER_LEVEL - Math.floor(depthVariation);
+    return Math.max(BEDROCK_LEVEL + 1, oceanFloorHeight);
   }
 
   // Island terrain generation

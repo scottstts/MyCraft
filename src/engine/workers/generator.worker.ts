@@ -38,6 +38,12 @@ const WARP_AMPLITUDE = 6.0;             // Domain warp strength
 const LAKE_THRESHOLD = -0.3;            // Elevation threshold for lakes
 const LAKE_DEPTH = 8;                   // Maximum lake depth
 
+// Ocean floor generation parameters
+const OCEAN_DEPTH_MIN = 5;              // Minimum ocean depth below water level
+const OCEAN_DEPTH_MAX = 15;             // Maximum ocean depth below water level
+const OCEAN_FLOOR_SCALE = 0.012;        // Ocean floor variation frequency
+const OCEAN_FLOOR_AMPLITUDE = 0.6;      // Ocean floor height variation (0-1)
+
 // Seeded RNG for simplex-noise
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
@@ -80,6 +86,7 @@ function createHeightFunction(seed: number, worldRadius?: number) {
   const rngWarpX     = mulberry32(seed ^ 0xa24baed6);
   const rngWarpZ     = mulberry32(seed ^ 0x3bd39e10);
   const rngLakes     = mulberry32(seed ^ 0x1a2b3c4d);
+  const rngOceanFloor = mulberry32(seed ^ 0x5f7a2e1c);
 
   const nCoastline = createNoise2D(rngCoastline);
   const nElevation = createNoise2D(rngElevation);
@@ -88,6 +95,7 @@ function createHeightFunction(seed: number, worldRadius?: number) {
   const nWarpX     = createNoise2D(rngWarpX);
   const nWarpZ     = createNoise2D(rngWarpZ);
   const nLakes     = createNoise2D(rngLakes);
+  const nOceanFloor = createNoise2D(rngOceanFloor);
 
   // Use provided world radius or estimate from chunk size (assume 7x7 default, 48x48 chunks)
   const effectiveRadius = worldRadius || (7 * 48 / 2);
@@ -109,8 +117,11 @@ function createHeightFunction(seed: number, worldRadius?: number) {
     const isLand = normalizedDistance < islandRadius;
 
     if (!isLand) {
-      // Ocean floor
-      return { height: WATER_LEVEL - 10, isLand: false };
+      // Ocean floor with varied terrain
+      const oceanFloorNoise = fbm((a, b) => nOceanFloor(a * OCEAN_FLOOR_SCALE, b * OCEAN_FLOOR_SCALE), x, z, 3, 2.0, 0.5);
+      const depthVariation = OCEAN_DEPTH_MIN + (OCEAN_DEPTH_MAX - OCEAN_DEPTH_MIN) * (oceanFloorNoise * OCEAN_FLOOR_AMPLITUDE + 0.5);
+      const oceanFloorHeight = WATER_LEVEL - Math.floor(depthVariation);
+      return { height: Math.max(BEDROCK_LEVEL + 1, oceanFloorHeight), isLand: false };
     }
 
     // Island terrain generation
@@ -260,11 +271,11 @@ function generateTerrain(
           if (isLand && worldY <= WATER_LEVEL && height < worldY) {
             // Lakes on land
             voxels[index] = WATER;
-          } else if (!isLand) {
-            // Ocean water
+          } else if (!isLand && worldY === WATER_LEVEL) {
+            // Ocean water - only at surface level
             voxels[index] = WATER;
           } else {
-            // Above ground and water level
+            // Air (includes ocean space below surface and above ground)
             voxels[index] = AIR;
           }
         } else {
