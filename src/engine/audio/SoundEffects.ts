@@ -18,6 +18,61 @@ function makeLoopingAudio(src: string, volume: number): HTMLAudioElement {
   return a
 }
 
+// One-shot looper: chains short clips back-to-back while desired=true.
+// When desired=false, it does NOT pause the current clip; it lets it finish.
+class OneShotLooper {
+  private src: string
+  private desired: boolean = false
+  private current: HTMLAudioElement | null = null
+  private vol: number = 1
+
+  constructor(src: string, volume: number) {
+    this.src = src
+    this.vol = volume
+  }
+
+  setVolume(v: number) {
+    this.vol = Math.max(0, Math.min(1, v))
+    if (this.current) this.current.volume = this.vol
+  }
+
+  setDesired(play: boolean) {
+    const was = this.desired
+    this.desired = play
+    if (play && !was) this.ensurePlaying()
+  }
+
+  private ensurePlaying() {
+    if (!this.desired) return
+    // If a clip is currently playing, do nothing; onended will chain next
+    if (this.current && !this.current.paused && !this.current.ended) return
+    const a = new Audio(this.src)
+    a.preload = 'auto'
+    a.loop = false
+    a.volume = this.vol
+    a.onended = () => {
+      this.current = null
+      if (this.desired) this.ensurePlaying()
+    }
+    this.current = a
+    void a.play().catch(() => { /* ignore */ })
+  }
+
+  // Opportunistic tick to start playback if needed (safe to call every frame)
+  tick() {
+    if (this.desired) this.ensurePlaying()
+  }
+
+  // For cleanup only: immediately stop any current playback
+  stopImmediate() {
+    this.desired = false
+    if (this.current) {
+      try { this.current.pause() } catch {}
+      this.current = null
+    }
+  }
+}
+
 export class SoundEffects {
   private world: World
   private camera: THREE.PerspectiveCamera
@@ -31,8 +86,8 @@ export class SoundEffects {
 
   private sfxVolume: number = 0.7
 
-  private footLoop = makeLoopingAudio(footstepUrl, this.sfxVolume)
-  private waterLoop = makeLoopingAudio(waterStepUrl, this.sfxVolume)
+  private footLoop = new OneShotLooper(footstepUrl, this.sfxVolume)
+  private waterLoop = new OneShotLooper(waterStepUrl, this.sfxVolume)
   private underLoop = makeLoopingAudio(underwaterUrl, this.sfxVolume * 0.8)
 
   constructor(world: World, camera: THREE.PerspectiveCamera, input: InputSystem, player: PlayerController) {
@@ -48,8 +103,8 @@ export class SoundEffects {
   setVolume(v: number) {
     const vol = Math.max(0, Math.min(1, v))
     this.sfxVolume = vol
-    this.footLoop.volume = vol
-    this.waterLoop.volume = vol
+    this.footLoop.setVolume(vol)
+    this.waterLoop.setVolume(vol)
     this.underLoop.volume = Math.max(0, Math.min(1, vol * 0.8))
   }
 
@@ -57,17 +112,19 @@ export class SoundEffects {
 
   tryUnlockOnUserGesture() {
     // Attempt brief play/pause to satisfy autoplay rules
-    const attempt = (a: HTMLAudioElement) => {
+    const attemptSrc = (src: string) => {
+      const a = new Audio(src)
       a.muted = true
       a.play().then(() => {
-        a.pause()
-        a.currentTime = 0
-        a.muted = false
+        a.pause(); a.currentTime = 0; a.muted = false
       }).catch(() => { /* ignore */ })
     }
-    attempt(this.footLoop)
-    attempt(this.waterLoop)
-    attempt(this.underLoop)
+    attemptSrc(footstepUrl)
+    attemptSrc(waterStepUrl)
+    // Underwater loop can use the element
+    const u = this.underLoop
+    u.muted = true
+    u.play().then(() => { u.pause(); u.currentTime = 0; u.muted = false }).catch(() => { /* ignore */ })
   }
 
   private setLoopPlaying(a: HTMLAudioElement, shouldPlay: boolean) {
@@ -94,9 +151,10 @@ export class SoundEffects {
 
   update(dtSeconds: number, paused: boolean, inGame: boolean) {
     if (paused || !inGame) {
-      // Pause all loops when game paused or not in control
-      this.setLoopPlaying(this.footLoop, false)
-      this.setLoopPlaying(this.waterLoop, false)
+      // Stop requesting new foot/water clips; let last ones finish.
+      this.footLoop.setDesired(false)
+      this.waterLoop.setDesired(false)
+      // Underwater is allowed to terminate immediately
       this.setLoopPlaying(this.underLoop, false)
       // Update previous markers but do not trigger landing while paused
       this.lastX = this.camera.position.x
@@ -127,22 +185,27 @@ export class SoundEffects {
 
     // Precedence: underwater > water step > footstep
     if (isUnderWater) {
+      // Start underwater loop immediately; stop requesting new foot/water clips (let last ones finish)
       this.setLoopPlaying(this.underLoop, true)
-      this.setLoopPlaying(this.waterLoop, false)
-      this.setLoopPlaying(this.footLoop, false)
+      this.waterLoop.setDesired(false)
+      this.footLoop.setDesired(false)
     } else if (touchingWater && (speedXZ > 0.1 || inputMoving)) {
-      this.setLoopPlaying(this.waterLoop, true)
       this.setLoopPlaying(this.underLoop, false)
-      this.setLoopPlaying(this.footLoop, false)
+      this.waterLoop.setDesired(true)
+      this.footLoop.setDesired(false)
     } else if (movingOnGround) {
-      this.setLoopPlaying(this.footLoop, true)
-      this.setLoopPlaying(this.waterLoop, false)
       this.setLoopPlaying(this.underLoop, false)
+      this.waterLoop.setDesired(false)
+      this.footLoop.setDesired(true)
     } else {
-      this.setLoopPlaying(this.footLoop, false)
-      this.setLoopPlaying(this.waterLoop, false)
       this.setLoopPlaying(this.underLoop, false)
+      this.waterLoop.setDesired(false)
+      this.footLoop.setDesired(false)
     }
+
+    // Allow one-shot loopers to start the next clip if needed
+    this.footLoop.tick()
+    this.waterLoop.tick()
 
     // Landing one-shot: transition false->true with downward motion
     if (!this.lastGrounded && grounded && dy < -0.02 && !isUnderWater && !touchingWater) {
@@ -188,8 +251,8 @@ export class SoundEffects {
 
   dispose() {
     // Stop and release references
-    try { this.footLoop.pause() } catch {}
-    try { this.waterLoop.pause() } catch {}
+    try { this.footLoop.stopImmediate() } catch {}
+    try { this.waterLoop.stopImmediate() } catch {}
     try { this.underLoop.pause() } catch {}
   }
 }
