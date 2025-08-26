@@ -109,10 +109,10 @@ export function ClockOverlay() {
     return () => cancelAnimationFrame(raf)
   }, [])
 
-  // Convert t [0,1) to analog clock (12h)
-  const hours = t * 12
-  const minutes = (t * 12) % 1 * 60
-  const hourAngle = (hours / 12) * 360 // deg
+  // Map t [0,1) such that t=0 -> 6:00 (sunrise), t=0.5 -> 18:00 (sunset)
+  const hoursFloat = (6 + t * 24) % 12 // 12-hour clock
+  const minutes = (hoursFloat % 1) * 60
+  const hourAngle = (hoursFloat / 12) * 360 // deg
   const minuteAngle = (minutes / 60) * 360
 
   const size = 44

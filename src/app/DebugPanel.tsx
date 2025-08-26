@@ -66,7 +66,7 @@ export const DebugPanel: React.FC = () => {
   const [cloudsDensity, setCloudsDensity] = useState(0.65);
 
   // Time-of-day UI local state
-  const [timeOfDay, setTimeOfDay] = useState(0.25); // morning
+  const [timeOfDay, setTimeOfDay] = useState(0.0); // 6am sunrise
   const [timePaused, setTimePaused] = useState(false);
   const [cycleSeconds, setCycleSeconds] = useState(180);
 

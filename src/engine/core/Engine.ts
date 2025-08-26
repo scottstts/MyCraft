@@ -112,9 +112,9 @@ function update(dtSeconds: number) {
     blockMaterial.updateUniforms(camera);
   }
 
-  // Time-of-day and lighting: pause sun cycle when game paused or not in-game
+  // Time-of-day and lighting: pause only when UI paused
   if (sunController) {
-    if (inGame && !paused) {
+    if (!paused) {
       sunController.update(dtSeconds);
     }
   }
@@ -269,7 +269,7 @@ async function start(canvas: HTMLCanvasElement) {
   shadowSystem = new ShadowSystem(renderer.getRenderer(), scene);
 
   // Initialize sun controller (day/night cycle)
-  sunController = new SunController(scene, { cycleSeconds: 180, initialTime: 0.25 });
+  sunController = new SunController(scene, { cycleSeconds: 180, initialTime: 0.0 });
 
   // Sky dome for physical sky colors
   skyDome = new SkyDome(scene, { turbidity: 2.0, rayleigh: 1.5, mieCoefficient: 0.005, mieDirectionalG: 0.8 });
