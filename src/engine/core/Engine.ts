@@ -31,6 +31,7 @@ import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { useUIStore } from '../../state/ui';
 import { USE_EFFECT_COMPOSER } from '../../config/flags';
+import { SoundEffects } from '../audio/SoundEffects';
 
 let rafId: number | null = null;
 let running = false;
@@ -58,6 +59,7 @@ let lastFrameNow: number = 0;
 let fpsCounterFrames: number = 0;
 let fpsLastReportNow: number = 0;
 let lastPaused: boolean = false;
+let sfx: SoundEffects | null = null;
 
 function update(dtSeconds: number) {
   // Always allow pause toggle to be consumed
@@ -105,6 +107,10 @@ function update(dtSeconds: number) {
     if (interactionSystem) {
       interactionSystem.update();
     }
+  }
+  // Update sound effects after movement/collision updates
+  if (sfx) {
+    sfx.update(dtSeconds, paused, inGame);
   }
   
   // Update material uniforms
@@ -385,6 +391,9 @@ async function start(canvas: HTMLCanvasElement) {
   // Interaction system (mine/place + re-mesh)
   interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);
   
+  // Sound effects
+  sfx = new SoundEffects(world, camera, inputSystem, playerController);
+  
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', () => {
     // console.log(`[Engine] Chunk ready: ${data.key}`);
@@ -479,6 +488,12 @@ function stop() {
   
   // Clean up interaction system
   interactionSystem = null;
+  
+  // Clean up sound effects
+  if (sfx) {
+    sfx.dispose();
+    sfx = null;
+  }
   
   // Clean up world
   if (world) {
@@ -606,6 +621,11 @@ console.log('[Engine] Global functions exposed to window:', {
   updateGraphicsSettings: !!(window as Window & { updateGraphicsSettings?: unknown }).updateGraphicsSettings,
   getGraphicsSettings: !!(window as Window & { getGraphicsSettings?: unknown }).getGraphicsSettings,
 });
+
+// Expose SFX helpers to UI
+(window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__setSfxVolume = (v: number) => { sfx?.setVolume(v); };
+(window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__getSfxVolume = () => sfx?.getVolume() ?? 0.7;
+(window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__primeSfx = () => { sfx?.tryUnlockOnUserGesture(); };
 
 export const engine = { start, stop };
 export type Engine = typeof engine;

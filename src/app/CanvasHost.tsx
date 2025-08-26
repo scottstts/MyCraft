@@ -76,6 +76,8 @@ export function CanvasHost() {
     // Kick off background music from a user gesture if we're entering the game
     if (gameStarted && !paused) {
       tryPlayOnUserGesture()
+      // Prime SFX playback as well
+      ;(window as Window & { __primeSfx?: () => void }).__primeSfx?.()
     }
   }
 

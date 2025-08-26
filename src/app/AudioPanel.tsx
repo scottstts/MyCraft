@@ -4,12 +4,19 @@ import { getVolume, setVolume } from './BgMusic'
 export const AudioPanel: React.FC = () => {
   const [visible, setVisible] = React.useState(false)
   const [vol, setVol] = React.useState(0.5)
+  const [sfxVol, setSfxVol] = React.useState(0.7)
 
   React.useEffect(() => {
     // Initialize slider from current audio volume
     try {
       const v = getVolume()
       if (typeof v === 'number' && !Number.isNaN(v)) setVol(v)
+    } catch {
+      // ignore
+    }
+    try {
+      const sfx = (window as Window & { __getSfxVolume?: () => number }).__getSfxVolume?.()
+      if (typeof sfx === 'number' && !Number.isNaN(sfx)) setSfxVol(sfx)
     } catch {
       // ignore
     }
@@ -128,9 +135,28 @@ export const AudioPanel: React.FC = () => {
           style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }}
         />
       </div>
+
+      <div style={{ marginTop: '12px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+          <span>Sound Effects Volume</span>
+          <span style={{ color: '#e2e8f0' }}>{Math.round(sfxVol * 100)}%</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={sfxVol}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value)
+            setSfxVol(v)
+            ;(window as Window & { __setSfxVolume?: (v: number) => void }).__setSfxVolume?.(v)
+          }}
+          style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }}
+        />
+      </div>
     </div>
   )
 }
 
 export default AudioPanel
-
