@@ -123,9 +123,11 @@ function update(dtSeconds: number) {
   }
   if (starDome && sunController) {
     starDome.update();
-    const elev = sunController.getElevationRadians();
-    const vis = THREE.MathUtils.clamp((0.1 - elev) / (0.1 + 0.05), 0, 1); // smoothstep-ish
-    starDome.setVisibility(vis);
+    // Use dayLight from sun elevation (y component of sun direction) for star visibility
+    const dayLight = Math.max(0, sunController.getSunDirection().y);
+    const starVis = 1 - THREE.MathUtils.clamp(dayLight / 0.25, 0, 1); // fully visible by dayLight<=0
+    starDome.setVisibility(starVis);
+    starDome.setIntensity(1.2 + 1.6 * starVis);
   }
   if (clouds) clouds.update();
 
@@ -150,6 +152,9 @@ function update(dtSeconds: number) {
     // Day/night factor for ambient modulation
     const dayLight = Math.max(0, sdir.y);
     blockMaterial.setDayLight(dayLight);
+    // Star light provides a tiny ambient boost at night
+    const starVis = 1 - THREE.MathUtils.clamp((dayLight - 0.0) / 0.2, 0, 1);
+    blockMaterial.setStarLight(starVis * 0.35);
   }
   
   // Update subsystems here (physics, input, etc.)
@@ -163,6 +168,7 @@ function update(dtSeconds: number) {
     const nightFog = new THREE.Color(0.03, 0.05, 0.08);
     const fogColor = nightFog.clone().lerp(dayFog, dayLight);
     composer.setFogColor(fogColor);
+    composer.setFogDayLight(dayLight);
     composer.render();
   } else if (postProcessor) {
     if (sunController && camera) {

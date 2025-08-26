@@ -98,5 +98,6 @@ export class Composer {
   setLens(enabled: boolean, intensity: number) { this.lens.setEnabled(enabled); this.lens.setIntensity(intensity) }
   setFog(enabled: boolean, baseDensity: number, maxDistance: number) { this.fog.setSettings({ enabled, baseDensity, maxDistance }) }
   setFogColor(color: THREE.Color) { this.fog.setColor(color) }
+  setFogDayLight(v: number) { this.fog.setDayLight(v) }
   render() { this.composer.render() }
 }

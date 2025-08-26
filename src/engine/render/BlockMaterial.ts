@@ -108,6 +108,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
 
       // Day/night factor (0=night, 1=day)
       uniform float dayLight;
+      // Star light factor (0..1) tiny ambient boost at night
+      uniform float starLight;
 
       // Hash-based noise for kernel rotation
       float hash12(vec2 p) {
@@ -255,8 +257,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           
           // Enhanced ambient with AO, modulated by day/night
           vec3 dayAmb = vec3(0.4, 0.5, 0.6) * 0.35;
-          vec3 nightAmb = vec3(0.01, 0.015, 0.02) * 0.05;
-          vec3 ambient = mix(nightAmb, dayAmb, clamp(dayLight, 0.0, 1.0)) * vAmbientOcclusion;
+          vec3 nightAmb = vec3(0.01, 0.015, 0.02) * 0.12;
+          vec3 ambBase = mix(nightAmb, dayAmb, clamp(dayLight, 0.0, 1.0));
+          vec3 starAmb = vec3(0.02, 0.025, 0.04) * 0.35 * clamp(starLight, 0.0, 1.0);
+          vec3 ambient = (ambBase + starAmb) * vAmbientOcclusion;
           
       // Main sun light (provided via uniforms)
       vec3 sunDir = normalize(sunDirection);
@@ -368,6 +372,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         cloudDensity: { value: 0.65 },
         cloudWind: { value: new THREE.Vector2(Math.cos(Math.PI*0.25)*5.0, Math.sin(Math.PI*0.25)*5.0) },
         dayLight: { value: 1.0 },
+        starLight: { value: 0.0 },
         materialFogEnabled: { value: false }
       },
       defines: envMap ? { USE_ENVMAP: true } : {},
@@ -409,6 +414,12 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   setDayLight(level: number): void {
     const uniforms = this.uniforms as Record<string, { value: unknown }>;
     uniforms.dayLight.value = THREE.MathUtils.clamp(level, 0, 1);
+  }
+
+  /** Star light factor (0..1) */
+  setStarLight(level: number): void {
+    const uniforms = this.uniforms as Record<string, { value: unknown }>;
+    uniforms.starLight.value = THREE.MathUtils.clamp(level, 0, 1);
   }
 
   /** Configure cloud shadow uniforms */

@@ -20,6 +20,9 @@ export class StarDome {
     this.material = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending,
       uniforms: {
         uTime: { value: 0.0 },
         uVisibility: { value: 0.0 },
@@ -72,6 +75,7 @@ export class StarDome {
     });
 
     this.mesh = new THREE.Mesh(geom, this.material);
+    this.mesh.renderOrder = 2; // ensure after sky
     scene.add(this.mesh);
   }
 
@@ -88,4 +92,3 @@ export class StarDome {
     this.material.uniforms.uTime.value = (performance.now() - this.start) / 1000;
   }
 }
-
