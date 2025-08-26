@@ -112,9 +112,11 @@ function update(dtSeconds: number) {
     blockMaterial.updateUniforms(camera);
   }
 
-  // Time-of-day and lighting
+  // Time-of-day and lighting: pause sun cycle when game paused or not in-game
   if (sunController) {
-    sunController.update(dtSeconds);
+    if (inGame && !paused) {
+      sunController.update(dtSeconds);
+    }
   }
   if (skyDome && sunController) {
     skyDome.setSunDirection(sunController.getSunDirection());
