@@ -176,7 +176,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           float nb = shadowNormalBias * (1.0 - max(dot(normal, sunDir), 0.0));
 
           // Determine cascade by view depth
-          float viewDepth = -vViewPosition.z; // perspective-friendly metric
+          // Prefer world-space distance from camera to reduce view-rotation artifacts
+          float viewDepth = distance(cameraPosition, vWorldPosition);
           int ci = 0;
           if (shadowCascades > 1 && viewDepth > shadowDistances[0]) ci = 1;
           if (shadowCascades > 2 && viewDepth > shadowDistances[1]) ci = 2;
@@ -299,7 +300,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowNormalBias: { value: 0.02 },
         shadowIntensity: { value: 0.0 }, // Start with shadows disabled
         shadowResolution: { value: 1024 }, // Default shadow resolution
-        shadowBlendFraction: { value: 0.15 },
+        shadowBlendFraction: { value: 0.3 },
         materialFogEnabled: { value: false }
       },
       defines: envMap ? { USE_ENVMAP: true } : {},

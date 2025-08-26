@@ -522,6 +522,7 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
         const sp = p.windSpeed ?? 5;
         clouds.setWind(dir, sp);
       }
+      if (p.enabled !== undefined) clouds.setEnabled(p.enabled);
     }
   });
 }

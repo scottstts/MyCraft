@@ -27,6 +27,7 @@ export class CloudsLayer {
     this.material = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
+      side: THREE.DoubleSide,
       uniforms: {
         uTime: { value: 0.0 },
         uCoverage: { value: opts.coverage ?? 0.45 },
@@ -95,8 +96,8 @@ export class CloudsLayer {
     this.wind.set(Math.cos(dirRad), Math.sin(dirRad)).multiplyScalar(speed);
     (this.material.uniforms.uWind.value as THREE.Vector2).copy(this.wind);
   }
+  setEnabled(enabled: boolean) { this.mesh.visible = enabled; }
   update() {
     this.material.uniforms.uTime.value = (performance.now() - this.start) / 1000;
   }
 }
-
