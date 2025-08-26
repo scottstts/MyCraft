@@ -1,5 +1,6 @@
 import CanvasHost from './app/CanvasHost'
 import { Hotbar, Crosshair, FpsOverlay, PauseMenu, PauseHint, ClockOverlay } from './app/Hotbar'
+import MusicController from './app/MusicController'
 import { DebugPanel } from './app/DebugPanel'
 import { StartPanel } from './app/StartPanel'
 
@@ -14,6 +15,7 @@ export default function App() {
       <ClockOverlay />
       <PauseHint />
       <PauseMenu />
+      <MusicController />
       <DebugPanel />
     </>
   )

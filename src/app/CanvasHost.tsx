@@ -6,6 +6,7 @@
  */
 import { useEffect, useRef } from 'react'
 import { useUIStore } from '../state/ui'
+import { tryPlayOnUserGesture } from './BgMusic'
 
 
 type EngineApi = {
@@ -25,6 +26,7 @@ export function CanvasHost() {
   const setInGame = useUIStore(s => s.setInGame)
   const restartToken = useUIStore(s => s.restartToken)
   const gameStarted = useUIStore(s => s.gameStarted)
+  const paused = useUIStore(s => s.paused)
 
   useEffect(() => {
     let engineApi: EngineApi | null = null
@@ -71,6 +73,10 @@ export function CanvasHost() {
     if (document.pointerLockElement !== canvas) {
       canvas.requestPointerLock()
     }
+    // Kick off background music from a user gesture if we're entering the game
+    if (gameStarted && !paused) {
+      tryPlayOnUserGesture()
+    }
   }
 
   return (
@@ -86,4 +92,3 @@ export function CanvasHost() {
 }
 
 export default CanvasHost
-
