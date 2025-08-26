@@ -43,6 +43,9 @@ export class ShadowSystem {
     this.shadowLight = new THREE.DirectionalLight(0xffffff, 1.0);
     this.shadowLight.position.set(50, 120, 50);
     this.shadowLight.castShadow = this.settings.enabled;
+    // Ensure the light's target participates in scene graph updates
+    // (DirectionalLight uses target's world matrix for orientation.)
+    scene.add(this.shadowLight.target);
     
     // Configure shadow properties
     this.shadowLight.shadow.mapSize.width = this.settings.resolution;
@@ -197,13 +200,33 @@ export class ShadowSystem {
       max.x = Math.floor(max.x / texelX) * texelX;
       max.y = Math.floor(max.y / texelY) * texelY;
 
-      // Configure ortho camera in light space
-      camera.left = min.x;
-      camera.right = max.x;
-      camera.bottom = min.y;
-      camera.top = max.y;
-      camera.near = -max.z - 50; // ensure all corners are inside
-      camera.far = -min.z + 50;
+      // Compute a stable, square coverage region in light space to reduce swimming
+      // Center = midpoint of XY bounds; size = max extent on X/Y
+      const center = new THREE.Vector3(
+        0.5 * (min.x + max.x),
+        0.5 * (min.y + max.y),
+        0
+      );
+      const size = Math.max(max.x - min.x, max.y - min.y);
+      const half = 0.5 * size;
+
+      // Snap center to shadow texel grid for stability
+      const texelSize = size / this.settings.resolution;
+      center.x = Math.floor(center.x / texelSize) * texelSize;
+      center.y = Math.floor(center.y / texelSize) * texelSize;
+
+      // Configure ortho camera in light space (square extents around snapped center)
+      camera.left = center.x - half;
+      camera.right = center.x + half;
+      camera.bottom = center.y - half;
+      camera.top = center.y + half;
+
+      // Depth range in light view: objects in front have negative z
+      // Use positive near/far distances; include a small margin only on far
+      const zNear = Math.max(0.1, -max.z);
+      const zFar = Math.max(zNear + 1.0, -min.z + 25.0);
+      camera.near = zNear;
+      camera.far = zFar;
       camera.updateProjectionMatrix();
 
       // Set camera world matrix from lightView inverse
