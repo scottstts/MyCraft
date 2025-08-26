@@ -69,7 +69,7 @@ export function StartPanel() {
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text'
           }}>
-            Minecraft Clone
+            MyCraft
           </div>
           <div style={{ 
             opacity: 0.75, 
