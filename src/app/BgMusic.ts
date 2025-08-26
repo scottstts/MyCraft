@@ -34,6 +34,17 @@ export function pauseNow(): void {
   a.pause()
 }
 
+export function setVolume(v: number): void {
+  const a = ensureInit()
+  const vol = Math.max(0, Math.min(1, v))
+  a.volume = vol
+}
+
+export function getVolume(): number {
+  const a = ensureInit()
+  return a.volume
+}
+
 export function disposeBgMusic(): void {
   if (audio) {
     audio.pause()
@@ -42,4 +53,3 @@ export function disposeBgMusic(): void {
     audio = null
   }
 }
-
