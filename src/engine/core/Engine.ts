@@ -145,15 +145,24 @@ function update(dtSeconds: number) {
   }
   // Update block material with sun uniforms
   if (blockMaterial && sunController) {
-    blockMaterial.setSunUniforms(
-      sunController.getSunDirection(),
-      sunController.getSunColor()
-    );
+    const sdir = sunController.getSunDirection();
+    blockMaterial.setSunUniforms(sdir, sunController.getSunColor());
+    // Day/night factor for ambient modulation
+    const dayLight = Math.max(0, sdir.y);
+    blockMaterial.setDayLight(dayLight);
   }
   
   // Update subsystems here (physics, input, etc.)
   if (composer && camera && sunController) {
-    composer.update(camera, sunController.getSunDirection(), sunController.getSunColor());
+    const sdir = sunController.getSunDirection();
+    const scol = sunController.getSunColor();
+    composer.update(camera, sdir, scol);
+    // Darken fog color at night for proper night appearance
+    const dayLight = Math.max(0, sdir.y);
+    const dayFog = new THREE.Color(0.72, 0.82, 0.92);
+    const nightFog = new THREE.Color(0.03, 0.05, 0.08);
+    const fogColor = nightFog.clone().lerp(dayFog, dayLight);
+    composer.setFogColor(fogColor);
     composer.render();
   } else if (postProcessor) {
     if (sunController && camera) {

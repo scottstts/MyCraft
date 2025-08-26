@@ -106,6 +106,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float cloudDensity;         // match CloudsLayer
       uniform vec2 cloudWind;             // world-directional speed proxy
 
+      // Day/night factor (0=night, 1=day)
+      uniform float dayLight;
+
       // Hash-based noise for kernel rotation
       float hash12(vec2 p) {
           // Simple but decent hash
@@ -250,8 +253,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       vec3 calculateEnhancedLighting(vec3 albedo, vec3 normal, vec3 viewDir) {
           vec3 color = vec3(0.0);
           
-          // Enhanced ambient with AO
-          vec3 ambient = vec3(0.4, 0.5, 0.6) * 0.4 * vAmbientOcclusion;
+          // Enhanced ambient with AO, modulated by day/night
+          vec3 dayAmb = vec3(0.4, 0.5, 0.6) * 0.4;
+          vec3 nightAmb = vec3(0.02, 0.03, 0.05) * 0.15;
+          vec3 ambient = mix(nightAmb, dayAmb, clamp(dayLight, 0.0, 1.0)) * vAmbientOcclusion;
           
       // Main sun light (provided via uniforms)
       vec3 sunDir = normalize(sunDirection);
@@ -285,7 +290,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           
           // Subsurface scattering
           float backLight = max(dot(normal, -sunDir), 0.0);
-          vec3 subsurface = sunColor * backLight * 0.1 * (1.0 - metalness);
+          vec3 subsurface = sunColor * backLight * 0.1 * (1.0 - metalness) * clamp(dayLight, 0.0, 1.0);
           
           return ambient + diffuse + fresnelColor + reflection + subsurface;
       }
@@ -362,6 +367,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         cloudCoverage: { value: 0.45 },
         cloudDensity: { value: 0.65 },
         cloudWind: { value: new THREE.Vector2(Math.cos(Math.PI*0.25)*5.0, Math.sin(Math.PI*0.25)*5.0) },
+        dayLight: { value: 1.0 },
         materialFogEnabled: { value: false }
       },
       defines: envMap ? { USE_ENVMAP: true } : {},
@@ -397,6 +403,12 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     const uniforms = this.uniforms as Record<string, { value: unknown }>;
     (uniforms.sunDirection.value as THREE.Vector3).copy(direction);
     (uniforms.sunColor.value as THREE.Color).copy(color);
+  }
+
+  /** Day/night factor (0=night, 1=day) */
+  setDayLight(level: number): void {
+    const uniforms = this.uniforms as Record<string, { value: unknown }>;
+    uniforms.dayLight.value = THREE.MathUtils.clamp(level, 0, 1);
   }
 
   /** Configure cloud shadow uniforms */
