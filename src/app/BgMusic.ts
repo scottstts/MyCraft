@@ -6,7 +6,7 @@ function ensureInit(): HTMLAudioElement {
   if (!audio) {
     audio = new Audio(blessedUrl)
     audio.loop = true
-    audio.volume = 0.5
+    audio.volume = 0.2
     audio.preload = 'auto'
   }
   return audio

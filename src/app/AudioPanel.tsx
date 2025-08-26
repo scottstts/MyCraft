@@ -1,9 +1,13 @@
 import React from 'react'
+import { useUIStore } from '../state/ui'
 import { getVolume, setVolume } from './BgMusic'
 
 export const AudioPanel: React.FC = () => {
-  const [visible, setVisible] = React.useState(false)
-  const [vol, setVol] = React.useState(0.5)
+  const panelRef = React.useRef<HTMLDivElement | null>(null)
+  const audioVisible = useUIStore(s => s.audioVisible)
+  const setAudioVisible = useUIStore(s => s.setAudioVisible)
+  const setDebugVisible = useUIStore(s => s.setDebugVisible)
+  const [vol, setVol] = React.useState(0.2)
   const [sfxVol, setSfxVol] = React.useState(0.7)
 
   React.useEffect(() => {
@@ -22,11 +26,30 @@ export const AudioPanel: React.FC = () => {
     }
   }, [])
 
-  if (!visible) {
+  // Close on outside click when open
+  React.useEffect(() => {
+    if (!audioVisible) return
+    const onDown = (e: MouseEvent) => {
+      const el = panelRef.current
+      if (!el) return
+      if (!el.contains(e.target as Node)) {
+        setAudioVisible(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown, true)
+    return () => document.removeEventListener('mousedown', onDown, true)
+  }, [audioVisible, setAudioVisible])
+
+  // Ensure only one panel open at a time
+  React.useEffect(() => {
+    if (audioVisible) setDebugVisible(false)
+  }, [audioVisible, setDebugVisible])
+
+  if (!audioVisible) {
     return (
       <div style={{ position: 'fixed', top: '92px', left: '12px', zIndex: 1000 }}>
         <button
-          onClick={() => setVisible(true)}
+          onClick={() => { setDebugVisible(false); setAudioVisible(true) }}
           style={{
             padding: '8px 12px',
             background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
@@ -61,7 +84,7 @@ export const AudioPanel: React.FC = () => {
   }
 
   return (
-    <div style={{
+    <div ref={panelRef} style={{
       position: 'fixed',
       top: '92px', // directly under the Graphics Settings button
       left: '12px',
@@ -73,7 +96,7 @@ export const AudioPanel: React.FC = () => {
       color: '#f8f9fa',
       fontSize: '13px',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      zIndex: 1000,
+      zIndex: 2000,
       maxHeight: '60vh',
       overflowY: 'auto',
       backdropFilter: 'blur(20px)',
@@ -90,7 +113,7 @@ export const AudioPanel: React.FC = () => {
           backgroundClip: 'text'
         }}>Audio</h3>
         <button
-          onClick={() => setVisible(false)}
+          onClick={() => setAudioVisible(false)}
           style={{
             background: 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))',
             border: '1px solid rgba(255,255,255,0.1)',

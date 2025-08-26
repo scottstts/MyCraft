@@ -31,6 +31,10 @@ export interface UIState {
   debugVisible: boolean;
   setDebugVisible: (visible: boolean) => void;
 
+  // Audio panel visibility
+  audioVisible: boolean;
+  setAudioVisible: (visible: boolean) => void;
+
   // Restart signal: incrementing token triggers restart side-effect in host
   restartToken: number;
   bumpRestartToken: () => void;
@@ -74,6 +78,8 @@ export const useUIStore = create<UIState>((set) => ({
   setInGame: (inGame: boolean) => set({ inGame }),
   debugVisible: false,
   setDebugVisible: (visible: boolean) => set({ debugVisible: visible }),
+  audioVisible: false,
+  setAudioVisible: (visible: boolean) => set({ audioVisible: visible }),
   restartToken: 0,
   bumpRestartToken: () => set((s) => ({ restartToken: s.restartToken + 1 })),
 
@@ -91,4 +97,3 @@ export function getSelectedBlockId(): number | null {
   const { selectedSlot, hotbar } = useUIStore.getState();
   return hotbar[selectedSlot] ?? null;
 }
-

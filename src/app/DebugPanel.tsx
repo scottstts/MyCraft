@@ -38,7 +38,8 @@ interface PostProcessingSettings {
 }
 
 export const DebugPanel: React.FC = () => {
-  const { debugVisible, setDebugVisible } = useUIStore();
+  const { debugVisible, setDebugVisible, setAudioVisible } = useUIStore();
+  const panelRef = React.useRef<HTMLDivElement | null>(null)
   const [settings, setSettings] = useState<PostProcessingSettings>({
     ssaoEnabled: true,
     ssaoIntensity: 0.3,
@@ -137,6 +138,25 @@ export const DebugPanel: React.FC = () => {
     })
   }, [cloudsEnabled, cloudsCoverage, cloudsDensity, timeOfDay, timePaused, cycleSeconds])
 
+  // Close on click outside when open
+  React.useEffect(() => {
+    if (!debugVisible) return
+    const onDown = (e: MouseEvent) => {
+      const el = panelRef.current
+      if (!el) return
+      if (!el.contains(e.target as Node)) {
+        setDebugVisible(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown, true)
+    return () => document.removeEventListener('mousedown', onDown, true)
+  }, [debugVisible, setDebugVisible])
+
+  // Ensure only one panel open at a time
+  React.useEffect(() => {
+    if (debugVisible) setAudioVisible(false)
+  }, [debugVisible, setAudioVisible])
+
   if (!debugVisible) {
     return (
       <div style={{
@@ -146,7 +166,7 @@ export const DebugPanel: React.FC = () => {
         zIndex: 1000,
       }}>
         <button
-          onClick={() => setDebugVisible(true)}
+          onClick={() => { setAudioVisible(false); setDebugVisible(true) }}
           style={{
             padding: '8px 12px',
             background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
@@ -215,7 +235,7 @@ export const DebugPanel: React.FC = () => {
   };
 
   return (
-    <div style={{
+    <div ref={panelRef} style={{
       position: 'fixed',
       top: '52px',
       left: '12px',
@@ -227,7 +247,7 @@ export const DebugPanel: React.FC = () => {
       color: '#f8f9fa',
       fontSize: '13px',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      zIndex: 1000,
+      zIndex: 2000,
       maxHeight: '80vh',
       overflowY: 'auto',
       backdropFilter: 'blur(20px)',
@@ -239,7 +259,11 @@ export const DebugPanel: React.FC = () => {
         alignItems: 'center', 
         marginBottom: '20px',
         paddingBottom: '16px',
-        borderBottom: '1px solid rgba(255,255,255,0.06)'
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        position: 'sticky',
+        top: 0,
+        background: 'linear-gradient(145deg, rgba(32,39,49,0.98), rgba(22,27,35,0.98))',
+        zIndex: 1
       }}>
         <h3 style={{ 
           margin: 0, 
