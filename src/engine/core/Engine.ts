@@ -231,7 +231,7 @@ async function start(canvas: HTMLCanvasElement) {
   if (USE_EFFECT_COMPOSER) {
     composer = new Composer(renderer.getRenderer(), scene, camera, canvasSize.width, canvasSize.height);
     // Configure composer defaults
-    console.log('[Engine] Configuring composer post-processing settings');
+    // console.log('[Engine] Configuring composer post-processing settings');
     composer.setSSAO(true, 0.3, 0.01);
     composer.setBloom(true, 0.15, 0.3);
     composer.setFog(true, 0.002, 600);
@@ -364,7 +364,7 @@ async function start(canvas: HTMLCanvasElement) {
   
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', (data: ChunkPipelineEvents['CHUNK_READY']) => {
-    console.log(`[Engine] Chunk ready: ${data.key}`);
+    // console.log(`[Engine] Chunk ready: ${data.key}`);
   });
   
   // Connect chunk pipeline to chunk renderer

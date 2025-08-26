@@ -6,11 +6,12 @@ import React, { useState, useEffect } from 'react';
 import { useUIStore } from '../state/ui';
 import type { PostProcessorSettings } from '../engine/render/SimplePostProcessor';
 import type { ShadowSettings } from '../engine/render/ShadowSystem';
+import type { GraphicsSettings } from '../engine/render/settings/GraphicsSettings';
 
 interface WindowWithEngineGlobals extends Window {
   updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
   updateShadowSettings?: (settings: ShadowSettings) => void;
-  updateGraphicsSettings?: (settings: { timeOfDay: { t: number; paused: boolean; cycleSeconds: number }; renderer?: { exposure?: number } }) => void;
+  updateGraphicsSettings?: (settings: GraphicsSettings) => void;
 }
 
 interface PostProcessingSettings {
@@ -130,11 +131,11 @@ export const DebugPanel: React.FC = () => {
 
   // Keep clouds state in sync with engine
   useEffect(() => {
-    (window as unknown as { updateGraphicsSettings?: (s: any) => void }).updateGraphicsSettings?.({
-      timeOfDay: { t: timeOfDay, paused: timePaused, cycleSeconds },
+    (window as WindowWithEngineGlobals).updateGraphicsSettings?.({
+      timeOfDay: { t: timeOfDay, paused: timePaused, cycleSeconds }, // keep current values
       clouds: { enabled: cloudsEnabled, coverage: cloudsCoverage, density: cloudsDensity }
     })
-  }, [cloudsEnabled, cloudsCoverage, cloudsDensity])
+  }, [cloudsEnabled, cloudsCoverage, cloudsDensity, timeOfDay, timePaused, cycleSeconds])
 
   if (!debugVisible) {
     return (

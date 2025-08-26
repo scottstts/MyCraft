@@ -4,13 +4,8 @@
  * a pipeline of RenderPass -> SSAO -> Volumetrics -> Bloom -> Fog/Color.
  */
 import * as THREE from 'three'
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
-// @ts-ignore
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
-// @ts-ignore
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import { SSAOPass } from './passes/SSAOPass'
 import { VolumetricLightingPass } from './passes/VolumetricLightingPass'
 import { BloomWrapperPass } from './passes/BloomPass'

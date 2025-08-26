@@ -1,5 +1,4 @@
 import * as THREE from 'three'
-// @ts-ignore
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 
 export class SSAOPass extends ShaderPass {

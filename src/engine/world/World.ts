@@ -96,7 +96,7 @@ export class World extends EventEmitter<WorldEvents> {
       coords: { cx, cy, cz } 
     });
     
-    console.log(`[World] Chunk ready: ${key}`);
+    // console.log(`[World] Chunk ready: ${key}`);
   }
 
   /**

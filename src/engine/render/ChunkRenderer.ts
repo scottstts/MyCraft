@@ -86,7 +86,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     
     this.emit('MESH_CREATED', { key, mesh });
     
-    console.log(`[ChunkRenderer] Created mesh for chunk ${key} with ${positions.length / 3} vertices`);
+    // console.log(`[ChunkRenderer] Created mesh for chunk ${key} with ${positions.length / 3} vertices`);
   }
   
   /**

@@ -1,5 +1,4 @@
 import * as THREE from 'three'
-// @ts-ignore
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 
 export class VolumetricLightingPass extends ShaderPass {
@@ -53,4 +52,3 @@ export class VolumetricLightingPass extends ShaderPass {
   setSunDirWorld(dir: THREE.Vector3, cam: THREE.PerspectiveCamera){ const m3 = new THREE.Matrix3().setFromMatrix4(cam.matrixWorldInverse); this._sunDirView.copy(dir).applyMatrix3(m3).normalize(); (this.uniforms.sunDirView.value as THREE.Vector3).copy(this._sunDirView) }
   setSettings({ enabled, intensity, steps }: { enabled?: boolean; intensity?: number; steps?: number }){ if(enabled!==undefined) this.uniforms.enabled.value = enabled; if(intensity!==undefined) this.uniforms.intensity.value = intensity; if(steps!==undefined) this.uniforms.steps.value = steps }
 }
-

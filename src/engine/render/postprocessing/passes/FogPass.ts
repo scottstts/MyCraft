@@ -1,5 +1,4 @@
 import * as THREE from 'three'
-// @ts-ignore
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 
 export class FogPass extends ShaderPass {
@@ -28,4 +27,3 @@ export class FogPass extends ShaderPass {
   setCamera(cam: THREE.PerspectiveCamera){ this.uniforms.cameraNear.value = cam.near; this.uniforms.cameraFar.value = cam.far }
   setSettings({ enabled, baseDensity, maxDistance }: { enabled?: boolean; baseDensity?: number; maxDistance?: number }){ if(enabled!==undefined) this.uniforms.enabled.value = enabled; if(baseDensity!==undefined) this.uniforms.baseDensity.value = baseDensity; if(maxDistance!==undefined) this.uniforms.maxDistance.value = maxDistance }
 }
-

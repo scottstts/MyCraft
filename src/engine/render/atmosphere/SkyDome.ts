@@ -14,10 +14,12 @@ export interface SkyParams {
   mieDirectionalG: number;
 }
 
+type UniformRecord = Record<string, { value: unknown }>;
+
 export class SkyDome {
   readonly sky: THREE.Object3D;
   readonly sun: THREE.Vector3 = new THREE.Vector3();
-  private uniforms: any;
+  private uniforms: UniformRecord;
 
   constructor(scene: THREE.Scene, params?: Partial<SkyParams>) {
     const sky = new Sky();
@@ -26,9 +28,8 @@ export class SkyDome {
     scene.add(sky);
 
     // Extract uniforms (examples Sky exposes .material.uniforms)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mat: any = (sky as any).material;
-    this.uniforms = mat.uniforms;
+    const mat = sky.material as THREE.ShaderMaterial;
+    this.uniforms = mat.uniforms as unknown as UniformRecord;
 
     const p: SkyParams = {
       turbidity: params?.turbidity ?? 2.0,
@@ -54,7 +55,6 @@ export class SkyDome {
     const d = new THREE.Vector3().copy(dir).normalize();
     // Sky expects sun position in world space
     this.sun.copy(d).multiplyScalar(400000);
-    this.uniforms['sunPosition'].value.copy(this.sun);
+    (this.uniforms['sunPosition'].value as THREE.Vector3).copy(this.sun);
   }
 }
-

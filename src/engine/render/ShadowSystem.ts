@@ -182,8 +182,8 @@ export class ShadowSystem {
       const lightView = new THREE.Matrix4().lookAt(lightPos, centroid, up);
 
       // Transform corners to light space and compute bounds
-      let min = new THREE.Vector3(+Infinity, +Infinity, +Infinity);
-      let max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+      const min = new THREE.Vector3(+Infinity, +Infinity, +Infinity);
+      const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
       for (const c of corners) {
         const ls = c.clone().applyMatrix4(lightView);
         min.min(ls);
