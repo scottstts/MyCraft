@@ -129,7 +129,14 @@ function update(dtSeconds: number) {
     starDome.setVisibility(starVis);
     starDome.setIntensity(1.2 + 1.6 * starVis);
   }
-  if (clouds) clouds.update();
+  if (clouds) {
+    clouds.update();
+    if (sunController) {
+      const sdir = sunController.getSunDirection();
+      const dayLight = Math.max(0, sdir.y);
+      clouds.setDayLight(dayLight);
+    }
+  }
 
   // Update shadow system
   if (shadowSystem && scene && camera) {

@@ -68,8 +68,10 @@ export class StarDome {
           float v = acos(clamp(d.y, -1.0, 1.0)) / 3.1415926;
           vec2 uv = vec2(u*200.0, v*100.0);
           float s = star(uv);
+          // Use additive blending with visibility as alpha so effect is linear in the star mask
+          // (avoids squaring the mask which made stars too dim)
           vec3 col = vec3(s) * uIntensity;
-          gl_FragColor = vec4(col, s * uVisibility);
+          gl_FragColor = vec4(col, uVisibility);
         }
       `,
     });

@@ -35,6 +35,7 @@ export class CloudsLayer {
         uCoverage: { value: opts.coverage ?? 0.45 },
         uDensity: { value: opts.density ?? 0.65 },
         uWind: { value: new THREE.Vector2(this.wind.x, this.wind.y) },
+        uDayLight: { value: 1.0 }, // 0 at night, 1 at noon
       },
       vertexShader: `
         varying vec2 vUv;
@@ -49,6 +50,7 @@ export class CloudsLayer {
         uniform float uCoverage;
         uniform float uDensity;
         uniform vec2 uWind;
+        uniform float uDayLight;
 
         // 2D value noise (simple hash-based)
         float hash(vec2 p){ return fract(sin(dot(p, vec2(41.0,289.0))) * 45758.5453); }
@@ -80,7 +82,9 @@ export class CloudsLayer {
           float clouds = smoothstep(coverage, coverage + 0.25*(1.0-density), base);
           // soft edges
           clouds = pow(clouds, 1.5);
-          vec3 col = mix(vec3(0.0), vec3(1.0), clouds);
+          // Daylight-driven brightness: dim clouds significantly at night, full bright at day.
+          float brightness = mix(0.15, 1.0, clamp(uDayLight, 0.0, 1.0));
+          vec3 col = vec3(brightness) * clouds;
           float alpha = clouds * 0.6;
           gl_FragColor = vec4(col, alpha);
         }
@@ -102,6 +106,7 @@ export class CloudsLayer {
     (this.material.uniforms.uWind.value as THREE.Vector2).copy(this.wind);
   }
   setEnabled(enabled: boolean) { this.mesh.visible = enabled; }
+  setDayLight(v: number) { (this.material.uniforms.uDayLight.value as number) = v; }
   update() {
     this.material.uniforms.uTime.value = (performance.now() - this.start) / 1000;
   }
