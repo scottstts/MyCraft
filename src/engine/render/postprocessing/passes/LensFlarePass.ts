@@ -98,8 +98,13 @@ export class LensFlarePass extends ShaderPass {
     let visible = 0
     const ndc = this._sunNdc
     if (v4.w !== 0){ ndc.set(v4.x / v4.w, v4.y / v4.w); }
-    // Visible if in front of camera and inside some margin of the screen
-    if (v4.w > 0 && Math.abs(ndc.x) <= 1.2 && Math.abs(ndc.y) <= 1.2) visible = 1
+    // Disable when sun is below the horizon
+    if (dirWorld.y > 0) {
+      // Visible if in front of camera and inside some margin of the screen
+      if (v4.w > 0 && Math.abs(ndc.x) <= 1.2 && Math.abs(ndc.y) <= 1.2) visible = 1
+    } else {
+      visible = 0
+    }
     this._sunVisible = visible
     ;(this.uniforms.sunNdc.value as THREE.Vector2).copy(ndc)
     ;(this.uniforms.sunColor.value as THREE.Color).copy(this._sunColor)
