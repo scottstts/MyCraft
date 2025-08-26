@@ -97,6 +97,15 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float shadowResolution;
       uniform float shadowBlendFraction;
 
+      // Cloud shadow uniforms (projected procedural clouds)
+      uniform bool cloudShadowEnabled;
+      uniform float cloudShadowIntensity; // 0..1
+      uniform float cloudShadowAltitude;  // world Y of cloud plane
+      uniform float cloudShadowScale;     // world units per cloud tile (default ~100)
+      uniform float cloudCoverage;        // match CloudsLayer
+      uniform float cloudDensity;         // match CloudsLayer
+      uniform vec2 cloudWind;             // world-directional speed proxy
+
       // Hash-based noise for kernel rotation
       float hash12(vec2 p) {
           // Simple but decent hash
@@ -202,6 +211,42 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       }
 
       // Enhanced lighting calculation with shadows
+      
+      // --- Procedural cloud utilities (match CloudsLayer) ---
+      float chash(vec2 p){ return fract(sin(dot(p, vec2(41.0,289.0))) * 45758.5453); }
+      float cnoise(vec2 p){
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          float a = chash(i);
+          float b = chash(i + vec2(1.0, 0.0));
+          float c = chash(i + vec2(0.0, 1.0));
+          float d = chash(i + vec2(1.0, 1.0));
+          vec2 u = f*f*(3.0-2.0*f);
+          return mix(a, b, u.x) + (c - a)*u.y*(1.0 - u.x) + (d - b)*u.x*u.y;
+      }
+      float cfbm(vec2 p){
+          float v = 0.0; float a = 0.5;
+          for(int i=0;i<5;i++){ v += a * cnoise(p); p *= 2.02; a *= 0.5; }
+          return v;
+      }
+      // Project world point to cloud plane along sun direction and return 0..1 cloud amount
+      float cloudAmountAt(vec3 worldPos, vec3 sunDir){
+          // Avoid extreme projection when sun at horizon
+          if (sunDir.y <= 0.05) return 0.0;
+          float t = (cloudShadowAltitude - worldPos.y) / sunDir.y;
+          if (t <= 0.0) return 0.0;
+          vec3 hit = worldPos + sunDir * t;
+          // Convert to tiled space; follow CloudsLayer: 4000/40 = 100 world units per tile
+          vec2 uv = hit.xz / max(1e-3, cloudShadowScale);
+          // Match cloud movement: CloudsLayer uses + uWind * (uTime * 0.01)
+          float tSec = time * 0.001; // time in seconds
+          uv += cloudWind * (tSec * 0.01);
+          float base = cfbm(uv * 0.5) * 0.9 + cfbm(uv * 1.7) * 0.1;
+          float clouds = smoothstep(cloudCoverage, cloudCoverage + 0.25*(1.0-cloudDensity), base);
+          clouds = pow(clouds, 1.5);
+          return clamp(clouds, 0.0, 1.0);
+      }
+
       vec3 calculateEnhancedLighting(vec3 albedo, vec3 normal, vec3 viewDir) {
           vec3 color = vec3(0.0);
           
@@ -214,6 +259,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           
           // Sample shadow
           float shadowFactor = sampleShadow(vWorldPosition, normal, sunDir);
+
+          // Multiply by procedural cloud shadow (stable world-projection)
+          if (cloudShadowEnabled && cloudShadowIntensity > 0.0) {
+            float camt = cloudAmountAt(vWorldPosition, sunDir);
+            float cloudShade = 1.0 - cloudShadowIntensity * camt;
+            shadowFactor *= cloudShade;
+          }
           
           // Apply shadow to diffuse lighting
           float wrappedDiffuse = (sunDot + 0.3) / 1.3;
@@ -301,6 +353,15 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowIntensity: { value: 0.0 }, // Start with shadows disabled
         shadowResolution: { value: 1024 }, // Default shadow resolution
         shadowBlendFraction: { value: 0.3 },
+        
+        // Cloud shadows (enabled by engine when clouds are present)
+        cloudShadowEnabled: { value: true },
+        cloudShadowIntensity: { value: 0.35 },
+        cloudShadowAltitude: { value: 200.0 },
+        cloudShadowScale: { value: 100.0 },
+        cloudCoverage: { value: 0.45 },
+        cloudDensity: { value: 0.65 },
+        cloudWind: { value: new THREE.Vector2(Math.cos(Math.PI*0.25)*5.0, Math.sin(Math.PI*0.25)*5.0) },
         materialFogEnabled: { value: false }
       },
       defines: envMap ? { USE_ENVMAP: true } : {},
@@ -336,6 +397,26 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     const uniforms = this.uniforms as Record<string, { value: unknown }>;
     (uniforms.sunDirection.value as THREE.Vector3).copy(direction);
     (uniforms.sunColor.value as THREE.Color).copy(color);
+  }
+
+  /** Configure cloud shadow uniforms */
+  setCloudShadowUniforms(params: {
+    enabled?: boolean;
+    intensity?: number;
+    altitude?: number;
+    scale?: number;
+    coverage?: number;
+    density?: number;
+    wind?: THREE.Vector2;
+  }): void {
+    const u = this.uniforms as Record<string, { value: unknown }>;
+    if (params.enabled !== undefined) u.cloudShadowEnabled.value = !!params.enabled;
+    if (params.intensity !== undefined) u.cloudShadowIntensity.value = THREE.MathUtils.clamp(params.intensity, 0, 1);
+    if (params.altitude !== undefined) u.cloudShadowAltitude.value = params.altitude;
+    if (params.scale !== undefined) u.cloudShadowScale.value = Math.max(1e-3, params.scale);
+    if (params.coverage !== undefined) u.cloudCoverage.value = THREE.MathUtils.clamp(params.coverage, 0, 1);
+    if (params.density !== undefined) u.cloudDensity.value = THREE.MathUtils.clamp(params.density, 0, 1);
+    if (params.wind) (u.cloudWind.value as THREE.Vector2).copy(params.wind);
   }
 
   /**

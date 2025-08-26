@@ -272,6 +272,19 @@ async function start(canvas: HTMLCanvasElement) {
   skyDome = new SkyDome(scene, { turbidity: 2.0, rayleigh: 1.5, mieCoefficient: 0.005, mieDirectionalG: 0.8 });
   starDome = new StarDome(scene, { intensity: 1.2 });
   clouds = new CloudsLayer(scene, { altitude: 200, coverage: 0.45, density: 0.65, windDirection: Math.PI * 0.25, windSpeed: 5 });
+  // Initialize block material cloud shadow params to match clouds
+  if (blockMaterial && clouds) {
+    const w = clouds.getWind();
+    blockMaterial.setCloudShadowUniforms({
+      enabled: true,
+      intensity: 0.35,
+      altitude: clouds.getAltitude(),
+      scale: 100,
+      coverage: clouds.getCoverage(),
+      density: clouds.getDensity(),
+      wind: w,
+    });
+  }
   // Temporary global hooks for clouds adjustments from DebugPanel
   (window as unknown as { __setClouds?: (cov?: number, dens?: number) => void }).__setClouds = (cov?: number, dens?: number) => {
     if (!clouds) return;
@@ -523,6 +536,19 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
         clouds.setWind(dir, sp);
       }
       if (p.enabled !== undefined) clouds.setEnabled(p.enabled);
+
+      // Keep block material cloud shadow params in sync
+      if (blockMaterial && clouds) {
+        const w = clouds.getWind();
+        blockMaterial.setCloudShadowUniforms({
+          enabled: p.enabled ?? true,
+          coverage: p.coverage ?? clouds.getCoverage(),
+          density: p.density ?? clouds.getDensity(),
+          altitude: clouds.getAltitude(),
+          wind: w,
+          // intensity/scale kept as current defaults unless explicitly configured later
+        });
+      }
     }
   });
 }

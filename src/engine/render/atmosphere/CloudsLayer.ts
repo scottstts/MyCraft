@@ -13,9 +13,11 @@ export class CloudsLayer {
   private material: THREE.ShaderMaterial;
   private start: number = performance.now();
   private wind: THREE.Vector2;
+  private altitude: number;
 
   constructor(scene: THREE.Scene, opts: CloudsOptions = {}) {
     const altitude = opts.altitude ?? 200;
+    this.altitude = altitude;
     const geom = new THREE.PlaneGeometry(4000, 4000, 1, 1);
     geom.rotateX(-Math.PI / 2);
     geom.translate(0, altitude, 0);
@@ -86,6 +88,9 @@ export class CloudsLayer {
     });
 
     this.mesh = new THREE.Mesh(geom, this.material);
+    // Ensure clouds never cast/receive shadows into custom maps
+    this.mesh.castShadow = false;
+    this.mesh.receiveShadow = false;
     this.mesh.renderOrder = 1;
     scene.add(this.mesh);
   }
@@ -100,4 +105,10 @@ export class CloudsLayer {
   update() {
     this.material.uniforms.uTime.value = (performance.now() - this.start) / 1000;
   }
+
+  // Expose parameters for other systems (e.g., block shading cloud shadows)
+  getCoverage(): number { return this.material.uniforms.uCoverage.value as number }
+  getDensity(): number { return this.material.uniforms.uDensity.value as number }
+  getAltitude(): number { return this.altitude }
+  getWind(out: THREE.Vector2 = new THREE.Vector2()): THREE.Vector2 { return out.copy(this.wind) }
 }
