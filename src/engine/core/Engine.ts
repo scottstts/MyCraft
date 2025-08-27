@@ -410,10 +410,35 @@ async function start(canvas: HTMLCanvasElement) {
   // Add far ocean ring outside world bounds to visually extend water to horizon
   if (USE_OCEAN_HORIZON) {
     const farOceanDistance = camera.far * 0.98;
+    // Try to load the raw water texture so far ocean matches block water exactly
+    let waterTex: THREE.Texture | null = null;
+    try {
+      waterTex = await new Promise<THREE.Texture>((resolve, reject) => {
+        new THREE.TextureLoader().load(
+          '/src/assets/textures/water.png',
+          (tex) => resolve(tex),
+          undefined,
+          reject
+        );
+      });
+      waterTex.colorSpace = THREE.SRGBColorSpace;
+      waterTex.magFilter = THREE.NearestFilter;
+      waterTex.minFilter = THREE.NearestFilter;
+      waterTex.wrapS = THREE.RepeatWrapping;
+      waterTex.wrapT = THREE.RepeatWrapping;
+      waterTex.generateMipmaps = false;
+      waterTex.needsUpdate = true;
+    } catch (e) {
+      console.warn('OceanHorizon: water texture load failed, falling back to color ripples.', e);
+      waterTex = null;
+    }
+
     oceanHorizon = new OceanHorizon(scene, {
       bounds,
       waterLevel: WATER_LEVEL,
       farDistance: farOceanDistance,
+      map: waterTex ?? undefined,
+      tileScale: 1.0,
     });
   }
 
