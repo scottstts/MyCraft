@@ -130,7 +130,7 @@ export function StartPanel() {
               fontStyle: 'italic',
               lineHeight: 1.4
             }}>
-              Recommended: 9 chunks for balanced performance. Larger worlds may impact frame rate.
+              Start with 9 chunks. Larger worlds may impact performance depending on your device.
             </div>
           </label>
 
@@ -183,7 +183,7 @@ export function StartPanel() {
               fontStyle: 'italic',
               lineHeight: 1.4
             }}>
-              Chunk size affects world detail and performance. Medium size recommended for most systems.
+              Chunk size affects world detail and performance.
             </div>
           </label>
 
