@@ -427,6 +427,7 @@ async function start(canvas: HTMLCanvasElement) {
   // Update water material edge bounds for consistent seam blend
   if (waterMaterial) {
     waterMaterial.setBounds(bounds);
+    waterMaterial.setEdge(0.0, 2.0); // disable edge brightening to avoid visible grid
   }
 
   // Calculate world radius for terrain generation
