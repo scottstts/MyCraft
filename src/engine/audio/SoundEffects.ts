@@ -119,25 +119,26 @@ export class SoundEffects {
 
   getVolume(): number { return this.sfxVolume }
 
+  private primedOnce = false
   tryUnlockOnUserGesture() {
-    // Attempt brief play/pause to satisfy autoplay rules
+    if (this.primedOnce) return
+    this.primedOnce = true
+    // Attempt brief play/pause to satisfy autoplay rules without disturbing active loops
     const attemptSrc = (src: string) => {
-      const a = new Audio(src)
-      a.muted = true
-      a.play().then(() => {
-        a.pause(); a.currentTime = 0; a.muted = false
-      }).catch(() => { /* ignore */ })
+      try {
+        const a = new Audio(src)
+        a.preload = 'auto'
+        a.muted = true
+        a.play().then(() => {
+          a.pause(); a.currentTime = 0; a.muted = false
+        }).catch(() => { /* ignore */ })
+      } catch { /* ignore */ }
     }
     attemptSrc(footstepUrl)
     attemptSrc(waterStepUrl)
-    // Underwater loop can use the element
-    const u = this.underLoop
-    u.muted = true
-    u.play().then(() => { u.pause(); u.currentTime = 0; u.muted = false }).catch(() => { /* ignore */ })
-    // Ocean loop prime
-    const o = this.oceanLoop
-    o.muted = true
-    o.play().then(() => { o.pause(); o.currentTime = 0; o.muted = false }).catch(() => { /* ignore */ })
+    // Prime underwater and ocean using temporary elements so we don't reset live loops
+    attemptSrc(underwaterUrl)
+    attemptSrc(oceanUrl)
   }
 
   private setLoopPlaying(a: HTMLAudioElement, shouldPlay: boolean) {
