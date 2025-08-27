@@ -75,6 +75,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float envMapIntensity;
       uniform float time;
       uniform float alphaScale;
+      uniform float lightingMix;
       
       // Sun uniforms (directional light driven by SunController)
       uniform vec3 sunDirection;
@@ -317,7 +318,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 normal = normalize(vNormal);
           vec3 viewDir = normalize(cameraPosition - vWorldPosition);
           
-          vec3 color = calculateEnhancedLighting(albedo, normal, viewDir) * albedo;
+          vec3 lit = calculateEnhancedLighting(albedo, normal, viewDir) * albedo;
+          vec3 color = mix(albedo, lit, clamp(lightingMix, 0.0, 1.0));
           
           float distance = length(vViewPosition);
           color = applyAtmosphericFog(color, distance);
@@ -342,6 +344,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         envMapIntensity: { value: 0.3 },
         time: { value: 0.0 },
         alphaScale: { value: 1.0 },
+        lightingMix: { value: 1.0 },
         
         // Sun uniforms (updated by Engine via SunController)
         sunDirection: { value: new THREE.Vector3(50, 120, 50).normalize() },
@@ -406,6 +409,11 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   setAlphaScale(a: number): void {
     const uniforms = this.uniforms as Record<string, { value: unknown }>;
     uniforms.alphaScale.value = THREE.MathUtils.clamp(a, 0, 1);
+  }
+
+  setLightingMix(t: number): void {
+    const uniforms = this.uniforms as Record<string, { value: unknown }>;
+    uniforms.lightingMix.value = THREE.MathUtils.clamp(t, 0, 1);
   }
 
   /**

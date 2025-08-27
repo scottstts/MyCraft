@@ -46,6 +46,7 @@ let world: World | null = null;
 let chunkRenderer: ChunkRenderer | null = null;
 let environment: Environment | null = null;
 let blockMaterial: BlockMaterial | null = null;
+let waterMaterial: BlockMaterial | null = null;
 let postProcessor: SimplePostProcessor | null = null;
 let composer: Composer | null = null;
 let shadowSystem: ShadowSystem | null = null;
@@ -119,6 +120,7 @@ function update(dtSeconds: number) {
   
   // Update material uniforms
   if (blockMaterial && camera) blockMaterial.updateUniforms(camera);
+  if (waterMaterial && camera) waterMaterial.updateUniforms(camera);
 
   // Time-of-day and lighting: pause only when UI paused
   if (sunController) {
@@ -154,13 +156,17 @@ function update(dtSeconds: number) {
     }
     shadowSystem.update(camera, scene);
     
-    // Update block material with shadow uniforms
+    // Update block materials with shadow uniforms
     if (blockMaterial) {
       const shadowUniforms = shadowSystem.getShadowUniforms();
       blockMaterial.updateShadowUniforms(shadowUniforms);
     }
+    if (waterMaterial) {
+      const shadowUniforms = shadowSystem.getShadowUniforms();
+      waterMaterial.updateShadowUniforms(shadowUniforms);
+    }
   }
-  // Update block material with sun uniforms
+  // Update block materials with sun uniforms
   if (blockMaterial && sunController) {
     const sdir = sunController.getSunDirection();
     blockMaterial.setSunUniforms(sdir, sunController.getSunColor());
@@ -170,6 +176,14 @@ function update(dtSeconds: number) {
     // Star light provides a tiny ambient boost at night
     const starVis = 1 - THREE.MathUtils.clamp((dayLight - 0.0) / 0.2, 0, 1);
     blockMaterial.setStarLight(starVis * 0.35);
+  }
+  if (waterMaterial && sunController) {
+    const sdir = sunController.getSunDirection();
+    waterMaterial.setSunUniforms(sdir, sunController.getSunColor());
+    const dayLight = Math.max(0, sdir.y);
+    waterMaterial.setDayLight(dayLight);
+    const starVis = 1 - THREE.MathUtils.clamp((dayLight - 0.0) / 0.2, 0, 1);
+    waterMaterial.setStarLight(starVis * 0.35);
   }
   
   // Animate far ocean illusion
@@ -265,9 +279,19 @@ async function start(canvas: HTMLCanvasElement) {
   
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
-  
-  // Dialed back: use same opaque material for all blocks
-  chunkRenderer = new ChunkRenderer(scene, { opaque: blockMaterial, transparent: blockMaterial });
+
+  // Water material tuned to match far-ocean brightness (unlit), still opaque
+  waterMaterial = new BlockMaterial(
+    atlas.getTexture(),
+    envMap
+  );
+  waterMaterial.setMaterialProperties(0.8, 0.0, 0.3);
+  waterMaterial.setAlphaScale(1.0);
+  waterMaterial.setLightingMix(0.0); // unlit look
+  waterMaterial.transparent = false;
+  waterMaterial.depthWrite = true;
+
+  chunkRenderer = new ChunkRenderer(scene, { opaque: blockMaterial, transparent: waterMaterial });
 
   // Initialize post-processing pipeline
   const canvasSize = renderer.getCanvasSize();
@@ -523,6 +547,10 @@ function stop() {
   if (blockMaterial) {
     blockMaterial.dispose();
     blockMaterial = null;
+  }
+  if (waterMaterial) {
+    waterMaterial.dispose();
+    waterMaterial = null;
   }
 
   // Clean up post processor
