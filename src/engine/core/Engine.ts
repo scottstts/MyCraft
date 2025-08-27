@@ -60,6 +60,7 @@ let fpsCounterFrames: number = 0;
 let fpsLastReportNow: number = 0;
 let lastPaused: boolean = false;
 let sfx: SoundEffects | null = null;
+let dynamicFogDistance = 600; // default, updated based on world size
 
 function update(dtSeconds: number) {
   // Always allow pause toggle to be consumed
@@ -263,7 +264,7 @@ async function start(canvas: HTMLCanvasElement) {
     composer.setSSAO(true, 0.3, 0.01);
     composer.setBloom(true, 0.15, 0.3);
     composer.setLens(true, 0.6);
-    composer.setFog(true, 0.002, 600);
+    composer.setFog(true, 0.002, dynamicFogDistance);
     composer.setVolumetrics(true, 0.1, 32);
   } else {
     postProcessor = new SimplePostProcessor(
@@ -286,7 +287,7 @@ async function start(canvas: HTMLCanvasElement) {
       saturation: 1.0,
       fogEnabled: true,
       fogBaseDensity: 0.002,
-      fogMaxDistance: 600,
+      fogMaxDistance: dynamicFogDistance,
       volumetricsEnabled: true,
       volumetricsIntensity: 0.1,
       volumetricsSteps: 32,
@@ -374,6 +375,10 @@ async function start(canvas: HTMLCanvasElement) {
     Math.abs(bounds.maxX - bounds.minX),
     Math.abs(bounds.maxZ - bounds.minZ)
   ) / 2;
+
+  // Calculate dynamic fog distance to avoid horizon gaps
+  const margin = CHUNK_SIZE.x * 2; // small cushion
+  dynamicFogDistance = Math.min(camera.far * 0.95, worldRadius + margin);
 
   // Set world radius in chunk pipeline for terrain generation
   world.chunkPipeline.setWorldRadius(worldRadius);
@@ -515,6 +520,9 @@ function stop() {
   
   scene = null;
   camera = null;
+  
+  // Reset dynamic fog distance
+  dynamicFogDistance = 600;
 }
 
 // Global function for UI to read current graphics state
@@ -535,7 +543,7 @@ function updatePostProcessingSettings(settings: PostProcessorSettings) {
   if (composer) {
     composer.setSSAO(!!settings.ssaoEnabled, settings.ssaoIntensity, settings.ssaoRadius);
     composer.setBloom(!!settings.bloomEnabled, settings.bloomStrength, settings.bloomThreshold);
-    composer.setFog(!!settings.fogEnabled, settings.fogBaseDensity ?? 0.002, settings.fogMaxDistance ?? 600);
+    composer.setFog(!!settings.fogEnabled, settings.fogBaseDensity ?? 0.002, settings.fogMaxDistance ?? dynamicFogDistance);
     composer.setVolumetrics(!!settings.volumetricsEnabled, settings.volumetricsIntensity ?? 0.1, settings.volumetricsSteps ?? 32);
     console.log('[Engine] Applied composer post-processing settings');
   } else if (postProcessor) {
