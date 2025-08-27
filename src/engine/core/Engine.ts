@@ -25,12 +25,14 @@ import { applyGraphicsSettings, type GraphicsSettings } from '../render/settings
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
 import { CHUNK_SIZE } from '../../config/constants';
+import { WATER_LEVEL } from '../world/TerrainGenerator';
+import { OceanHorizon } from '../render/water/OceanHorizon';
 import { InputSystem } from '../systems/Input';
 import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { useUIStore } from '../../state/ui';
-import { USE_EFFECT_COMPOSER } from '../../config/flags';
+import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
 
 let rafId: number | null = null;
@@ -51,6 +53,7 @@ let sunController: SunController | null = null;
 let skyDome: SkyDome | null = null;
 let starDome: StarDome | null = null;
 let clouds: CloudsLayer | null = null;
+let oceanHorizon: OceanHorizon | null = null;
 let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
@@ -171,6 +174,11 @@ function update(dtSeconds: number) {
     blockMaterial.setStarLight(starVis * 0.35);
   }
   
+  // Animate far ocean illusion
+  if (oceanHorizon) {
+    oceanHorizon.update(dtSeconds);
+  }
+
   // Update subsystems here (physics, input, etc.)
   if (composer && camera && sunController) {
     const sdir = sunController.getSunDirection();
@@ -379,6 +387,12 @@ async function start(canvas: HTMLCanvasElement) {
   // Calculate dynamic fog distance to avoid horizon gaps
   const margin = CHUNK_SIZE.x * 2; // small cushion
   dynamicFogDistance = Math.min(camera.far * 0.95, worldRadius + margin);
+  // Update fog distance now that world size is known
+  if (composer) {
+    composer.setFog(true, 0.002, dynamicFogDistance);
+  } else if (postProcessor) {
+    postProcessor.updateSettings({ fogEnabled: true, fogBaseDensity: 0.002, fogMaxDistance: dynamicFogDistance });
+  }
 
   // Set world radius in chunk pipeline for terrain generation
   world.chunkPipeline.setWorldRadius(worldRadius);
@@ -386,6 +400,16 @@ async function start(canvas: HTMLCanvasElement) {
   // Set camera spawn position above ground  
   const spawnPos = findSpawnPosition(world.getSeed(), 0, 0, worldRadius);
   camera.position.set(spawnPos.x, spawnPos.y, spawnPos.z);
+
+  // Add far ocean ring outside world bounds to visually extend water to horizon
+  if (USE_OCEAN_HORIZON) {
+    const farOceanDistance = camera.far * 0.98;
+    oceanHorizon = new OceanHorizon(scene, {
+      bounds,
+      waterLevel: WATER_LEVEL,
+      farDistance: farOceanDistance,
+    });
+  }
 
   // Player controller (movement + gravity + collisions)
   playerController = new PlayerController(camera, world, inputSystem, bounds);
@@ -511,6 +535,12 @@ function stop() {
     environment.dispose();
     environment = null;
   }
+
+  // Clean up ocean horizon
+  if (oceanHorizon && scene) {
+    oceanHorizon.dispose(scene);
+  }
+  oceanHorizon = null;
 
   // Clean up renderer
   if (renderer) {

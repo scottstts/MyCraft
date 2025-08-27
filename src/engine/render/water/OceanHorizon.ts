@@ -1,0 +1,133 @@
+import * as THREE from 'three'
+
+export interface OceanHorizonOptions {
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number }
+  waterLevel: number
+  farDistance: number
+  color?: THREE.Color | number | string
+}
+
+/**
+ * OceanHorizon creates a non-interactive "infinite" ocean illusion by
+ * adding four large water quads around the world bounds that extend
+ * toward the far plane. These quads sit at water level and fade into fog,
+ * visually matching the sky horizon while the player remains bounded.
+ */
+export class OceanHorizon {
+  private group: THREE.Group
+  private material: THREE.ShaderMaterial
+  private time: number = 0
+
+  constructor(scene: THREE.Scene, opts: OceanHorizonOptions) {
+    const color = new THREE.Color(opts.color ?? 0x4aa3d8)
+
+    // Subtle animated color ripples; no displacement to avoid seams at bounds
+    this.material = new THREE.ShaderMaterial({
+      transparent: false,
+      depthWrite: true,
+      depthTest: true,
+      side: THREE.DoubleSide,
+      uniforms: {
+        uColor: { value: color },
+        uTime: { value: 0 },
+      },
+      vertexShader: `
+        varying vec3 vWorld;
+        void main(){
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorld = wp.xyz;
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor; uniform float uTime; varying vec3 vWorld;
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float noise(vec2 p){
+          vec2 i = floor(p), f = fract(p);
+          float a = hash(i);
+          float b = hash(i + vec2(1.0, 0.0));
+          float c = hash(i + vec2(0.0, 1.0));
+          float d = hash(i + vec2(1.0, 1.0));
+          vec2 u = f*f*(3.0-2.0*f);
+          return mix(a, b, u.x) + (c - a)*u.y*(1.0 - u.x) + (d - b)*u.x*u.y;
+        }
+        void main(){
+          // Gentle animated ripples in color only (no normals/displacement)
+          vec2 p = vWorld.xz * 0.03;
+          float n = noise(p + vec2(uTime*0.03, -uTime*0.02));
+          float m = noise(p*2.0 - vec2(uTime*0.06, uTime*0.05));
+          float wave = smoothstep(0.35, 0.75, 0.5*n + 0.5*m);
+          vec3 base = uColor;
+          vec3 hi = mix(base, vec3(0.85, 0.93, 1.0), 0.25);
+          vec3 col = mix(base, hi, wave * 0.35);
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+    })
+
+    this.group = new THREE.Group()
+    this.group.name = 'OceanHorizon'
+
+    const { minX, maxX, minZ, maxZ } = opts.bounds
+    const y = opts.waterLevel + 1.0 - 0.001 // align to water surface height
+    const pad = 0.0 // keep inner edges exact to avoid z-fighting with world
+    const far = Math.max(opts.farDistance, 1)
+
+    // Build four outward bands: North(-Z), South(+Z), West(-X), East(+X)
+    const bands: Array<{ x0:number,x1:number,z0:number,z1:number }> = [
+      // North band
+      { x0: minX - far, x1: maxX + far, z0: minZ - far, z1: minZ + pad },
+      // South band
+      { x0: minX - far, x1: maxX + far, z0: maxZ - pad, z1: maxZ + far },
+      // West band
+      { x0: minX - far, x1: minX + pad, z0: minZ - far, z1: maxZ + far },
+      // East band
+      { x0: maxX - pad, x1: maxX + far, z0: minZ - far, z1: maxZ + far },
+    ]
+
+    for (const b of bands) {
+      const mesh = new THREE.Mesh(this.makeQuad(b.x0, b.z0, b.x1, b.z1, y), this.material)
+      mesh.frustumCulled = true
+      this.group.add(mesh)
+    }
+
+    scene.add(this.group)
+  }
+
+  private makeQuad(x0: number, z0: number, x1: number, z1: number, y: number): THREE.BufferGeometry {
+    // Two triangles forming a rectangle on the XZ plane at y
+    const positions = new Float32Array([
+      x0, y, z0,
+      x1, y, z0,
+      x1, y, z1,
+      x0, y, z0,
+      x1, y, z1,
+      x0, y, z1,
+    ])
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.computeBoundingBox()
+    geometry.computeBoundingSphere()
+    return geometry
+  }
+
+  setColor(c: THREE.Color){ this.material.uniforms.uColor.value.copy(c) }
+
+  update(dt: number){
+    this.time += dt
+    this.material.uniforms.uTime.value = this.time
+  }
+
+  dispose(scene: THREE.Scene){
+    scene.remove(this.group)
+    this.group.traverse((obj) => {
+      const m = (obj as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined
+      if (m) {
+        const mats = Array.isArray(m) ? m : [m]
+        mats.forEach(mm => mm.dispose())
+      }
+      const g = (obj as THREE.Mesh).geometry as THREE.BufferGeometry | undefined
+      g?.dispose()
+    })
+  }
+}
