@@ -1,6 +1,6 @@
 /**
  * Module: state/inventory
- * Purpose: Hotbar inventory with 9 slots, stack size 100, Minecraft-like rules
+ * Purpose: Hotbar inventory with 9 slots, unlimited stack size, Minecraft-like rules
  * Callers: Hotbar UI (read/display), InteractionSystem (add on mine, consume on place)
  */
 
@@ -9,7 +9,7 @@ import { useUIStore } from './ui';
 
 export interface Slot {
   blockId: number | null;
-  count: number; // 0..100
+  count: number; // unlimited
 }
 
 export interface InventoryState {
@@ -21,7 +21,7 @@ export interface InventoryState {
 }
 
 const SLOT_COUNT = 9;
-export const MAX_STACK = 100;
+export const MAX_STACK = Infinity; // unlimited stack size
 
 function createEmptySlots(): Slot[] {
   return Array.from({ length: SLOT_COUNT }, () => ({ blockId: null, count: 0 }));
