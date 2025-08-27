@@ -74,6 +74,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float metalness;
       uniform float envMapIntensity;
       uniform float time;
+      uniform float alphaScale;
       
       // Sun uniforms (directional light driven by SunController)
       uniform vec3 sunDirection;
@@ -325,7 +326,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           color = color / (color + vec3(1.0));
           color = pow(color, vec3(1.0/2.2));
           
-          gl_FragColor = vec4(color, texColor.a);
+          gl_FragColor = vec4(color, texColor.a * alphaScale);
       }
     `;
 
@@ -340,6 +341,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         metalness: { value: 0.0 },
         envMapIntensity: { value: 0.3 },
         time: { value: 0.0 },
+        alphaScale: { value: 1.0 },
         
         // Sun uniforms (updated by Engine via SunController)
         sunDirection: { value: new THREE.Vector3(50, 120, 50).normalize() },
@@ -399,6 +401,11 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     uniforms.roughness.value = roughness;
     uniforms.metalness.value = metalness;
     uniforms.envMapIntensity.value = envMapIntensity;
+  }
+
+  setAlphaScale(a: number): void {
+    const uniforms = this.uniforms as Record<string, { value: unknown }>;
+    uniforms.alphaScale.value = THREE.MathUtils.clamp(a, 0, 1);
   }
 
   /**

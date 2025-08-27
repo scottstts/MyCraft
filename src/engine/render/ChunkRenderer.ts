@@ -17,14 +17,16 @@ export interface ChunkRendererEvents extends Record<string, unknown> {
 
 export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
   private scene: THREE.Scene;
-  private material: THREE.Material;
+  private materialOpaque: THREE.Material;
+  private materialTransparent: THREE.Material;
   private chunkMeshes: Map<ChunkKey, THREE.Mesh> = new Map();
   private chunkGroups: Map<ChunkKey, THREE.Group> = new Map();
   
-  constructor(scene: THREE.Scene, material: THREE.Material) {
+  constructor(scene: THREE.Scene, materials: { opaque: THREE.Material; transparent: THREE.Material }) {
     super();
     this.scene = scene;
-    this.material = material;
+    this.materialOpaque = materials.opaque;
+    this.materialTransparent = materials.transparent;
   }
   
   /**
@@ -32,30 +34,33 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
    */
   handleChunkMesh(response: ChunkMeshResponse): void {
     const { key, payload } = response;
-    const { positions, normals, uvs, indices } = payload;
-    
+    const { opaque, transparent } = payload;
     // Remove existing mesh if it exists
     this.removeChunkMesh(key);
+    const group = new THREE.Group();
+    let meshCount = 0;
+
+    const makeMesh = (buf: { positions: Float32Array; normals: Float32Array; uvs: Float32Array; indices: Uint16Array | Uint32Array }, mat: THREE.Material, isTransparent: boolean): THREE.Mesh | null => {
+      if (!buf.positions.length) return null;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(buf.positions, 3));
+      geometry.setAttribute('normal', new THREE.BufferAttribute(buf.normals, 3));
+      geometry.setAttribute('uv', new THREE.BufferAttribute(buf.uvs, 2));
+      geometry.setIndex(new THREE.BufferAttribute(buf.indices, 1));
+      const mesh = new THREE.Mesh(geometry, mat);
+      mesh.castShadow = !isTransparent;
+      mesh.receiveShadow = !isTransparent;
+      if (isTransparent) mesh.renderOrder = 2; // draw after opaque
+      return mesh;
+    };
+
+    const opaqueMesh = makeMesh(opaque, this.materialOpaque, false);
+    const transparentMesh = makeMesh(transparent, this.materialTransparent, true);
     
-    // Skip creating mesh if no vertices
-    if (positions.length === 0) {
-      console.log(`[ChunkRenderer] Skipping empty mesh for chunk ${key}`);
+    if (!opaqueMesh && !transparentMesh) {
+      // nothing to add
       return;
     }
-    
-    // Create geometry from buffers
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-    
-    // Create mesh
-    const mesh = new THREE.Mesh(geometry, this.material);
-    
-    // Enable shadow casting and receiving
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
     
     // Parse chunk coordinates from key for positioning
     const [cxStr, cyStr, czStr] = key.split(',');
@@ -63,28 +68,29 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     const cy = parseInt(cyStr, 10);
     const cz = parseInt(czStr, 10);
     
-    // Position mesh at chunk world coordinates
+    // Position group at chunk world coordinates (meshes stay local at 0,0,0)
     // Each chunk is CHUNK_SIZE units in size
-    mesh.position.set(
+    group.position.set(
       cx * CHUNK_SIZE.x,
       cy * CHUNK_SIZE.y,
       cz * CHUNK_SIZE.z
     );
     
-    // Create group for chunk (for future organization)
-    const group = new THREE.Group();
-    group.add(mesh);
-    group.position.copy(mesh.position);
-    mesh.position.set(0, 0, 0); // Relative to group
+    if (opaqueMesh) { group.add(opaqueMesh); meshCount++; }
+    if (transparentMesh) { group.add(transparentMesh); meshCount++; }
+    // Ensure local positions are zero within the group
+    if (opaqueMesh) opaqueMesh.position.set(0,0,0);
+    if (transparentMesh) transparentMesh.position.set(0,0,0);
     
     // Add to scene
     this.scene.add(group);
     
     // Store references
-    this.chunkMeshes.set(key, mesh);
+    // Store primary mesh reference (prefer opaque)
+    this.chunkMeshes.set(key, opaqueMesh ?? transparentMesh!);
     this.chunkGroups.set(key, group);
     
-    this.emit('MESH_CREATED', { key, mesh });
+    this.emit('MESH_CREATED', { key, mesh: (opaqueMesh ?? transparentMesh)! });
     
     // console.log(`[ChunkRenderer] Created mesh for chunk ${key} with ${positions.length / 3} vertices`);
   }

@@ -118,9 +118,7 @@ function update(dtSeconds: number) {
   }
   
   // Update material uniforms
-  if (blockMaterial && camera) {
-    blockMaterial.updateUniforms(camera);
-  }
+  if (blockMaterial && camera) blockMaterial.updateUniforms(camera);
 
   // Time-of-day and lighting: pause only when UI paused
   if (sunController) {
@@ -191,6 +189,13 @@ function update(dtSeconds: number) {
     const fogColor = nightFog.clone().lerp(dayFog, dayLight);
     composer.setFogColor(fogColor);
     composer.setFogDayLight(dayLight);
+    // Match far-ocean tint to time of day for consistent horizon
+    if (oceanHorizon) {
+      const dayOcean = new THREE.Color(0x4aa3d8);
+      const nightOcean = new THREE.Color(0x0a0e16);
+      const oceanCol = nightOcean.clone().lerp(dayOcean, THREE.MathUtils.clamp(dayLight, 0, 1));
+      oceanHorizon.setColor(oceanCol);
+    }
     composer.render();
   } else if (postProcessor) {
     if (sunController && camera) {
@@ -261,7 +266,8 @@ async function start(canvas: HTMLCanvasElement) {
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
   
-  chunkRenderer = new ChunkRenderer(scene, blockMaterial);
+  // Dialed back: use same opaque material for all blocks
+  chunkRenderer = new ChunkRenderer(scene, { opaque: blockMaterial, transparent: blockMaterial });
 
   // Initialize post-processing pipeline
   const canvasSize = renderer.getCanvasSize();

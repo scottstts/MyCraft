@@ -53,14 +53,19 @@ export interface ChunkDataResponse {
   payload: ChunkData;
 }
 
+export interface MeshBuffers {
+  positions: Float32Array;
+  normals: Float32Array;
+  uvs: Float32Array;
+  indices: Uint16Array | Uint32Array;
+}
+
 export interface ChunkMeshResponse {
   type: 'CHUNK_MESH';
   key: ChunkKey;
   payload: {
-    positions: Float32Array;
-    normals: Float32Array;
-    uvs: Float32Array;
-    indices: Uint16Array | Uint32Array;
+    opaque: MeshBuffers;
+    transparent: MeshBuffers;
   };
 }
 
@@ -98,8 +103,14 @@ export function isChunkMeshResponse(msg: any): msg is ChunkMeshResponse {
   return msg && msg.type === 'CHUNK_MESH' &&
          typeof msg.key === 'string' &&
          msg.payload &&
-         msg.payload.positions instanceof Float32Array &&
-         msg.payload.normals instanceof Float32Array &&
-         msg.payload.uvs instanceof Float32Array &&
-         (msg.payload.indices instanceof Uint16Array || msg.payload.indices instanceof Uint32Array);
+         msg.payload.opaque &&
+         msg.payload.transparent &&
+         msg.payload.opaque.positions instanceof Float32Array &&
+         msg.payload.opaque.normals instanceof Float32Array &&
+         msg.payload.opaque.uvs instanceof Float32Array &&
+         (msg.payload.opaque.indices instanceof Uint16Array || msg.payload.opaque.indices instanceof Uint32Array) &&
+         msg.payload.transparent.positions instanceof Float32Array &&
+         msg.payload.transparent.normals instanceof Float32Array &&
+         msg.payload.transparent.uvs instanceof Float32Array &&
+         (msg.payload.transparent.indices instanceof Uint16Array || msg.payload.transparent.indices instanceof Uint32Array);
 }

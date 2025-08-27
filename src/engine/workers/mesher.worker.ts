@@ -72,10 +72,14 @@ function handleMeshChunk(request: MeshChunkRequest): void {
   // Transfer the buffers for performance
   self.postMessage(response, { 
     transfer: [
-      mesh.positions.buffer, 
-      mesh.normals.buffer, 
-      mesh.uvs.buffer, 
-      mesh.indices.buffer
+      mesh.opaque.positions.buffer,
+      mesh.opaque.normals.buffer,
+      mesh.opaque.uvs.buffer,
+      mesh.opaque.indices.buffer,
+      mesh.transparent.positions.buffer,
+      mesh.transparent.normals.buffer,
+      mesh.transparent.uvs.buffer,
+      mesh.transparent.indices.buffer,
     ] 
   });
 }
@@ -90,12 +94,19 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors?: {
   posZ?: { voxels: Uint8Array };
   negZ?: { voxels: Uint8Array };
 }) {
-  const positions: number[] = [];
-  const normals: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-  
-  let vertexCount = 0;
+  // Opaque and transparent buffers are built separately so we can render
+  // them with different materials and blending order on the main thread.
+  const positionsO: number[] = [];
+  const normalsO: number[] = [];
+  const uvsO: number[] = [];
+  const indicesO: number[] = [];
+  let vertexCountO = 0;
+
+  const positionsT: number[] = [];
+  const normalsT: number[] = [];
+  const uvsT: number[] = [];
+  const indicesT: number[] = [];
+  let vertexCountT = 0;
   
   // Iterate through all voxels in the chunk
   for (let ly = 0; ly < CHUNK_SIZE.y; ly++) {
@@ -177,11 +188,20 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors?: {
           
           if (shouldRenderFace) {
             // Add face quad
-            addFaceQuad(
-              lx, ly, lz, face, block, 
-              positions, normals, uvs, indices, vertexCount
-            );
-            vertexCount += 4; // Each face adds 4 vertices
+            const isOpaque = !!block.opaque;
+            if (isOpaque) {
+              addFaceQuad(
+                lx, ly, lz, face, block,
+                positionsO, normalsO, uvsO, indicesO, vertexCountO
+              );
+              vertexCountO += 4;
+            } else {
+              addFaceQuad(
+                lx, ly, lz, face, block,
+                positionsT, normalsT, uvsT, indicesT, vertexCountT
+              );
+              vertexCountT += 4;
+            }
           }
         }
       }
@@ -189,10 +209,18 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors?: {
   }
   
   return {
-    positions: new Float32Array(positions),
-    normals: new Float32Array(normals),
-    uvs: new Float32Array(uvs),
-    indices: new Uint32Array(indices)
+    opaque: {
+      positions: new Float32Array(positionsO),
+      normals: new Float32Array(normalsO),
+      uvs: new Float32Array(uvsO),
+      indices: new Uint32Array(indicesO)
+    },
+    transparent: {
+      positions: new Float32Array(positionsT),
+      normals: new Float32Array(normalsT),
+      uvs: new Float32Array(uvsT),
+      indices: new Uint32Array(indicesT)
+    }
   };
 }
 

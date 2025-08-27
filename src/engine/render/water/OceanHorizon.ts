@@ -30,6 +30,10 @@ export class OceanHorizon {
       uniforms: {
         uColor: { value: color },
         uTime: { value: 0 },
+        uInnerMinX: { value: opts.bounds.minX },
+        uInnerMaxX: { value: opts.bounds.maxX },
+        uInnerMinZ: { value: opts.bounds.minZ },
+        uInnerMaxZ: { value: opts.bounds.maxZ },
       },
       vertexShader: `
         varying vec3 vWorld;
@@ -41,6 +45,7 @@ export class OceanHorizon {
       `,
       fragmentShader: `
         uniform vec3 uColor; uniform float uTime; varying vec3 vWorld;
+        uniform float uInnerMinX, uInnerMaxX, uInnerMinZ, uInnerMaxZ;
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float noise(vec2 p){
           vec2 i = floor(p), f = fract(p);
@@ -60,6 +65,13 @@ export class OceanHorizon {
           vec3 base = uColor;
           vec3 hi = mix(base, vec3(0.85, 0.93, 1.0), 0.25);
           vec3 col = mix(base, hi, wave * 0.35);
+          // Gentle inner-edge blend to better match near voxel water
+          float dx = min(abs(vWorld.x - uInnerMinX), abs(vWorld.x - uInnerMaxX));
+          float dz = min(abs(vWorld.z - uInnerMinZ), abs(vWorld.z - uInnerMaxZ));
+          float d = min(dx, dz);
+          float edgeBlend = clamp(1.0 - exp(-d * 0.12), 0.0, 1.0);
+          // Slight lightening near the edge (reduces seam contrast)
+          col = mix(col * 0.98, hi, (1.0 - edgeBlend) * 0.2);
           gl_FragColor = vec4(col, 1.0);
         }
       `,
