@@ -280,10 +280,17 @@ async function start(canvas: HTMLCanvasElement) {
     });
     waterTex.colorSpace = THREE.SRGBColorSpace;
     waterTex.magFilter = THREE.NearestFilter;
-    waterTex.minFilter = THREE.NearestFilter;
+    waterTex.minFilter = THREE.LinearMipMapLinearFilter;
     waterTex.wrapS = THREE.RepeatWrapping;
     waterTex.wrapT = THREE.RepeatWrapping;
-    waterTex.generateMipmaps = false;
+    waterTex.generateMipmaps = true;
+    // Enable anisotropic filtering if supported
+    try {
+      const maxAniso = renderer?.getRenderer().capabilities.getMaxAnisotropy?.() ?? 0;
+      if (maxAniso && maxAniso > 1) {
+        waterTex.anisotropy = Math.min(8, maxAniso);
+      }
+    } catch {}
     waterTex.needsUpdate = true;
   } catch (e) {
     console.warn('Water texture load failed, far ocean will fallback to color.', e);
@@ -294,7 +301,7 @@ async function start(canvas: HTMLCanvasElement) {
   waterMaterial = new WaterSurfaceMaterial({
     map: waterTex,
     tileScale: 1.0,
-    useWorldUV: false,
+    useWorldUV: true,
     bounds: {
       minX: -Infinity, maxX: Infinity, minZ: -Infinity, maxZ: Infinity,
     },

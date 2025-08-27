@@ -50,9 +50,20 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uInnerMinX, uInnerMaxX, uInnerMinZ, uInnerMaxZ;
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash(i); float b=hash(i+vec2(1.0,0.0)); float c=hash(i+vec2(0.0,1.0)); float d=hash(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y; }
+        vec2 uvY(vec3 w){ return vec2(w.x / uTileScale, -w.z / uTileScale); }
+        vec2 uvX(vec3 w){ return vec2(-w.z / uTileScale, w.y / uTileScale); }
+        vec2 uvZ(vec3 w){ return vec2(w.x / uTileScale, w.y / uTileScale); }
+        vec3 sampleTriPlanar(vec3 wpos, vec3 n){
+          vec3 an = abs(normalize(n));
+          an = max(an, vec3(1e-4));
+          an /= (an.x + an.y + an.z);
+          vec3 cx = texture2D(uMap, uvX(wpos)).rgb;
+          vec3 cy = texture2D(uMap, uvY(wpos)).rgb;
+          vec3 cz = texture2D(uMap, uvZ(wpos)).rgb;
+          return cx*an.x + cy*an.y + cz*an.z;
+        }
         vec3 sampleWaterColor(){
           if (!uUseMap) {
-            // Fallback: color with gentle animated variation
             vec2 p = vWorld.xz * 0.03;
             float n = noise(p + vec2(uTime*0.03, -uTime*0.02));
             float m = noise(p*2.0 - vec2(uTime*0.06, uTime*0.05));
@@ -60,24 +71,20 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             vec3 hi = mix(uColor, vec3(0.85, 0.93, 1.0), 0.25);
             return mix(uColor, hi, wave * 0.35);
           }
-          vec2 uv;
-          if (uUseWorldUV || abs(vNormalVary.y) > 0.5) {
-            // World-plane mapping for top faces to match far ocean
-            uv = vec2(fract(vWorld.x / uTileScale), 1.0 - fract(vWorld.z / uTileScale));
+          if (uUseWorldUV) {
+            return sampleTriPlanar(vWorld, vNormalVary);
           } else {
-            // Use provided uv for sides/bottom
-            uv = vUvVary;
+            // Fallback to mesh UVs (less ideal for steep angles)
+            return texture2D(uMap, vUvVary).rgb;
           }
-          return texture2D(uMap, uv).rgb;
         }
         void main(){
           vec3 col = sampleWaterColor();
-          // Gentle inner-edge enhancement to reduce seam contrast
           float dx = min(abs(vWorld.x - uInnerMinX), abs(vWorld.x - uInnerMaxX));
           float dz = min(abs(vWorld.z - uInnerMinZ), abs(vWorld.z - uInnerMaxZ));
           float d = min(dx, dz);
           float edgeBlend = clamp(1.0 - exp(-d * 0.12), 0.0, 1.0);
-          col = mix(col * 0.98, vec3(0.85, 0.93, 1.0), (1.0 - edgeBlend) * 0.2);
+          col = mix(col * 0.985, vec3(0.85, 0.93, 1.0), (1.0 - edgeBlend) * 0.18);
           gl_FragColor = vec4(col, 1.0);
         }
       `,
@@ -96,4 +103,3 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     this.uniforms.uInnerMaxZ.value = b.maxZ;
   }
 }
-
