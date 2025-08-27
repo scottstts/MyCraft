@@ -34,6 +34,12 @@ export function pauseNow(): void {
   a.pause()
 }
 
+export function restartMusic(): void {
+  const a = ensureInit()
+  a.currentTime = 0
+  a.pause()
+}
+
 export function setVolume(v: number): void {
   const a = ensureInit()
   const vol = Math.max(0, Math.min(1, v))
