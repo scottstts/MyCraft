@@ -46,10 +46,9 @@ const OCEAN_FLOOR_AMPLITUDE = 0.6;      // Ocean floor height variation (0-1)
  
 // Tree generation parameters
 const TREE_BASE_DENSITY = 0.01;         // ~1% of surface grass blocks
-const TREE_CLUSTER_SCALE = 0.01;        // How large clusters are
-const TREE_MIN_HEIGHT = 4;              // Minimum trunk height
-const TREE_MAX_HEIGHT = 8;              // Maximum trunk height
-const TREE_LEAF_SCALE = 0.55;           // Leaf pyramid size relative to trunk height
+const TREE_CLUSTER_SCALE = 0.006;       // Larger clusters (more natural patches)
+const TREE_MIN_HEIGHT = 3;              // Minimum trunk height (smaller trees)
+const TREE_MAX_HEIGHT = 5;              // Maximum trunk height (smaller trees)
 
 // Seeded RNG for simplex-noise
 function mulberry32(seed: number): () => number {
@@ -296,78 +295,82 @@ function generateTerrain(
           voxels[index] = AIR;
         }
       }
+      
+    }
+  }
 
-      // After base terrain fill for this column, place vegetation deterministically
-      // Trees should spawn only on grass surfaces and with clustered distribution
-      // Compute spawn criteria from the same context used for surface block selection
-      const isSurfaceGrass = (() => {
-        if (!isLand) return false;
-        if (distanceFromWater <= 3) return false;
-        if (slope >= 3) return false;
-        return true;
-      })();
+  // Second pass: spawn trees by world anchors, placing leaves across chunk borders (clipped)
+  const wx0 = cx * CHUNK_SIZE.x;
+  const wz0 = cz * CHUNK_SIZE.z;
+  const wx1 = wx0 + CHUNK_SIZE.x - 1;
+  const wz1 = wz0 + CHUNK_SIZE.z - 1;
+  const RMAX = 3; // maximum leaf radius to include neighbor anchors
 
-      if (isSurfaceGrass) {
-        // Determine clustered spawn probability using low-frequency noise
-        // Map cluster noise [-1,1] -> [0,1]
-        const clusterNoise = (nTreeCluster(worldX * TREE_CLUSTER_SCALE, worldZ * TREE_CLUSTER_SCALE) + 1) * 0.5;
-        // Emphasize clusters: low outside, boosted inside
-        const clusterMask = Math.max(0, Math.min(1, (clusterNoise - 0.5) * 2)); // 0 below 0.5, ->1 by 1.0
-        // Blend probability: between 0.2x and 4x of base density
-        const spawnProb = TREE_BASE_DENSITY * (0.2 + 3.8 * clusterMask);
+  for (let ax = wx0 - RMAX; ax <= wx1 + RMAX; ax++) {
+    for (let az = wz0 - RMAX; az <= wz1 + RMAX; az++) {
+      const { height: baseY, isLand } = heightAt(ax, az);
+      const slope = Math.max(
+        Math.abs(heightAt(ax + 1, az).height - baseY),
+        Math.abs(heightAt(ax, az + 1).height - baseY)
+      );
+      const distanceFromWater = baseY - WATER_LEVEL;
 
-        // Hash-based RNG per column for deterministic placement
-        const r = hash2d(worldX, worldZ, 1337 ^ seed);
-        if (r < spawnProb) {
-          // Place a tree at this (x,z)
-          const trunkHeight = TREE_MIN_HEIGHT + Math.floor(hash2d(worldX, worldZ, 4242 ^ seed) * (TREE_MAX_HEIGHT - TREE_MIN_HEIGHT + 1));
-          const leafRadiusBase = Math.max(2, Math.floor(trunkHeight * TREE_LEAF_SCALE * 0.5));
+      // Only on gentle inland grass surfaces (mirrors surface grass conditions)
+      if (!isLand || distanceFromWater <= 3 || slope >= 3) continue;
 
-          // World Y for base of trunk (top of surface)
-          const baseY = height;
+      // Clustered distribution via low-frequency noise
+      const clusterNoise = (nTreeCluster(ax * TREE_CLUSTER_SCALE, az * TREE_CLUSTER_SCALE) + 1) * 0.5;
+      const clusterMask = smoothstep(0.6, 0.86, clusterNoise); // stronger clustering
+      const inlandFactor = smoothstep(2, 14, distanceFromWater); // rarer near coasts
+      const spawnProb = TREE_BASE_DENSITY * (0.05 + 6.0 * clusterMask) * inlandFactor;
 
-          // Write trunk blocks across chunks (only for y within this chunk)
-          for (let dy = 1; dy <= trunkHeight; dy++) {
-            const wy = baseY + dy;
-            const lyTrunk = wy - cy * CHUNK_SIZE.y;
-            if (lyTrunk < 0 || lyTrunk >= CHUNK_SIZE.y) continue;
-            const idx = localToIndex(lx, lyTrunk, lz);
-            voxels[idx] = WOOD;
-          }
+      const r = hash2d(ax, az, 1337 ^ seed);
+      if (r >= spawnProb) continue;
 
-          // Leaves pyramid around the trunk top; adjust size with height
-          const topY = baseY + trunkHeight;
-          const layers = Math.max(2, Math.floor(trunkHeight * TREE_LEAF_SCALE));
-          for (let layer = 0; layer < layers; layer++) {
-            const radius = Math.max(0, leafRadiusBase - layer);
-            const wy = topY + layer; // layers extend upward; looks more tree-like
-            const lyLeaves = wy - cy * CHUNK_SIZE.y;
-            if (lyLeaves < 0 || lyLeaves >= CHUNK_SIZE.y) continue;
+      // Tree parameters (smaller trees)
+      const trunkHeight = TREE_MIN_HEIGHT + Math.floor(hash2d(ax, az, 4242 ^ seed) * (TREE_MAX_HEIGHT - TREE_MIN_HEIGHT + 1));
+      const maxRadius = Math.max(1, Math.min(3, Math.floor(trunkHeight * 0.5)));
 
-            for (let dx = -radius; dx <= radius; dx++) {
-              for (let dz = -radius; dz <= radius; dz++) {
-                // Pyramid-ish using Chebyshev distance for square layers
-                if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
-                const lxLeaf = lx + dx;
-                const lzLeaf = lz + dz;
-                // Skip if outside this chunk in XZ; neighboring chunks will fill their own leaves
-                if (lxLeaf < 0 || lxLeaf >= CHUNK_SIZE.x || lzLeaf < 0 || lzLeaf >= CHUNK_SIZE.z) continue;
-                // Avoid overwriting trunk core at center for lower layers; allow a small crown above
-                if (dx === 0 && dz === 0 && layer <= 1) continue;
-                const idx = localToIndex(lxLeaf, lyLeaves, lzLeaf);
-                // Only place leaves if currently air to avoid carving terrain
-                if (voxels[idx] === AIR) {
-                  voxels[idx] = LEAVES;
-                }
-              }
+      // Place trunk (only within this chunk)
+      const lxTrunk = ax - wx0;
+      const lzTrunk = az - wz0;
+      if (lxTrunk >= 0 && lxTrunk < CHUNK_SIZE.x && lzTrunk >= 0 && lzTrunk < CHUNK_SIZE.z) {
+        for (let dy = 1; dy <= trunkHeight; dy++) {
+          const wy = baseY + dy;
+          const lyTrunk = wy - cy * CHUNK_SIZE.y;
+          if (lyTrunk < 0 || lyTrunk >= CHUNK_SIZE.y) continue;
+          const idx = localToIndex(lxTrunk, lyTrunk, lzTrunk);
+          voxels[idx] = WOOD;
+        }
+      }
+
+      // Place leaves (clipped to this chunk), start above trunk top
+      const topY = baseY + trunkHeight;
+      const layers = maxRadius + 1;
+      for (let layer = 0; layer < layers; layer++) {
+        const radius = maxRadius - layer;
+        const wy = topY + 1 + layer;
+        const lyLeaves = wy - cy * CHUNK_SIZE.y;
+        if (lyLeaves < 0 || lyLeaves >= CHUNK_SIZE.y) continue;
+
+        for (let dx = -radius; dx <= radius; dx++) {
+          for (let dz = -radius; dz <= radius; dz++) {
+            const cheb = Math.max(Math.abs(dx), Math.abs(dz));
+            if (cheb > radius) continue;
+            const wxLeaf = ax + dx;
+            const wzLeaf = az + dz;
+            const lxLeaf = wxLeaf - wx0;
+            const lzLeaf = wzLeaf - wz0;
+            if (lxLeaf < 0 || lxLeaf >= CHUNK_SIZE.x || lzLeaf < 0 || lzLeaf >= CHUNK_SIZE.z) continue;
+            // Mild edge jitter for natural look
+            if (radius > 0 && cheb === radius) {
+              const jitterSeed = (seed ^ (wy << 1)) | 0;
+              const rEdge = hash2d(wxLeaf, wzLeaf, jitterSeed);
+              const isCorner = Math.abs(dx) === radius && Math.abs(dz) === radius;
+              const skipProb = isCorner ? 0.15 : 0.06;
+              if (rEdge < skipProb) continue;
             }
-          }
-
-          // Optional tip leaf for a nice top
-          const tipY = topY + layers;
-          const lyTip = tipY - cy * CHUNK_SIZE.y;
-          if (lyTip >= 0 && lyTip < CHUNK_SIZE.y) {
-            const idx = localToIndex(lx, lyTip, lz);
+            const idx = localToIndex(lxLeaf, lyLeaves, lzLeaf);
             if (voxels[idx] === AIR) voxels[idx] = LEAVES;
           }
         }
