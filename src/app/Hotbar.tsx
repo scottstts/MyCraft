@@ -6,17 +6,17 @@ import dirtIcon from '../assets/material_icons/dirt.png'
 import stoneIcon from '../assets/material_icons/cobblestone.png'
 import sandIcon from '../assets/material_icons/sand.png'
 import woodIcon from '../assets/material_icons/wood.png'
-import glassIcon from '../assets/material_icons/glass.png'
+import branchIcon from '../assets/material_icons/branch.png'
 import waterIcon from '../assets/material_icons/water.png'
 
 const ICONS: Record<number, string> = {
   1: grassIcon, // grass
-  2: dirtIcon,
-  3: stoneIcon,
-  4: sandIcon,
-  5: woodIcon,
-  6: glassIcon,
-  7: waterIcon,
+  2: dirtIcon,  // dirt
+  3: stoneIcon, // stone (cobblestone texture)
+  4: sandIcon,  // sand
+  5: waterIcon, // water
+  6: woodIcon,  // wood (trunk)
+  7: branchIcon // leaves
 }
 
 export function Hotbar() {
