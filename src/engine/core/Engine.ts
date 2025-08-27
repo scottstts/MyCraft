@@ -27,6 +27,7 @@ import { findSpawnPosition } from '../world/TerrainGenerator';
 import { CHUNK_SIZE } from '../../config/constants';
 import { WATER_LEVEL } from '../world/TerrainGenerator';
 import { OceanHorizon } from '../render/water/OceanHorizon';
+import { WaterSurfaceMaterial } from '../render/water/WaterSurfaceMaterial';
 import { InputSystem } from '../systems/Input';
 import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
@@ -46,7 +47,7 @@ let world: World | null = null;
 let chunkRenderer: ChunkRenderer | null = null;
 let environment: Environment | null = null;
 let blockMaterial: BlockMaterial | null = null;
-let waterMaterial: BlockMaterial | null = null;
+let waterMaterial: WaterSurfaceMaterial | null = null;
 let postProcessor: SimplePostProcessor | null = null;
 let composer: Composer | null = null;
 let shadowSystem: ShadowSystem | null = null;
@@ -120,7 +121,6 @@ function update(dtSeconds: number) {
   
   // Update material uniforms
   if (blockMaterial && camera) blockMaterial.updateUniforms(camera);
-  if (waterMaterial && camera) waterMaterial.updateUniforms(camera);
 
   // Time-of-day and lighting: pause only when UI paused
   if (sunController) {
@@ -156,17 +156,13 @@ function update(dtSeconds: number) {
     }
     shadowSystem.update(camera, scene);
     
-    // Update block materials with shadow uniforms
+    // Update block materials with shadow uniforms (water uses unlit shader)
     if (blockMaterial) {
       const shadowUniforms = shadowSystem.getShadowUniforms();
       blockMaterial.updateShadowUniforms(shadowUniforms);
     }
-    if (waterMaterial) {
-      const shadowUniforms = shadowSystem.getShadowUniforms();
-      waterMaterial.updateShadowUniforms(shadowUniforms);
-    }
   }
-  // Update block materials with sun uniforms
+  // Update block materials with sun uniforms (water uses unlit shader)
   if (blockMaterial && sunController) {
     const sdir = sunController.getSunDirection();
     blockMaterial.setSunUniforms(sdir, sunController.getSunColor());
@@ -176,14 +172,6 @@ function update(dtSeconds: number) {
     // Star light provides a tiny ambient boost at night
     const starVis = 1 - THREE.MathUtils.clamp((dayLight - 0.0) / 0.2, 0, 1);
     blockMaterial.setStarLight(starVis * 0.35);
-  }
-  if (waterMaterial && sunController) {
-    const sdir = sunController.getSunDirection();
-    waterMaterial.setSunUniforms(sdir, sunController.getSunColor());
-    const dayLight = Math.max(0, sdir.y);
-    waterMaterial.setDayLight(dayLight);
-    const starVis = 1 - THREE.MathUtils.clamp((dayLight - 0.0) / 0.2, 0, 1);
-    waterMaterial.setStarLight(starVis * 0.35);
   }
   
   // Animate far ocean illusion
@@ -204,12 +192,11 @@ function update(dtSeconds: number) {
     composer.setFogColor(fogColor);
     composer.setFogDayLight(dayLight);
     // Match far-ocean tint to time of day for consistent horizon
-    if (oceanHorizon) {
-      const dayOcean = new THREE.Color(0x4aa3d8);
-      const nightOcean = new THREE.Color(0x0a0e16);
-      const oceanCol = nightOcean.clone().lerp(dayOcean, THREE.MathUtils.clamp(dayLight, 0, 1));
-      oceanHorizon.setColor(oceanCol);
-    }
+    const dayOcean = new THREE.Color(0x4aa3d8);
+    const nightOcean = new THREE.Color(0x0a0e16);
+    const oceanCol = nightOcean.clone().lerp(dayOcean, THREE.MathUtils.clamp(dayLight, 0, 1));
+    if (oceanHorizon) oceanHorizon.setColor(oceanCol);
+    if (waterMaterial) waterMaterial.setColor(oceanCol);
     composer.render();
   } else if (postProcessor) {
     if (sunController && camera) {
@@ -280,16 +267,38 @@ async function start(canvas: HTMLCanvasElement) {
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
 
-  // Water material tuned to match far-ocean brightness (unlit), still opaque
-  waterMaterial = new BlockMaterial(
-    atlas.getTexture(),
-    envMap
-  );
-  waterMaterial.setMaterialProperties(0.8, 0.0, 0.3);
-  waterMaterial.setAlphaScale(1.0);
-  waterMaterial.setLightingMix(0.0); // unlit look
-  waterMaterial.transparent = false;
-  waterMaterial.depthWrite = true;
+  // Load raw water texture once for both near water and far ocean
+  let waterTex: THREE.Texture | null = null;
+  try {
+    waterTex = await new Promise<THREE.Texture>((resolve, reject) => {
+      new THREE.TextureLoader().load(
+        '/src/assets/textures/water.png',
+        (tex) => resolve(tex),
+        undefined,
+        reject
+      );
+    });
+    waterTex.colorSpace = THREE.SRGBColorSpace;
+    waterTex.magFilter = THREE.NearestFilter;
+    waterTex.minFilter = THREE.NearestFilter;
+    waterTex.wrapS = THREE.RepeatWrapping;
+    waterTex.wrapT = THREE.RepeatWrapping;
+    waterTex.generateMipmaps = false;
+    waterTex.needsUpdate = true;
+  } catch (e) {
+    console.warn('Water texture load failed, far ocean will fallback to color.', e);
+    waterTex = null;
+  }
+
+  // Water material uses the same shader as far ocean, but uses vUv on block meshes
+  waterMaterial = new WaterSurfaceMaterial({
+    map: waterTex,
+    tileScale: 1.0,
+    useWorldUV: false,
+    bounds: {
+      minX: -Infinity, maxX: Infinity, minZ: -Infinity, maxZ: Infinity,
+    },
+  });
 
   chunkRenderer = new ChunkRenderer(scene, { opaque: blockMaterial, transparent: waterMaterial });
 
@@ -408,6 +417,11 @@ async function start(canvas: HTMLCanvasElement) {
     maxZ: (posRadius + 1) * CHUNK_SIZE.z,
   } as const;
 
+  // Update water material edge bounds for consistent seam blend
+  if (waterMaterial) {
+    waterMaterial.setBounds(bounds);
+  }
+
   // Calculate world radius for terrain generation
   const worldRadius = Math.max(
     Math.abs(bounds.maxX - bounds.minX),
@@ -434,28 +448,6 @@ async function start(canvas: HTMLCanvasElement) {
   // Add far ocean ring outside world bounds to visually extend water to horizon
   if (USE_OCEAN_HORIZON) {
     const farOceanDistance = camera.far * 0.98;
-    // Try to load the raw water texture so far ocean matches block water exactly
-    let waterTex: THREE.Texture | null = null;
-    try {
-      waterTex = await new Promise<THREE.Texture>((resolve, reject) => {
-        new THREE.TextureLoader().load(
-          '/src/assets/textures/water.png',
-          (tex) => resolve(tex),
-          undefined,
-          reject
-        );
-      });
-      waterTex.colorSpace = THREE.SRGBColorSpace;
-      waterTex.magFilter = THREE.NearestFilter;
-      waterTex.minFilter = THREE.NearestFilter;
-      waterTex.wrapS = THREE.RepeatWrapping;
-      waterTex.wrapT = THREE.RepeatWrapping;
-      waterTex.generateMipmaps = false;
-      waterTex.needsUpdate = true;
-    } catch (e) {
-      console.warn('OceanHorizon: water texture load failed, falling back to color ripples.', e);
-      waterTex = null;
-    }
 
     oceanHorizon = new OceanHorizon(scene, {
       bounds,
