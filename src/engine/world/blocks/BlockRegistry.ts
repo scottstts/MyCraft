@@ -65,6 +65,24 @@ export class BlockRegistry {
         opaque: false,
         solid: false,
         faces: { all: 'water' }
+      },
+      {
+        id: 6,
+        name: 'wood',
+        opaque: true,
+        solid: true,
+        faces: {
+          top: 'wood_top',
+          bottom: 'wood_top',
+          side: 'wood_side',
+        }
+      },
+      {
+        id: 7,
+        name: 'leaves',
+        opaque: true,
+        solid: true,
+        faces: { all: 'tree_leaves' }
       }
     ];
 

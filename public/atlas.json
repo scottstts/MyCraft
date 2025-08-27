@@ -1,6 +1,6 @@
 {
   "tileSize": 16,
-  "atlasSize": 8,
+  "atlasSize": 11,
   "tiles": {
     "grass_top": [0, 0],
     "dirt": [1, 0],
@@ -8,6 +8,9 @@
     "cobblestone": [3, 0],
     "sand": [4, 0],
     "water": [5, 0],
-    "air": [7, 0]
+    "wood_top": [6, 0],
+    "wood_side": [7, 0],
+    "tree_leaves": [8, 0],
+    "air": [10, 0]
   }
 }

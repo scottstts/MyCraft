@@ -43,6 +43,13 @@ const OCEAN_DEPTH_MIN = 5;              // Minimum ocean depth below water level
 const OCEAN_DEPTH_MAX = 15;             // Maximum ocean depth below water level
 const OCEAN_FLOOR_SCALE = 0.012;        // Ocean floor variation frequency
 const OCEAN_FLOOR_AMPLITUDE = 0.6;      // Ocean floor height variation (0-1)
+ 
+// Tree generation parameters
+const TREE_BASE_DENSITY = 0.01;         // ~1% of surface grass blocks
+const TREE_CLUSTER_SCALE = 0.01;        // How large clusters are
+const TREE_MIN_HEIGHT = 4;              // Minimum trunk height
+const TREE_MAX_HEIGHT = 8;              // Maximum trunk height
+const TREE_LEAF_SCALE = 0.55;           // Leaf pyramid size relative to trunk height
 
 // Seeded RNG for simplex-noise
 function mulberry32(seed: number): () => number {
@@ -172,13 +179,15 @@ function handleGenerateChunk(request: GenerateChunkRequest): void {
   
   // Create height function with seed and world radius
   const heightAt = createHeightFunction(seed, worldRadius);
+  // Create tree cluster noise with same seed for deterministic placement
+  const nTreeCluster = createNoise2D(mulberry32(seed ^ 0x7f4a7c15));
   
   // Create voxel array
   const totalVoxels = CHUNK_SIZE.x * CHUNK_SIZE.y * CHUNK_SIZE.z;
   const voxels = new Uint8Array(totalVoxels);
   
   // Generate terrain for this chunk
-  generateTerrain(voxels, cx, cy, cz, heightAt);
+  generateTerrain(voxels, cx, cy, cz, heightAt, nTreeCluster, seed);
   
   
   const chunkData: ChunkData = {
@@ -201,7 +210,9 @@ function generateTerrain(
   cx: number,
   cy: number,
   cz: number,
-  heightAt: (x: number, z: number) => { height: number; isLand: boolean }
+  heightAt: (x: number, z: number) => { height: number; isLand: boolean },
+  nTreeCluster: (x: number, z: number) => number,
+  seed: number
 ): void {
   // Block IDs
   const AIR = 0;
@@ -210,6 +221,8 @@ function generateTerrain(
   const STONE = 3;
   const SAND = 4;
   const WATER = 5;
+  const WOOD = 6;
+  const LEAVES = 7;
   
   // Process each column in the chunk
   for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
@@ -283,6 +296,92 @@ function generateTerrain(
           voxels[index] = AIR;
         }
       }
+
+      // After base terrain fill for this column, place vegetation deterministically
+      // Trees should spawn only on grass surfaces and with clustered distribution
+      // Compute spawn criteria from the same context used for surface block selection
+      const isSurfaceGrass = (() => {
+        if (!isLand) return false;
+        if (distanceFromWater <= 3) return false;
+        if (slope >= 3) return false;
+        return true;
+      })();
+
+      if (isSurfaceGrass) {
+        // Determine clustered spawn probability using low-frequency noise
+        // Map cluster noise [-1,1] -> [0,1]
+        const clusterNoise = (nTreeCluster(worldX * TREE_CLUSTER_SCALE, worldZ * TREE_CLUSTER_SCALE) + 1) * 0.5;
+        // Emphasize clusters: low outside, boosted inside
+        const clusterMask = Math.max(0, Math.min(1, (clusterNoise - 0.5) * 2)); // 0 below 0.5, ->1 by 1.0
+        // Blend probability: between 0.2x and 4x of base density
+        const spawnProb = TREE_BASE_DENSITY * (0.2 + 3.8 * clusterMask);
+
+        // Hash-based RNG per column for deterministic placement
+        const r = hash2d(worldX, worldZ, 1337 ^ seed);
+        if (r < spawnProb) {
+          // Place a tree at this (x,z)
+          const trunkHeight = TREE_MIN_HEIGHT + Math.floor(hash2d(worldX, worldZ, 4242 ^ seed) * (TREE_MAX_HEIGHT - TREE_MIN_HEIGHT + 1));
+          const leafRadiusBase = Math.max(2, Math.floor(trunkHeight * TREE_LEAF_SCALE * 0.5));
+
+          // World Y for base of trunk (top of surface)
+          const baseY = height;
+
+          // Write trunk blocks across chunks (only for y within this chunk)
+          for (let dy = 1; dy <= trunkHeight; dy++) {
+            const wy = baseY + dy;
+            const lyTrunk = wy - cy * CHUNK_SIZE.y;
+            if (lyTrunk < 0 || lyTrunk >= CHUNK_SIZE.y) continue;
+            const idx = localToIndex(lx, lyTrunk, lz);
+            voxels[idx] = WOOD;
+          }
+
+          // Leaves pyramid around the trunk top; adjust size with height
+          const topY = baseY + trunkHeight;
+          const layers = Math.max(2, Math.floor(trunkHeight * TREE_LEAF_SCALE));
+          for (let layer = 0; layer < layers; layer++) {
+            const radius = Math.max(0, leafRadiusBase - layer);
+            const wy = topY + layer; // layers extend upward; looks more tree-like
+            const lyLeaves = wy - cy * CHUNK_SIZE.y;
+            if (lyLeaves < 0 || lyLeaves >= CHUNK_SIZE.y) continue;
+
+            for (let dx = -radius; dx <= radius; dx++) {
+              for (let dz = -radius; dz <= radius; dz++) {
+                // Pyramid-ish using Chebyshev distance for square layers
+                if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
+                const lxLeaf = lx + dx;
+                const lzLeaf = lz + dz;
+                // Skip if outside this chunk in XZ; neighboring chunks will fill their own leaves
+                if (lxLeaf < 0 || lxLeaf >= CHUNK_SIZE.x || lzLeaf < 0 || lzLeaf >= CHUNK_SIZE.z) continue;
+                // Avoid overwriting trunk core at center for lower layers; allow a small crown above
+                if (dx === 0 && dz === 0 && layer <= 1) continue;
+                const idx = localToIndex(lxLeaf, lyLeaves, lzLeaf);
+                // Only place leaves if currently air to avoid carving terrain
+                if (voxels[idx] === AIR) {
+                  voxels[idx] = LEAVES;
+                }
+              }
+            }
+          }
+
+          // Optional tip leaf for a nice top
+          const tipY = topY + layers;
+          const lyTip = tipY - cy * CHUNK_SIZE.y;
+          if (lyTip >= 0 && lyTip < CHUNK_SIZE.y) {
+            const idx = localToIndex(lx, lyTip, lz);
+            if (voxels[idx] === AIR) voxels[idx] = LEAVES;
+          }
+        }
+      }
     }
   }
+}
+
+// Fast 2D integer hash -> [0,1)
+function hash2d(x: number, z: number, seed: number): number {
+  // Use 32-bit integer math via bitwise ops
+  let h = (x | 0) * 374761393 + (z | 0) * 668265263 + (seed | 0) * 1442695040888963407;
+  h = (h ^ (h >>> 13)) | 0;
+  h = Math.imul(h, 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
 }

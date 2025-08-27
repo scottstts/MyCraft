@@ -102,7 +102,7 @@ function createSimpleAtlas(): THREE.Texture {
 async function loadTextureAtlas(): Promise<THREE.Texture> {
   const textureLoader = new THREE.TextureLoader();
   const tileSize = 16;
-  const atlasWidth = 8; // 8 tiles wide for current blocks
+  const atlasWidth = 11; // expanded to include wood + leaves
   const atlasHeight = 1; // 1 tile tall
 
   const canvas = document.createElement('canvas');
@@ -120,7 +120,10 @@ async function loadTextureAtlas(): Promise<THREE.Texture> {
     'grass_side': [2, 0],
     'cobblestone': [3, 0],
     'sand': [4, 0],
-    'water': [5, 0]
+    'water': [5, 0],
+    'wood_top': [6, 0],
+    'wood_side': [7, 0],
+    'tree_leaves': [8, 0]
   } as const;
 
   // Load and draw each texture - grass_top and grass_side from textures directory, others from material_icons
@@ -196,7 +199,7 @@ export async function loadFullAtlas(): Promise<Atlas> {
     // Fallback configuration
     const config: AtlasConfig = {
       tileSize: 16,
-      atlasSize: 5,
+      atlasSize: 11,
       tiles: {
         'grass_top': [0, 0],
         'dirt': [1, 0],
@@ -204,7 +207,10 @@ export async function loadFullAtlas(): Promise<Atlas> {
         'cobblestone': [3, 0],
         'sand': [4, 0],
         'water': [5, 0],
-        'air': [7, 0]
+        'wood_top': [6, 0],
+        'wood_side': [7, 0],
+        'tree_leaves': [8, 0],
+        'air': [10, 0]
       }
     };
 
