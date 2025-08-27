@@ -68,7 +68,7 @@ class OneShotLooper {
   stopImmediate() {
     this.desired = false
     if (this.current) {
-      try { this.current.pause() } catch {}
+      try { this.current.pause() } catch { /* Ignore pause errors */ }
       this.current = null
     }
   }
@@ -347,9 +347,9 @@ export class SoundEffects {
 
   dispose() {
     // Stop and release references
-    try { this.footLoop.stopImmediate() } catch {}
-    try { this.waterLoop.stopImmediate() } catch {}
-    try { this.underLoop.pause() } catch {}
-    try { this.oceanLoop.pause() } catch {}
+    try { this.footLoop.stopImmediate() } catch { /* Ignore stop errors */ }
+    try { this.waterLoop.stopImmediate() } catch { /* Ignore stop errors */ }
+    try { this.underLoop.pause() } catch { /* Ignore pause errors */ }
+    try { this.oceanLoop.pause() } catch { /* Ignore pause errors */ }
   }
 }
