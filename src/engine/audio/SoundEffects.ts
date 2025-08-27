@@ -266,34 +266,50 @@ export class SoundEffects {
     const pz = this.camera.position.z
     const WATER_ID = 5
 
-    // If we're already in or at the ocean, return strong proximity
-    if (this.isTouchingWaterSurface() || this.camera.position.y < WATER_LEVEL) return 1
-
-    // Cast rays in multiple directions, stepping outward until we hit WATER at surface level
+    // Cast rays in multiple directions, stepping outward until we find WATER at surface level
+    // and verify it corresponds to the surrounding ocean (not an inland lake)
     const maxDistance = 120 // blocks
     const step = 2.0
     const directions = 24
-    let minHit = maxDistance
+    const oceanCheckRange = 60 // additional distance after first hit that should remain mostly water
+    const oceanCheckStep = 2.0
+    const oceanContinuityThreshold = 0.7 // fraction of samples that must be water to count as ocean
+
+    let minOceanHit = maxDistance
 
     for (let i = 0; i < directions; i++) {
       const ang = (i / directions) * Math.PI * 2
       const dirx = Math.cos(ang)
       const dirz = Math.sin(ang)
+      // First, find the nearest surface water along this ray
+      let firstWaterDist: number | null = null
       for (let d = step; d <= maxDistance; d += step) {
         const x = Math.floor(px + dirx * d)
         const z = Math.floor(pz + dirz * d)
         const id = this.world.getBlock(x, WATER_LEVEL, z)
-        if (id === WATER_ID) {
-          if (d < minHit) minHit = d
-          break
-        }
+        if (id === WATER_ID) { firstWaterDist = d; break }
       }
+      if (firstWaterDist === null) continue
+
+      // Now, verify continuity of water beyond that point to distinguish open ocean from small lakes
+      let samples = 0
+      let waterSamples = 0
+      for (let d = firstWaterDist; d <= Math.min(firstWaterDist + oceanCheckRange, maxDistance); d += oceanCheckStep) {
+        const x = Math.floor(px + dirx * d)
+        const z = Math.floor(pz + dirz * d)
+        const id = this.world.getBlock(x, WATER_LEVEL, z)
+        samples++
+        if (id === WATER_ID) waterSamples++
+      }
+      const frac = samples > 0 ? (waterSamples / samples) : 0
+      const isOcean = frac >= oceanContinuityThreshold
+      if (isOcean && firstWaterDist < minOceanHit) minOceanHit = firstWaterDist
     }
 
-    // Map distance -> proximity: closer to water => higher value
+    // Map distance to detected ocean to proximity value
     const audibleRange = 80 // within this distance, volume ramps up to full
-    const proximity = 1 - Math.min(1, minHit / audibleRange)
-    // Add a tiny floor so center-of-island still has faint ocean ambience
+    const proximity = 1 - Math.min(1, minOceanHit / audibleRange)
+    // Keep a faint floor so the world never feels dead silent
     const floor = 0.05
     return Math.max(floor, proximity)
   }
