@@ -106,13 +106,47 @@ export class PlayerController {
       this.grounded = false;
     }
 
-    // Temporary safety clamp: prevent falling below y=0 if no terrain loaded
+    // Safety checks to prevent getting stuck in terrain
     const baseY = this.getBaseY();
+    
+    // Prevent falling below y=0 if no terrain loaded
     if (baseY < 0) {
       const deltaClamp = -baseY;
       this.camera.position.y += deltaClamp;
       this.velocityY = 0;
       this.grounded = true;
+    }
+    
+    // Additional safety: if player is inside solid blocks, push them up
+    const pos = this.camera.position;
+    const minY = this.getBaseY();
+    const maxY = minY + this.height;
+    const minX = pos.x - this.halfWidth;
+    const maxX = pos.x + this.halfWidth;
+    const minZ = pos.z - this.halfWidth;
+    const maxZ = pos.z + this.halfWidth;
+    
+    if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) {
+      // Player is stuck inside blocks, try to push them up
+      let safeY = Math.floor(maxY) + 1;
+      let attempts = 0;
+      const maxAttempts = 10;
+      
+      while (attempts < maxAttempts) {
+        const testMinY = safeY - this.height;
+        const testMaxY = safeY;
+        
+        if (!this.aabbIntersectsSolid(minX, testMinY, minZ, maxX, testMaxY, maxZ)) {
+          // Found safe position
+          this.camera.position.y = safeY - this.height + this.eyeHeight;
+          this.velocityY = 0;
+          this.grounded = true;
+          break;
+        }
+        
+        safeY++;
+        attempts++;
+      }
     }
 
     // Apply post-physics elevation tween (visual only)

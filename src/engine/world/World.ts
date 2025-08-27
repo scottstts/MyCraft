@@ -254,6 +254,17 @@ export class World extends EventEmitter<WorldEvents> {
    * @returns True if the block is solid, false otherwise
    */
   isBlockSolid(x: number, y: number, z: number): boolean {
+    // Convert world coordinates to chunk coordinates
+    const { cx, cy, cz } = worldToChunk(x, y, z);
+    
+    // If chunk isn't loaded yet, treat as solid to prevent falling through
+    const chunk = this.getChunk(cx, cy, cz);
+    if (!chunk) {
+      // For unloaded chunks, only treat as solid if below a reasonable height
+      // This prevents getting stuck on unloaded sky chunks while still preventing fall-through
+      return y <= 80; // Above this height, unloaded chunks are passable (sky)
+    }
+    
     const blockId = this.getBlock(x, y, z);
     const blockDef = getBlock(blockId);
     return blockDef ? blockDef.solid : false;
