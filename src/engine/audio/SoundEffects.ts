@@ -9,6 +9,7 @@ import footstepUrl from '../../assets/sounds/sound_effects/footstep.mp3'
 import waterStepUrl from '../../assets/sounds/sound_effects/water_step.mp3'
 import underwaterUrl from '../../assets/sounds/sound_effects/underwater.mp3'
 import blockUrl from '../../assets/sounds/sound_effects/block.mp3'
+import oceanUrl from '../../assets/sounds/sound_effects/ocean.mp3'
 
 function makeLoopingAudio(src: string, volume: number): HTMLAudioElement {
   const a = new Audio(src)
@@ -89,6 +90,12 @@ export class SoundEffects {
   private footLoop = new OneShotLooper(footstepUrl, this.sfxVolume)
   private waterLoop = new OneShotLooper(waterStepUrl, this.sfxVolume)
   private underLoop = makeLoopingAudio(underwaterUrl, this.sfxVolume * 0.8)
+  private oceanLoop = makeLoopingAudio(oceanUrl, this.sfxVolume * 0.6)
+
+  // Ocean proximity sampling (to control ocean volume by distance to sea)
+  private oceanSampleTimer = 0
+  private oceanProximity = 0 // 0..1 (1=loudest at shore/open sea)
+  private oceanVolCurrent = 0 // smoothed volume
 
   constructor(world: World, camera: THREE.PerspectiveCamera, input: InputSystem, player: PlayerController) {
     this.world = world
@@ -106,6 +113,8 @@ export class SoundEffects {
     this.footLoop.setVolume(vol)
     this.waterLoop.setVolume(vol)
     this.underLoop.volume = Math.max(0, Math.min(1, vol * 0.8))
+    // Base ocean loudness scales with SFX volume; proximity is applied per-frame
+    this.oceanLoop.volume = Math.max(0, Math.min(1, vol * 0.6))
   }
 
   getVolume(): number { return this.sfxVolume }
@@ -125,6 +134,10 @@ export class SoundEffects {
     const u = this.underLoop
     u.muted = true
     u.play().then(() => { u.pause(); u.currentTime = 0; u.muted = false }).catch(() => { /* ignore */ })
+    // Ocean loop prime
+    const o = this.oceanLoop
+    o.muted = true
+    o.play().then(() => { o.pause(); o.currentTime = 0; o.muted = false }).catch(() => { /* ignore */ })
   }
 
   private setLoopPlaying(a: HTMLAudioElement, shouldPlay: boolean) {
@@ -156,6 +169,8 @@ export class SoundEffects {
       this.waterLoop.setDesired(false)
       // Underwater is allowed to terminate immediately
       this.setLoopPlaying(this.underLoop, false)
+      // Ocean follows same pause logic as BG music: pause when game paused/not in game
+      this.setLoopPlaying(this.oceanLoop, false)
       // Update previous markers but do not trigger landing while paused
       this.lastX = this.camera.position.x
       this.lastY = this.camera.position.y
@@ -207,6 +222,11 @@ export class SoundEffects {
     this.footLoop.tick()
     this.waterLoop.tick()
 
+    // Continuous ocean ambience: always present while in-game and not paused.
+    // Volume scales with proximity to water at surface level, and dims underwater.
+    this.setLoopPlaying(this.oceanLoop, true)
+    this.updateOceanVolume(dtSeconds, isUnderWater)
+
     // Landing one-shot: transition false->true with downward motion
     if (!this.lastGrounded && grounded && dy < -0.02 && !isUnderWater && !touchingWater) {
       this.playOneShot(footstepUrl, this.sfxVolume)
@@ -216,6 +236,65 @@ export class SoundEffects {
     this.lastY = this.camera.position.y
     this.lastZ = this.camera.position.z
     this.lastGrounded = grounded
+  }
+
+  // Compute and set ocean loop volume based on proximity to sea
+  private updateOceanVolume(dtSeconds: number, isUnderWater: boolean) {
+    // Resample proximity at a modest rate to reduce CPU
+    this.oceanSampleTimer -= dtSeconds
+    if (this.oceanSampleTimer <= 0) {
+      this.oceanSampleTimer = 0.25 // seconds
+      this.oceanProximity = this.sampleOceanProximity()
+    }
+
+    // Target base volume from SFX volume and proximity
+    const base = Math.max(0, Math.min(1, this.sfxVolume * 0.6))
+    let target = base * this.oceanProximity
+    // Dim when underwater so the dedicated underwater loop dominates
+    if (isUnderWater) target *= 0.35
+
+    // Smooth for stability (simple critically-damped low-pass)
+    const smooth = 1 - Math.pow(0.001, dtSeconds) // ~fast attack, smooth decay
+    this.oceanVolCurrent += (target - this.oceanVolCurrent) * smooth
+    this.oceanLoop.volume = Math.max(0, Math.min(1, this.oceanVolCurrent))
+  }
+
+  // Ray-sample around the player to estimate distance to ocean surface
+  private sampleOceanProximity(): number {
+    const px = this.camera.position.x
+    const pz = this.camera.position.z
+    const WATER_ID = 5
+
+    // If we're already in or at the ocean, return strong proximity
+    if (this.isTouchingWaterSurface() || this.camera.position.y < WATER_LEVEL) return 1
+
+    // Cast rays in multiple directions, stepping outward until we hit WATER at surface level
+    const maxDistance = 120 // blocks
+    const step = 2.0
+    const directions = 24
+    let minHit = maxDistance
+
+    for (let i = 0; i < directions; i++) {
+      const ang = (i / directions) * Math.PI * 2
+      const dirx = Math.cos(ang)
+      const dirz = Math.sin(ang)
+      for (let d = step; d <= maxDistance; d += step) {
+        const x = Math.floor(px + dirx * d)
+        const z = Math.floor(pz + dirz * d)
+        const id = this.world.getBlock(x, WATER_LEVEL, z)
+        if (id === WATER_ID) {
+          if (d < minHit) minHit = d
+          break
+        }
+      }
+    }
+
+    // Map distance -> proximity: closer to water => higher value
+    const audibleRange = 80 // within this distance, volume ramps up to full
+    const proximity = 1 - Math.min(1, minHit / audibleRange)
+    // Add a tiny floor so center-of-island still has faint ocean ambience
+    const floor = 0.05
+    return Math.max(floor, proximity)
   }
 
   private isTouchingWaterSurface(): boolean {
@@ -254,5 +333,6 @@ export class SoundEffects {
     try { this.footLoop.stopImmediate() } catch {}
     try { this.waterLoop.stopImmediate() } catch {}
     try { this.underLoop.pause() } catch {}
+    try { this.oceanLoop.pause() } catch {}
   }
 }
