@@ -99,6 +99,6 @@ export class Composer {
   setFog(enabled: boolean, baseDensity: number, maxDistance: number) { this.fog.setSettings({ enabled, baseDensity, maxDistance }) }
   setFogColor(color: THREE.Color) { this.fog.setColor(color) }
   setFogDayLight(v: number) { this.fog.setDayLight(v) }
-  setColorGrading(contrast: number, saturation: number) { this.fog.setColorGrading({ contrast, saturation }) }
+  setColorGrading(exposure: number, contrast: number, saturation: number) { this.fog.setColorGrading({ exposure, contrast, saturation }) }
   render() { this.composer.render() }
 }

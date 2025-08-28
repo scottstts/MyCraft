@@ -638,7 +638,7 @@ function updatePostProcessingSettings(settings: PostProcessorSettings) {
     composer.setBloom(!!settings.bloomEnabled, settings.bloomStrength, settings.bloomThreshold);
     composer.setFog(!!settings.fogEnabled, settings.fogBaseDensity ?? 0.002, settings.fogMaxDistance ?? dynamicFogDistance);
     composer.setVolumetrics(!!settings.volumetricsEnabled, settings.volumetricsIntensity ?? 0.1, settings.volumetricsSteps ?? 32);
-    composer.setColorGrading(settings.contrast, settings.saturation);
+    composer.setColorGrading(settings.exposure, settings.contrast, settings.saturation);
     console.log('[Engine] Applied composer post-processing settings');
   } else if (postProcessor) {
     postProcessor.updateSettings(settings);
