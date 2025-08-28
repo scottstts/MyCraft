@@ -32,22 +32,34 @@ export class OceanHorizon {
       useWorldUV: true,
       bounds: opts.bounds,
     })
+    // Match translucency of terrain water for visual consistency
+    this.material.setAlpha(0.6)
 
     const { minX, maxX, minZ, maxZ } = opts.bounds
     const y = opts.waterLevel + 1.0 - 0.001 // align to water surface height
     const pad = 0.0 // keep inner edges exact to avoid z-fighting with world
     const far = Math.max(opts.farDistance, 1)
 
-    const bands: Array<{ x0:number,x1:number,z0:number,z1:number }> = [
-      { x0: minX - far, x1: maxX + far, z0: minZ - far, z1: minZ + pad }, // North
-      { x0: minX - far, x1: maxX + far, z0: maxZ - pad, z1: maxZ + far }, // South
-      { x0: minX - far, x1: minX + pad, z0: minZ - far, z1: maxZ + far }, // West
-      { x0: maxX - pad, x1: maxX + far, z0: minZ - far, z1: maxZ + far }, // East
+    // Build 8 tiles around the center bounds (tic-tac-toe layout minus center)
+    const tiles: Array<{ x0:number,x1:number,z0:number,z1:number }> = [
+      // Top row (north)
+      { x0: minX,       x1: maxX,       z0: minZ - far, z1: minZ + pad }, // top-middle
+      { x0: minX - far, x1: minX + pad, z0: minZ - far, z1: minZ + pad }, // top-left corner
+      { x0: maxX - pad, x1: maxX + far, z0: minZ - far, z1: minZ + pad }, // top-right corner
+      // Middle row (west/east)
+      { x0: minX - far, x1: minX + pad, z0: minZ,       z1: maxZ       }, // left-middle
+      { x0: maxX - pad, x1: maxX + far, z0: minZ,       z1: maxZ       }, // right-middle
+      // Bottom row (south)
+      { x0: minX,       x1: maxX,       z0: maxZ - pad, z1: maxZ + far }, // bottom-middle
+      { x0: minX - far, x1: minX + pad, z0: maxZ - pad, z1: maxZ + far }, // bottom-left corner
+      { x0: maxX - pad, x1: maxX + far, z0: maxZ - pad, z1: maxZ + far }, // bottom-right corner
     ]
 
-    for (const b of bands) {
-      const mesh = new THREE.Mesh(this.makeQuad(b.x0, b.z0, b.x1, b.z1, y), this.material)
+    for (const t of tiles) {
+      const mesh = new THREE.Mesh(this.makeQuad(t.x0, t.z0, t.x1, t.z1, y), this.material)
       mesh.frustumCulled = true
+      // Draw before chunk transparent water to ensure consistent blending stack
+      mesh.renderOrder = 1
       this.group.add(mesh)
     }
 

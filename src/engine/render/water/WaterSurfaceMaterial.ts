@@ -15,8 +15,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     const useWorldUV = !!params.useWorldUV
     const b = params.bounds ?? { minX: -1e9, maxX: 1e9, minZ: -1e9, maxZ: 1e9 }
     super({
-      transparent: false,
-      depthWrite: true,
+      transparent: true,
+      depthWrite: false,
       depthTest: true,
       side: THREE.DoubleSide,
       uniforms: {
@@ -32,6 +32,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uInnerMaxZ: { value: b.maxZ },
         uEdgeStrength: { value: 0.0 },
         uEdgeWidth: { value: 2.0 },
+        uAlpha: { value: 1.0 },
       },
       vertexShader: `
         varying vec3 vWorld;
@@ -50,7 +51,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         varying vec2 vUvVary; varying vec3 vNormalVary;
         uniform sampler2D uMap; uniform bool uUseMap; uniform float uTileScale; uniform bool uUseWorldUV;
         uniform float uInnerMinX, uInnerMaxX, uInnerMinZ, uInnerMaxZ;
-        uniform float uEdgeStrength; uniform float uEdgeWidth;
+        uniform float uEdgeStrength; uniform float uEdgeWidth; uniform float uAlpha;
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash(i); float b=hash(i+vec2(1.0,0.0)); float c=hash(i+vec2(0.0,1.0)); float d=hash(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y; }
         vec2 uvY(vec3 w){ return vec2(w.x / uTileScale, -w.z / uTileScale); }
@@ -87,7 +88,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float outside = max(max(uInnerMinX - vWorld.x, vWorld.x - uInnerMaxX), max(uInnerMinZ - vWorld.z, vWorld.z - uInnerMaxZ));
           float f = uEdgeStrength * smoothstep(0.0, max(uEdgeWidth, 1e-3), outside);
           col = mix(col, vec3(0.88, 0.94, 1.0), f);
-          gl_FragColor = vec4(col, 1.0);
+          gl_FragColor = vec4(col, clamp(uAlpha, 0.0, 1.0));
         }
       `,
     })
@@ -107,5 +108,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
   setEdge(strength: number, width: number){
     this.uniforms.uEdgeStrength.value = Math.max(0, strength);
     this.uniforms.uEdgeWidth.value = Math.max(0.1, width);
+  }
+  setAlpha(a: number){
+    const alpha = Math.max(0, Math.min(1, a));
+    this.uniforms.uAlpha.value = alpha;
+    // Depth write only when fully opaque
+    this.depthWrite = alpha >= 1.0;
   }
 }

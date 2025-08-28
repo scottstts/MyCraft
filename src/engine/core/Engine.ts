@@ -306,6 +306,8 @@ async function start(canvas: HTMLCanvasElement) {
       minX: -Infinity, maxX: Infinity, minZ: -Infinity, maxZ: Infinity,
     },
   });
+  // Make block water surfaces translucent
+  waterMaterial.setAlpha(0.6);
 
   chunkRenderer = new ChunkRenderer(scene, { opaque: blockMaterial, transparent: waterMaterial });
 
