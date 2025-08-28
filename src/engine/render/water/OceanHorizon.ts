@@ -32,8 +32,9 @@ export class OceanHorizon {
       useWorldUV: true,
       bounds: opts.bounds,
     })
-    // Match translucency of terrain water for visual consistency
-    this.material.setAlpha(0.6)
+    // Match translucency and refraction of terrain water for visual consistency
+    this.material.setAlpha(0.7)
+    this.material.setRefraction(0.18, 0.75, 0.12, 0.035, 0.06)
 
     const { minX, maxX, minZ, maxZ } = opts.bounds
     const y = opts.waterLevel + 1.0 - 0.001 // align to water surface height

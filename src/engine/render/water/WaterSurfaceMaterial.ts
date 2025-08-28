@@ -33,6 +33,12 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uEdgeStrength: { value: 0.0 },
         uEdgeWidth: { value: 2.0 },
         uAlpha: { value: 1.0 },
+        // Refraction controls
+        uRefractStrength: { value: 0.18 }, // world-units offset applied along refracted ray
+        uEta: { value: 0.75 },             // air->water eta = n1/n2 ~ 1/1.333
+        uWaveAmp: { value: 0.15 },         // wave normal perturbation amplitude
+        uWaveScale: { value: 0.035 },      // world scaling of waves
+        uFresnel: { value: 0.08 },         // subtle view-angle brightening
       },
       vertexShader: `
         varying vec3 vWorld;
@@ -52,6 +58,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform sampler2D uMap; uniform bool uUseMap; uniform float uTileScale; uniform bool uUseWorldUV;
         uniform float uInnerMinX, uInnerMaxX, uInnerMinZ, uInnerMaxZ;
         uniform float uEdgeStrength; uniform float uEdgeWidth; uniform float uAlpha;
+        // Refraction uniforms
+        uniform float uRefractStrength; uniform float uEta; uniform float uWaveAmp; uniform float uWaveScale; uniform float uFresnel;
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash(i); float b=hash(i+vec2(1.0,0.0)); float c=hash(i+vec2(0.0,1.0)); float d=hash(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y; }
         vec2 uvY(vec3 w){ return vec2(w.x / uTileScale, -w.z / uTileScale); }
@@ -73,10 +81,30 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             float m = noise(p*2.0 - vec2(uTime*0.06, uTime*0.05));
             float wave = smoothstep(0.35, 0.75, 0.5*n + 0.5*m);
             vec3 hi = mix(uColor, vec3(0.85, 0.93, 1.0), 0.25);
-            return mix(uColor, hi, wave * 0.35);
+            // Subtle fake refraction by brightening at grazing angles
+            vec3 V = normalize(cameraPosition - vWorld);
+            vec3 N = normalize(vNormalVary);
+            float fres = pow(max(0.0, 1.0 - dot(N, V)), 5.0);
+            vec3 base = mix(uColor, hi, wave * 0.35);
+            return mix(base, vec3(1.0), uFresnel * fres);
           }
           if (uUseWorldUV) {
-            return sampleTriPlanar(vWorld, vNormalVary);
+            // Derive a perturbed normal from animated noise for subtle waves
+            vec2 p = vWorld.xz * uWaveScale + vec2(uTime*0.03, -uTime*0.02);
+            float n0 = noise(p);
+            float nx = noise(p + vec2(0.75, 0.0));
+            float nz = noise(p + vec2(0.0, 0.75));
+            vec2 grad = vec2(nx - n0, nz - n0);
+            vec3 N = normalize(vec3(-grad.x * uWaveAmp, 1.0, -grad.y * uWaveAmp));
+            vec3 V = normalize(cameraPosition - vWorld);
+            vec3 R = refract(-V, N, uEta);
+            // Offset sample position along refracted direction
+            vec3 wpos = vWorld + R * uRefractStrength;
+            vec3 col = sampleTriPlanar(wpos, N);
+            // Fresnel rim for extra depth
+            float fres = pow(max(0.0, 1.0 - dot(N, V)), 5.0);
+            col = mix(col, vec3(1.0), uFresnel * fres);
+            return col;
           } else {
             // Fallback to mesh UVs (less ideal for steep angles)
             return texture2D(uMap, vUvVary).rgb;
@@ -114,5 +142,12 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     this.uniforms.uAlpha.value = alpha;
     // Depth write only when fully opaque
     this.depthWrite = alpha >= 1.0;
+  }
+  setRefraction(strength: number, eta = 0.75, waveAmp = 0.15, waveScale = 0.035, fresnel = 0.08){
+    this.uniforms.uRefractStrength.value = Math.max(0, strength);
+    this.uniforms.uEta.value = Math.max(0.01, Math.min(1.0, eta));
+    this.uniforms.uWaveAmp.value = Math.max(0, waveAmp);
+    this.uniforms.uWaveScale.value = Math.max(1e-4, waveScale);
+    this.uniforms.uFresnel.value = Math.max(0, fresnel);
   }
 }

@@ -306,8 +306,10 @@ async function start(canvas: HTMLCanvasElement) {
       minX: -Infinity, maxX: Infinity, minZ: -Infinity, maxZ: Infinity,
     },
   });
-  // Make block water surfaces translucent
-  waterMaterial.setAlpha(0.6);
+  // Make block water surfaces slightly translucent
+  waterMaterial.setAlpha(0.7);
+  // Add subtle refraction and wave perturbation
+  waterMaterial.setRefraction(0.18, 0.75, 0.12, 0.035, 0.06);
 
   chunkRenderer = new ChunkRenderer(scene, { opaque: blockMaterial, transparent: waterMaterial });
 
