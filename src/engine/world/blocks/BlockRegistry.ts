@@ -64,7 +64,8 @@ export class BlockRegistry {
         name: 'water',
         opaque: false,
         solid: false,
-        faces: { all: 'water' }
+        // Only render the top face with water texture; others default to 'air'
+        faces: { top: 'water' }
       },
       {
         id: 6,

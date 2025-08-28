@@ -123,6 +123,10 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors?: {
         
         // Check each face
         for (const face of FACES) {
+          // Special-case: only render the top face for water blocks
+          if (block.name === 'water' && face.name !== 'top') {
+            continue;
+          }
           const neighborX = lx + face.dir[0];
           const neighborY = ly + face.dir[1];
           const neighborZ = lz + face.dir[2];
