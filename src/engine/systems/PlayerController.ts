@@ -526,17 +526,25 @@ export class PlayerController {
     return false;
   }
 
-  /** Attempt a small upward step (≤1 block) if clearance and support exist */
-  private tryStepUp(stepHeight: number): boolean {
+  /** Attempt a small upward step (≤1-1.25 blocks) if clearance and support exist.
+   * Optionally considers a small forward pre-nudge for clearance tests to avoid the front-face blocking the step.
+   */
+  private tryStepUp(stepHeight: number, forwardDir?: THREE.Vector3): boolean {
     if (stepHeight <= 0) return false;
     const pos = this.camera.position;
     const nextY = pos.y + stepHeight;
-    const minX = pos.x - this.halfWidth;
-    const maxX = pos.x + this.halfWidth;
-    const minZ = pos.z - this.halfWidth;
-    const maxZ = pos.z + this.halfWidth;
-    const minY = this.getBaseY(nextY);
-    const maxY = minY + this.height;
+    // Use a small pre-nudge along desired direction when evaluating clearance,
+    // so we test the position we'd occupy right after stepping.
+    const preNudge = 0.10;
+    const nx = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.x + forwardDir.x * preNudge : pos.x;
+    const nz = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.z + forwardDir.z * preNudge : pos.z;
+    const eps = PlayerController.EPS * 4;
+    const minX = nx - this.halfWidth + eps;
+    const maxX = nx + this.halfWidth - eps;
+    const minZ = nz - this.halfWidth + eps;
+    const maxZ = nz + this.halfWidth - eps;
+    const minY = this.getBaseY(nextY) + eps;
+    const maxY = minY + this.height - eps;
     // Require clearance at the new height
     if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) return false;
     // Require some support just below new base so we don't step into mid-air
@@ -557,7 +565,7 @@ export class PlayerController {
   /** Try multiple step heights and apply a small forward nudge to clear the lip */
   private tryStepUpMulti(heights: number[], desiredDir: THREE.Vector3): number {
     for (const h of heights) {
-      if (this.tryStepUp(h)) {
+      if (this.tryStepUp(h, desiredDir)) {
         // Nudge forward slightly to get past the boundary
         const nudge = 0.12;
         if (desiredDir.x !== 0) this.resolveAxis('x', desiredDir.x * nudge);
