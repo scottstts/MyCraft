@@ -232,6 +232,20 @@ export const DebugPanel: React.FC = () => {
     } else {
       console.error('[DebugPanel] updateShadowSettings not available!');
     }
+
+    // Handle exposure through updateGraphicsSettings as well
+    if (key === 'exposure') {
+      const updateGraphicsFn = (window as WindowWithEngineGlobals).updateGraphicsSettings;
+      if (updateGraphicsFn) {
+        updateGraphicsFn({
+          timeOfDay: { t: timeOfDay, paused: timePaused, cycleSeconds },
+          renderer: { exposure: newSettings.exposure }
+        });
+        console.log(`[DebugPanel] Updated graphics settings for exposure`);
+      } else {
+        console.error('[DebugPanel] updateGraphicsSettings not available!');
+      }
+    }
   };
 
   return (
