@@ -290,7 +290,7 @@ async function start(canvas: HTMLCanvasElement) {
       if (maxAniso && maxAniso > 1) {
         waterTex.anisotropy = Math.min(8, maxAniso);
       }
-    } catch {}
+    } catch { void 0; }
     waterTex.needsUpdate = true;
   } catch (e) {
     console.warn('Water texture load failed, far ocean will fallback to color.', e);

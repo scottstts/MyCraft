@@ -381,10 +381,11 @@ function generateTerrain(
 
 // Fast 2D integer hash -> [0,1)
 function hash2d(x: number, z: number, seed: number): number {
-  // Use 32-bit integer math via bitwise ops
-  let h = (x | 0) * 374761393 + (z | 0) * 668265263 + (seed | 0) * 1442695040888963407;
+  // 32-bit integer hash, avoiding precision loss
+  let h = 0;
+  h = (Math.imul((x | 0), 374761393) ^ Math.imul((z | 0), 668265263) ^ Math.imul((seed | 0), 2654435761)) | 0;
   h = (h ^ (h >>> 13)) | 0;
   h = Math.imul(h, 1274126177);
-  h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296;
 }

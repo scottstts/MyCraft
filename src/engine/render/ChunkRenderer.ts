@@ -38,7 +38,6 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     // Remove existing mesh if it exists
     this.removeChunkMesh(key);
     const group = new THREE.Group();
-    let meshCount = 0;
 
     const makeMesh = (buf: { positions: Float32Array; normals: Float32Array; uvs: Float32Array; indices: Uint16Array | Uint32Array }, mat: THREE.Material, isTransparent: boolean): THREE.Mesh | null => {
       if (!buf.positions.length) return null;
@@ -76,8 +75,8 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
       cz * CHUNK_SIZE.z
     );
     
-    if (opaqueMesh) { group.add(opaqueMesh); meshCount++; }
-    if (transparentMesh) { group.add(transparentMesh); meshCount++; }
+    if (opaqueMesh) { group.add(opaqueMesh); }
+    if (transparentMesh) { group.add(transparentMesh); }
     // Ensure local positions are zero within the group
     if (opaqueMesh) opaqueMesh.position.set(0,0,0);
     if (transparentMesh) transparentMesh.position.set(0,0,0);

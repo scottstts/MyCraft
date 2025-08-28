@@ -133,8 +133,8 @@ export class PlayerController {
     const dy = this.velocityY * deltaSeconds;
 
     // Axis-separated sweep: resolve X, then Z, with land step-up assist, then Y
-    let landHitX = this.resolveAxis('x', dx);
-    let landHitZ = this.resolveAxis('z', dz);
+    const landHitX = this.resolveAxis('x', dx);
+    const landHitZ = this.resolveAxis('z', dz);
     if ((landHitX || landHitZ)) {
       // Attempt small step-up on land to climb 1-block lips
       const landInput = this.input.getMoveInput();
@@ -308,9 +308,9 @@ export class PlayerController {
     const dz = this.swimVelocity.z * dt;
 
     // Try horizontal movement; if blocked near the surface or with ground support, attempt a step-up
-    let hitX = this.resolveAxis('x', dx);
+    const hitX = this.resolveAxis('x', dx);
     if (hitX) this.swimVelocity.x = 0;
-    let hitZ = this.resolveAxis('z', dz);
+    const hitZ = this.resolveAxis('z', dz);
     if (hitZ) this.swimVelocity.z = 0;
 
     const baseYNow = this.getBaseY();
