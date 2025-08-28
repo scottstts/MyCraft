@@ -76,8 +76,31 @@ export class OceanHorizon {
       x1, y, z1,
       x0, y, z1,
     ])
+    
+    // Add UV coordinates to match terrain water block behavior
+    const uvs = new Float32Array([
+      0, 0,
+      1, 0,
+      1, 1,
+      0, 0,
+      1, 1,
+      0, 1,
+    ])
+    
+    // Add normals pointing up (same as terrain water top faces)
+    const normals = new Float32Array([
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+    ])
+    
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
     geometry.computeBoundingBox()
     geometry.computeBoundingSphere()
     return geometry
