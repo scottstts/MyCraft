@@ -23,6 +23,8 @@ export class PlayerController {
   // (no previous underwater flag retained)
   private underwater: boolean = false; // hysteresis-smoothed underwater state
   private stepCooldown: number = 0;    // seconds; prevents repeated step wiggle
+  private emergeLiftRemaining: number = 0; // remaining vertical lift for smooth emerge
+  private emergeNudgeDir = new THREE.Vector3();
 
   // Visual smoothing for instantaneous vertical steps
   private renderYOffsetY: number = 0;
@@ -281,6 +283,25 @@ export class PlayerController {
     // Reasonable vertical limit: match maxSpeed to feel cohesive
     this.swimVelocity.y = THREE.MathUtils.clamp(this.swimVelocity.y, -maxSpeed, maxSpeed);
 
+    // Smooth emerge lift first (apply small vertical lift and micro-nudge before main X/Z)
+    if (this.emergeLiftRemaining > 0) {
+      const lift = Math.min(swim.emergeLiftSpeed * dt, this.emergeLiftRemaining);
+      const prevY = this.camera.position.y;
+      this.resolveAxis('y', lift);
+      const moved = this.camera.position.y - prevY;
+      this.emergeLiftRemaining -= Math.max(0, moved);
+      // Micro forward nudge to clear shoreline
+      const nudge = swim.emergeNudgeSpeed * dt;
+      if (this.emergeNudgeDir.x !== 0 || this.emergeNudgeDir.z !== 0) {
+        this.resolveAxis('x', this.emergeNudgeDir.x * nudge);
+        this.resolveAxis('z', this.emergeNudgeDir.z * nudge);
+      }
+      if (this.emergeLiftRemaining <= 0) {
+        this.emergeLiftRemaining = 0;
+        this.emergeNudgeDir.set(0, 0, 0);
+      }
+    }
+
     // Integrate position with collisions against solids
     const dx = this.swimVelocity.x * dt;
     const dy = this.swimVelocity.y * dt;
@@ -296,15 +317,19 @@ export class PlayerController {
     const nearSurface = (WATER_LEVEL - this.camera.position.y) < (PLAYER.swim.floatBand + 0.75);
     const hasSupport = this.hasSolidGroundBelow();
     const hasInput = desiredDir.lengthSq() > 1e-6;
-    if ((hitX || hitZ) && hasInput && (nearSurface || hasSupport || this.input.isJumpHeld())) {
-      // Attempt dynamic step-up to climb onto shoreline (≤ maxStepOut)
+    if (this.emergeLiftRemaining <= 0 && this.stepCooldown <= 0 && (hitX || hitZ) && hasInput && (nearSurface || hasSupport || this.input.isJumpHeld())) {
+      // Plan a smooth emerge lift if clearance exists
       const toSurface = Math.max(0, WATER_LEVEL - baseYNow + 0.6);
       const primary = Math.min(PLAYER.swim.maxStepOut, Math.max(0.25, toSurface));
       const candidates = [primary, 1.0, 0.75, 0.5, 0.25];
-      const usedStep = this.tryStepUpMulti(candidates, desiredDir);
-      if (usedStep > 0) {
-        // Smooth visual transition even when underwater to avoid pop
-        this.startElevationTween(usedStep);
+      let chosen = 0;
+      for (const h of candidates) {
+        if (this.canStepUp(h, desiredDir)) { chosen = h; break; }
+      }
+      if (chosen > 0) {
+        this.emergeLiftRemaining = chosen;
+        this.emergeNudgeDir.copy(desiredDir);
+        this.startElevationTween(chosen);
         this.stepCooldown = 0.15;
       }
     }
@@ -558,6 +583,31 @@ export class PlayerController {
     // Apply step
     this.camera.position.y = nextY;
     return true;
+  }
+
+  /** Check if a step up of given height is possible (clearance + support) without applying it */
+  private canStepUp(stepHeight: number, forwardDir?: THREE.Vector3): boolean {
+    if (stepHeight <= 0) return false;
+    const pos = this.camera.position;
+    const nextY = pos.y + stepHeight;
+    const preNudge = 0.08;
+    const nx = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.x + forwardDir.x * preNudge : pos.x;
+    const nz = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.z + forwardDir.z * preNudge : pos.z;
+    const eps = PlayerController.EPS * 4;
+    const minX = nx - this.halfWidth + eps;
+    const maxX = nx + this.halfWidth - eps;
+    const minZ = nz - this.halfWidth + eps;
+    const maxZ = nz + this.halfWidth - eps;
+    const minY = this.getBaseY(nextY) + eps;
+    const maxY = minY + this.height - eps;
+    if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) return false;
+    const supportY = Math.floor(minY - 0.01);
+    for (let z = Math.floor(minZ); z <= Math.floor(maxZ); z++) {
+      for (let x = Math.floor(minX); x <= Math.floor(maxX); x++) {
+        if (this.world.isBlockSolid(x, supportY, z)) return true;
+      }
+    }
+    return false;
   }
 
   /** Try multiple step heights and apply a small forward nudge to clear the lip */

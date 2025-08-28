@@ -39,7 +39,11 @@ export const PLAYER = {
     // Small constant sink bias when idle to prevent hovering
     sinkBias: 0.6,
     // Max step height when climbing out at shoreline
-    maxStepOut: 1.25
+    maxStepOut: 1.25,
+    // Smooth emerge from water: vertical lift speed (blocks/s)
+    emergeLiftSpeed: 6.0,
+    // Smooth emerge from water: small forward nudge speed (blocks/s)
+    emergeNudgeSpeed: 1.2
   }
 } as const;
 
