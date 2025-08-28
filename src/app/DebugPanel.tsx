@@ -799,7 +799,7 @@ export const DebugPanel: React.FC = () => {
       </div>
 
       {/* Color Settings */}
-      <div>
+      <div style={{ marginTop: '20px' }}>
         <h4 style={{ 
           margin: '0 0 12px 0', 
           fontSize: '14px', 
