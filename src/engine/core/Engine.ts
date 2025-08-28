@@ -307,7 +307,7 @@ async function start(canvas: HTMLCanvasElement) {
     },
   });
   // Make block water surfaces slightly translucent
-  waterMaterial.setAlpha(0.7);
+  waterMaterial.setAlpha(0.9);
   // Add subtle refraction and wave perturbation
   waterMaterial.setRefraction(0.18, 0.75, 0.12, 0.035, 0.06);
 

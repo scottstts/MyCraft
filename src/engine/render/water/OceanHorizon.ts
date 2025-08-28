@@ -33,7 +33,7 @@ export class OceanHorizon {
       bounds: opts.bounds,
     })
     // Match translucency and refraction of terrain water for visual consistency
-    this.material.setAlpha(0.7)
+    this.material.setAlpha(0.9)
     this.material.setRefraction(0.18, 0.75, 0.12, 0.035, 0.06)
 
     const { minX, maxX, minZ, maxZ } = opts.bounds
