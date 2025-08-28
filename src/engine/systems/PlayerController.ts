@@ -120,9 +120,37 @@ export class PlayerController {
     this.velocityY += this.gravity * deltaSeconds;
     const dy = this.velocityY * deltaSeconds;
 
-    // Axis-separated sweep: resolve X, then Z, then Y
-    this.resolveAxis('x', dx);
-    this.resolveAxis('z', dz);
+    // Axis-separated sweep: resolve X, then Z, with land step-up assist, then Y
+    let landHitX = this.resolveAxis('x', dx);
+    let landHitZ = this.resolveAxis('z', dz);
+    if (landHitX || landHitZ) {
+      // Attempt small step-up on land to climb 1-block lips
+      const landInput = this.input.getMoveInput();
+      const yaw = this.camera.rotation.y;
+      const forwardX = -Math.sin(yaw);
+      const forwardZ = -Math.cos(yaw);
+      const rightX = Math.cos(yaw);
+      const rightZ = -Math.sin(yaw);
+      const desX = rightX * landInput.x + forwardX * landInput.z;
+      const desZ = rightZ * landInput.x + forwardZ * landInput.z;
+      const desLen = Math.hypot(desX, desZ);
+      const desiredDir = desLen > 0 ? new THREE.Vector3(desX / desLen, 0, desZ / desLen) : new THREE.Vector3();
+      const candidates = [1.0, 0.75, 0.5, 0.25];
+      const usedStep = this.tryStepUpMulti(candidates, desiredDir);
+      if (usedStep > 0) {
+        // Smooth visual offset for stepped height
+        this.startElevationTween(usedStep);
+        // Retry blocked axes after stepping up
+        if (landHitX) {
+          landHitX = this.resolveAxis('x', dx);
+          if (landHitX) {/* ignore; remain blocked */}
+        }
+        if (landHitZ) {
+          landHitZ = this.resolveAxis('z', dz);
+          if (landHitZ) {/* ignore; remain blocked */}
+        }
+      }
+    }
     const hitY = this.resolveAxis('y', dy);
 
     // Grounded logic: if moving down and collided, we are grounded
@@ -269,7 +297,8 @@ export class PlayerController {
       const toSurface = Math.max(0, WATER_LEVEL - baseYNow + 0.6);
       const primary = Math.min(PLAYER.swim.maxStepOut, Math.max(0.25, toSurface));
       const candidates = [primary, 1.0, 0.75, 0.5, 0.25];
-      if (this.tryStepUpMulti(candidates, desiredDir)) {
+      const usedStep = this.tryStepUpMulti(candidates, desiredDir);
+      if (usedStep > 0) {
         // Retry blocked axes after stepping up
         if (hitX) {
           hitX = this.resolveAxis('x', dx);
@@ -526,17 +555,17 @@ export class PlayerController {
   }
 
   /** Try multiple step heights and apply a small forward nudge to clear the lip */
-  private tryStepUpMulti(heights: number[], desiredDir: THREE.Vector3): boolean {
+  private tryStepUpMulti(heights: number[], desiredDir: THREE.Vector3): number {
     for (const h of heights) {
       if (this.tryStepUp(h)) {
         // Nudge forward slightly to get past the boundary
         const nudge = 0.12;
         if (desiredDir.x !== 0) this.resolveAxis('x', desiredDir.x * nudge);
         if (desiredDir.z !== 0) this.resolveAxis('z', desiredDir.z * nudge);
-        return true;
+        return h;
       }
     }
-    return false;
+    return 0;
   }
 
   /** Public getter for grounded state */
