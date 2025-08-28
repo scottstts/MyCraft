@@ -20,7 +20,9 @@ export class PlayerController {
   private grounded: boolean = false;
   // Swim state
   private swimVelocity = new THREE.Vector3();
-  private wasUnderwater: boolean = false;
+  // (no previous underwater flag retained)
+  private underwater: boolean = false; // hysteresis-smoothed underwater state
+  private stepCooldown: number = 0;    // seconds; prevents repeated step wiggle
 
   // Visual smoothing for instantaneous vertical steps
   private renderYOffsetY: number = 0;
@@ -66,28 +68,36 @@ export class PlayerController {
       this.camera.position.y -= this.renderYOffsetY;
       this.renderYOffsetY = 0;
     }
-    // Determine underwater state using same logic as underwater SFX
-    const isUnderWater = (this.camera.position.y < WATER_LEVEL);
+    // Decay step cooldown
+    if (this.stepCooldown > 0) this.stepCooldown = Math.max(0, this.stepCooldown - deltaSeconds);
+
+    // Determine underwater state with hysteresis to avoid flicker at the plane
+    const prevUnder = this.underwater;
+    const hys = 0.2; // meters
+    if (this.underwater) {
+      if (this.camera.position.y > WATER_LEVEL + hys) this.underwater = false;
+    } else {
+      if (this.camera.position.y < WATER_LEVEL - hys) this.underwater = true;
+    }
+    const isUnderWater = this.underwater;
 
     if (isUnderWater) {
       // On enter water: clear vertical fall momentum and grounded flag
-      if (!this.wasUnderwater) {
+      if (!prevUnder) {
         this.velocityY = 0;
         this.grounded = false;
       }
       this.updateUnderwater(deltaSeconds);
-      this.wasUnderwater = true;
       // Apply any active visual elevation tween (generally unused in water)
       this.applyElevationTween(deltaSeconds);
       return;
     }
 
     // Transitioned out of water: reset swim state gradually
-    if (this.wasUnderwater) {
+    if (prevUnder) {
       // Preserve only upward carry if exiting while moving up; otherwise reset
       this.velocityY = Math.max(this.velocityY, this.swimVelocity.y);
       this.swimVelocity.set(0, 0, 0);
-      this.wasUnderwater = false;
     }
     // Jump edge-trigger: only if grounded
     if (this.input.consumeJumpRequested() && this.grounded) {
@@ -123,7 +133,7 @@ export class PlayerController {
     // Axis-separated sweep: resolve X, then Z, with land step-up assist, then Y
     let landHitX = this.resolveAxis('x', dx);
     let landHitZ = this.resolveAxis('z', dz);
-    if (landHitX || landHitZ) {
+    if ((landHitX || landHitZ)) {
       // Attempt small step-up on land to climb 1-block lips
       const landInput = this.input.getMoveInput();
       const yaw = this.camera.rotation.y;
@@ -134,20 +144,14 @@ export class PlayerController {
       const desX = rightX * landInput.x + forwardX * landInput.z;
       const desZ = rightZ * landInput.x + forwardZ * landInput.z;
       const desLen = Math.hypot(desX, desZ);
-      const desiredDir = desLen > 0 ? new THREE.Vector3(desX / desLen, 0, desZ / desLen) : new THREE.Vector3();
-      const candidates = [1.0, 0.75, 0.5, 0.25];
-      const usedStep = this.tryStepUpMulti(candidates, desiredDir);
-      if (usedStep > 0) {
-        // Smooth visual offset for stepped height
-        this.startElevationTween(usedStep);
-        // Retry blocked axes after stepping up
-        if (landHitX) {
-          landHitX = this.resolveAxis('x', dx);
-          if (landHitX) {/* ignore; remain blocked */}
-        }
-        if (landHitZ) {
-          landHitZ = this.resolveAxis('z', dz);
-          if (landHitZ) {/* ignore; remain blocked */}
+      if (this.stepCooldown <= 0 && desLen > 0.001) {
+        const desiredDir = new THREE.Vector3(desX / desLen, 0, desZ / desLen);
+        const candidates = [1.0, 0.75, 0.5, 0.25];
+        const usedStep = this.tryStepUpMulti(candidates, desiredDir);
+        if (usedStep > 0) {
+          // Smooth visual offset for stepped height
+          this.startElevationTween(usedStep);
+          this.stepCooldown = 0.15; // prevent reattempt wiggle
         }
       }
     }
@@ -299,15 +303,9 @@ export class PlayerController {
       const candidates = [primary, 1.0, 0.75, 0.5, 0.25];
       const usedStep = this.tryStepUpMulti(candidates, desiredDir);
       if (usedStep > 0) {
-        // Retry blocked axes after stepping up
-        if (hitX) {
-          hitX = this.resolveAxis('x', dx);
-          if (hitX) this.swimVelocity.x = 0;
-        }
-        if (hitZ) {
-          hitZ = this.resolveAxis('z', dz);
-          if (hitZ) this.swimVelocity.z = 0;
-        }
+        // Smooth visual transition even when underwater to avoid pop
+        this.startElevationTween(usedStep);
+        this.stepCooldown = 0.15;
       }
     }
 
@@ -535,7 +533,7 @@ export class PlayerController {
     const nextY = pos.y + stepHeight;
     // Use a small pre-nudge along desired direction when evaluating clearance,
     // so we test the position we'd occupy right after stepping.
-    const preNudge = 0.10;
+    const preNudge = 0.08;
     const nx = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.x + forwardDir.x * preNudge : pos.x;
     const nz = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.z + forwardDir.z * preNudge : pos.z;
     const eps = PlayerController.EPS * 4;
@@ -567,7 +565,7 @@ export class PlayerController {
     for (const h of heights) {
       if (this.tryStepUp(h, desiredDir)) {
         // Nudge forward slightly to get past the boundary
-        const nudge = 0.12;
+        const nudge = 0.08;
         if (desiredDir.x !== 0) this.resolveAxis('x', desiredDir.x * nudge);
         if (desiredDir.z !== 0) this.resolveAxis('z', desiredDir.z * nudge);
         return h;
