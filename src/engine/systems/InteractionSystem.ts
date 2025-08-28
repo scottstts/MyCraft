@@ -12,6 +12,8 @@ import { SelectionSystem } from './SelectionSystem';
  
 import { addToInventory, getSelectedPlacementBlockId, consumeOneFromSelected } from '../../state/inventory';
 import { CHUNK_SIZE, PLAYER } from '../../config/constants';
+import { WATER_LEVEL } from '../world/TerrainGenerator';
+import { getBlockIdByName } from '../world/blocks/BlockRegistry';
 import { worldToChunk } from '../utils/coords';
 import type { ChunkPipeline } from '../world/ChunkPipeline';
 import { PlayerController } from './PlayerController';
@@ -27,6 +29,7 @@ export class InteractionSystem {
   private playerController: PlayerController | null;
 
   private readonly airId: number = 0;
+  private readonly waterId: number = getBlockIdByName('water') ?? 5;
   
 
   constructor(
@@ -54,10 +57,17 @@ export class InteractionSystem {
         const blockId = this.world.getBlock(x, y, z);
         if (blockId !== this.airId) {
           // Only play break sound for solid blocks
-          if (this.world.isBlockSolid(x, y, z)) {
+          const wasSolid = this.world.isBlockSolid(x, y, z);
+          if (wasSolid) {
             (window as WindowWithSfxHooks).__sfxBreak?.();
           }
+          // Remove the block
           this.world.setBlock(x, y, z, this.airId);
+          // Water surface edge-fill: if this cell is at water surface level, open to air above,
+          // and adjacent to water at the same level, immediately fill with water.
+          if (wasSolid && this.shouldFillWithWater(x, y, z)) {
+            this.world.setBlock(x, y, z, this.waterId);
+          }
           // Add drop to inventory
           addToInventory(blockId, 1);
           this.remeshAffectedChunks(x, y, z);
@@ -86,6 +96,23 @@ export class InteractionSystem {
         }
       }
     }
+  }
+
+  /** Determine if breaking (x,y,z) should cause a water surface block to flow into this cell */
+  private shouldFillWithWater(x: number, y: number, z: number): boolean {
+    // Only at global surface level
+    if (y !== WATER_LEVEL) return false;
+    // Ensure above is air so this cell represents the surface
+    if (this.world.getBlock(x, y + 1, z) !== this.airId) return false;
+    // If any 4-neighbors at same level are water, consider it an edge of water body
+    const neighbors: Array<[number, number]> = [
+      [1, 0], [-1, 0], [0, 1], [0, -1]
+    ];
+    for (const [dx, dz] of neighbors) {
+      const nb = this.world.getBlock(x + dx, y, z + dz);
+      if (nb === this.waterId) return true;
+    }
+    return false;
   }
 
   private remeshAffectedChunks(worldX: number, worldY: number, worldZ: number): void {
@@ -198,4 +225,3 @@ export class InteractionSystem {
     return false;
   }
 }
-
