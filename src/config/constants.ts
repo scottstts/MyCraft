@@ -32,10 +32,14 @@ export const PLAYER = {
     // Gravity scale in water (fraction of normal gravity)
     gravityScale: 0.18,
     // Upward soft spring towards the surface when near it (for floating feel)
-    floatBand: 1.5,           // meters below surface where spring applies
-    floatStrength: 6.0,       // spring strength (accel per meter)
+    floatBand: 1.25,          // meters below surface where spring applies
+    floatStrength: 4.0,       // spring strength (accel per meter), only slows sinking
     // Attraction to surface while holding space (to “surface”)
-    surfaceSnapStrength: 10.0 // accel per meter below surface when space held
+    surfaceSnapStrength: 10.0, // accel per meter below surface when space held
+    // Small constant sink bias when idle to prevent hovering
+    sinkBias: 0.6,
+    // Max step height when climbing out at shoreline
+    maxStepOut: 1.25
   }
 } as const;
 

@@ -221,10 +221,15 @@ export class PlayerController {
     // Gravity reduced in water + buoyancy/float near surface
     const waterGravity = this.gravity * swim.gravityScale; // negative
     this.swimVelocity.y += waterGravity * dt;
-    // Floating spring when within floatBand from surface (stronger slightly deeper, zero at surface)
+    // Floating spring: only slows sinking (no upward lift at rest)
     const depth = WATER_LEVEL - this.camera.position.y;
-    if (depth > 0 && depth < swim.floatBand) {
+    if (depth > 0 && depth < swim.floatBand && this.swimVelocity.y < 0) {
       this.swimVelocity.y += swim.floatStrength * depth * dt;
+    }
+    // Idle sink bias: prevent exact hover near surface when no input
+    const inputMag = Math.hypot(inputXZ.x, inputXZ.z);
+    if (!this.input.isJumpHeld() && inputMag < 0.01) {
+      this.swimVelocity.y -= Math.max(0, PLAYER.swim.sinkBias) * dt;
     }
 
     // Drag in water (applies to all components)
@@ -249,10 +254,34 @@ export class PlayerController {
     const dy = this.swimVelocity.y * dt;
     const dz = this.swimVelocity.z * dt;
 
-    const hitX = this.resolveAxis('x', dx);
+    // Try horizontal movement; if blocked near the surface or with ground support, attempt a step-up
+    let hitX = this.resolveAxis('x', dx);
     if (hitX) this.swimVelocity.x = 0;
-    const hitZ = this.resolveAxis('z', dz);
+    let hitZ = this.resolveAxis('z', dz);
     if (hitZ) this.swimVelocity.z = 0;
+
+    const baseYNow = this.getBaseY();
+    const nearSurface = (WATER_LEVEL - this.camera.position.y) < (PLAYER.swim.floatBand + 0.75);
+    const hasSupport = this.hasSolidGroundBelow();
+    const hasInput = desiredDir.lengthSq() > 1e-6;
+    if ((hitX || hitZ) && hasInput && (nearSurface || hasSupport || this.input.isJumpHeld())) {
+      // Attempt dynamic step-up to climb onto shoreline (≤ maxStepOut)
+      const toSurface = Math.max(0, WATER_LEVEL - baseYNow + 0.6);
+      const primary = Math.min(PLAYER.swim.maxStepOut, Math.max(0.25, toSurface));
+      const candidates = [primary, 1.0, 0.75, 0.5, 0.25];
+      if (this.tryStepUpMulti(candidates, desiredDir)) {
+        // Retry blocked axes after stepping up
+        if (hitX) {
+          hitX = this.resolveAxis('x', dx);
+          if (hitX) this.swimVelocity.x = 0;
+        }
+        if (hitZ) {
+          hitZ = this.resolveAxis('z', dz);
+          if (hitZ) this.swimVelocity.z = 0;
+        }
+      }
+    }
+
     const hitY = this.resolveAxis('y', dy);
     if (hitY) this.swimVelocity.y = 0;
 
@@ -445,6 +474,66 @@ export class PlayerController {
             return true;
           }
         }
+      }
+    }
+    return false;
+  }
+
+  /** Check if there is solid ground directly below player's footprint */
+  private hasSolidGroundBelow(offset: number = 0.01): boolean {
+    const pos = this.camera.position;
+    const half = this.halfWidth;
+    const baseY = this.getBaseY(pos.y) - offset;
+    const yBlock = Math.floor(baseY);
+    const minX = Math.floor(pos.x - half);
+    const maxX = Math.floor(pos.x + half);
+    const minZ = Math.floor(pos.z - half);
+    const maxZ = Math.floor(pos.z + half);
+    for (let z = minZ; z <= maxZ; z++) {
+      for (let x = minX; x <= maxX; x++) {
+        if (this.world.isBlockSolid(x, yBlock, z)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Attempt a small upward step (≤1 block) if clearance and support exist */
+  private tryStepUp(stepHeight: number): boolean {
+    if (stepHeight <= 0) return false;
+    const pos = this.camera.position;
+    const nextY = pos.y + stepHeight;
+    const minX = pos.x - this.halfWidth;
+    const maxX = pos.x + this.halfWidth;
+    const minZ = pos.z - this.halfWidth;
+    const maxZ = pos.z + this.halfWidth;
+    const minY = this.getBaseY(nextY);
+    const maxY = minY + this.height;
+    // Require clearance at the new height
+    if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) return false;
+    // Require some support just below new base so we don't step into mid-air
+    const supportY = Math.floor(minY - 0.01);
+    let hasSupport = false;
+    for (let z = Math.floor(minZ); z <= Math.floor(maxZ); z++) {
+      for (let x = Math.floor(minX); x <= Math.floor(maxX); x++) {
+        if (this.world.isBlockSolid(x, supportY, z)) { hasSupport = true; break; }
+      }
+      if (hasSupport) break;
+    }
+    if (!hasSupport) return false;
+    // Apply step
+    this.camera.position.y = nextY;
+    return true;
+  }
+
+  /** Try multiple step heights and apply a small forward nudge to clear the lip */
+  private tryStepUpMulti(heights: number[], desiredDir: THREE.Vector3): boolean {
+    for (const h of heights) {
+      if (this.tryStepUp(h)) {
+        // Nudge forward slightly to get past the boundary
+        const nudge = 0.12;
+        if (desiredDir.x !== 0) this.resolveAxis('x', desiredDir.x * nudge);
+        if (desiredDir.z !== 0) this.resolveAxis('z', desiredDir.z * nudge);
+        return true;
       }
     }
     return false;
