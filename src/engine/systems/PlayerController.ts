@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { PLAYER } from '../../config/constants';
+import { WATER_LEVEL } from '../world/TerrainGenerator';
 import type { World } from '../world/World';
 import { InputSystem } from './Input';
 
@@ -17,6 +18,9 @@ export class PlayerController {
 
   private velocityY: number = 0;
   private grounded: boolean = false;
+  // Swim state
+  private swimVelocity = new THREE.Vector3();
+  private wasUnderwater: boolean = false;
 
   // Visual smoothing for instantaneous vertical steps
   private renderYOffsetY: number = 0;
@@ -61,6 +65,29 @@ export class PlayerController {
     if (this.renderYOffsetY !== 0) {
       this.camera.position.y -= this.renderYOffsetY;
       this.renderYOffsetY = 0;
+    }
+    // Determine underwater state using same logic as underwater SFX
+    const isUnderWater = (this.camera.position.y < WATER_LEVEL);
+
+    if (isUnderWater) {
+      // On enter water: clear vertical fall momentum and grounded flag
+      if (!this.wasUnderwater) {
+        this.velocityY = 0;
+        this.grounded = false;
+      }
+      this.updateUnderwater(deltaSeconds);
+      this.wasUnderwater = true;
+      // Apply any active visual elevation tween (generally unused in water)
+      this.applyElevationTween(deltaSeconds);
+      return;
+    }
+
+    // Transitioned out of water: reset swim state gradually
+    if (this.wasUnderwater) {
+      // Preserve only upward carry if exiting while moving up; otherwise reset
+      this.velocityY = Math.max(this.velocityY, this.swimVelocity.y);
+      this.swimVelocity.set(0, 0, 0);
+      this.wasUnderwater = false;
     }
     // Jump edge-trigger: only if grounded
     if (this.input.consumeJumpRequested() && this.grounded) {
@@ -151,6 +178,120 @@ export class PlayerController {
 
     // Apply post-physics elevation tween (visual only)
     this.applyElevationTween(deltaSeconds);
+  }
+
+  /** Underwater/swimming movement and physics */
+  private updateUnderwater(dt: number): void {
+    const swim = PLAYER.swim;
+
+    // Read input in camera space
+    const inputXZ = this.input.getMoveInput();
+    const sprintMul = this.input.isSprinting() ? swim.sprintMultiplier : 1.0;
+
+    // Camera forward (with pitch) and right (horizontal) vectors
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    forward.normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    const right = new THREE.Vector3().crossVectors(forward, up).normalize(); // y=0 strafe basis
+
+    // Desired movement direction from keys
+    const desiredDir = new THREE.Vector3()
+      .addScaledVector(right, inputXZ.x)
+      .addScaledVector(forward, inputXZ.z);
+    if (desiredDir.lengthSq() > 0) desiredDir.normalize();
+
+    // Acceleration from input
+    const accelMag = swim.accel * sprintMul;
+    if (desiredDir.lengthSq() > 0) {
+      this.swimVelocity.addScaledVector(desiredDir, accelMag * dt);
+    }
+
+    // Space held → add upward accel and surface attraction
+    if (this.input.isJumpHeld()) {
+      // Upward thrust
+      this.swimVelocity.y += swim.verticalAccel * dt * sprintMul;
+      // Snap toward surface (WATER_LEVEL) when below it
+      const below = WATER_LEVEL - this.camera.position.y;
+      if (below > 0) {
+        this.swimVelocity.y += swim.surfaceSnapStrength * below * dt;
+      }
+    }
+
+    // Gravity reduced in water + buoyancy/float near surface
+    const waterGravity = this.gravity * swim.gravityScale; // negative
+    this.swimVelocity.y += waterGravity * dt;
+    // Floating spring when within floatBand from surface (stronger slightly deeper, zero at surface)
+    const depth = WATER_LEVEL - this.camera.position.y;
+    if (depth > 0 && depth < swim.floatBand) {
+      this.swimVelocity.y += swim.floatStrength * depth * dt;
+    }
+
+    // Drag in water (applies to all components)
+    const drag = Math.max(0, Math.min(10, swim.drag));
+    const dragFactor = Math.max(0, 1 - drag * dt);
+    this.swimVelocity.multiplyScalar(dragFactor);
+
+    // Clamp max speed (separately clamp horizontal magnitude and vertical)
+    const maxSpeed = swim.maxSpeed * sprintMul;
+    const horizontal = new THREE.Vector3(this.swimVelocity.x, 0, this.swimVelocity.z);
+    const hLen = horizontal.length();
+    if (hLen > maxSpeed) {
+      horizontal.multiplyScalar(maxSpeed / hLen);
+      this.swimVelocity.x = horizontal.x;
+      this.swimVelocity.z = horizontal.z;
+    }
+    // Reasonable vertical limit: match maxSpeed to feel cohesive
+    this.swimVelocity.y = THREE.MathUtils.clamp(this.swimVelocity.y, -maxSpeed, maxSpeed);
+
+    // Integrate position with collisions against solids
+    const dx = this.swimVelocity.x * dt;
+    const dy = this.swimVelocity.y * dt;
+    const dz = this.swimVelocity.z * dt;
+
+    const hitX = this.resolveAxis('x', dx);
+    if (hitX) this.swimVelocity.x = 0;
+    const hitZ = this.resolveAxis('z', dz);
+    if (hitZ) this.swimVelocity.z = 0;
+    const hitY = this.resolveAxis('y', dy);
+    if (hitY) this.swimVelocity.y = 0;
+
+    // Underwater: grounded is conceptually false unless standing on floor with strong downward motion,
+    // but audio and logic treat underwater separately, so keep grounded false for stability.
+    this.grounded = false;
+
+    // Safety checks similar to land: prevent extreme falls in unloaded areas
+    const baseY = this.getBaseY();
+    if (baseY < 0) {
+      const deltaClamp = -baseY;
+      this.camera.position.y += deltaClamp;
+      this.swimVelocity.y = Math.max(0, this.swimVelocity.y);
+    }
+
+    // If ended up intersecting solids (rare), push up
+    const pos = this.camera.position;
+    const minY = this.getBaseY();
+    const maxY = minY + this.height;
+    const minX = pos.x - this.halfWidth;
+    const maxX = pos.x + this.halfWidth;
+    const minZ = pos.z - this.halfWidth;
+    const maxZ = pos.z + this.halfWidth;
+    if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) {
+      let safeY = Math.floor(maxY) + 1;
+      let attempts = 0;
+      const maxAttempts = 10;
+      while (attempts < maxAttempts) {
+        const testMinY = safeY - this.height;
+        const testMaxY = safeY;
+        if (!this.aabbIntersectsSolid(minX, testMinY, minZ, maxX, testMaxY, maxZ)) {
+          this.camera.position.y = safeY - this.height + this.eyeHeight;
+          this.swimVelocity.y = 0;
+          break;
+        }
+        safeY++;
+        attempts++;
+      }
+    }
   }
 
   /**
@@ -319,4 +460,3 @@ export class PlayerController {
     this.bounds = bounds;
   }
 }
-

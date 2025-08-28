@@ -17,6 +17,26 @@ export const PLAYER = {
   },
   jump: 8,
   gravity: -24,
+  // Water/swimming physics tuning. Units in blocks and seconds.
+  swim: {
+    // Base acceleration in water (blocks/s^2)
+    accel: 14,
+    // Extra vertical acceleration when holding space (blocks/s^2)
+    verticalAccel: 12,
+    // Drag coefficient in water (higher = stronger slowdown per second)
+    drag: 3.2,
+    // Max cruise speed (blocks/s)
+    maxSpeed: 3.6,
+    // Sprint multiplier for both acceleration and max speed
+    sprintMultiplier: 1.5,
+    // Gravity scale in water (fraction of normal gravity)
+    gravityScale: 0.18,
+    // Upward soft spring towards the surface when near it (for floating feel)
+    floatBand: 1.5,           // meters below surface where spring applies
+    floatStrength: 6.0,       // spring strength (accel per meter)
+    // Attraction to surface while holding space (to “surface”)
+    surfaceSnapStrength: 10.0 // accel per meter below surface when space held
+  }
 } as const;
 
 export const RENDER = {
