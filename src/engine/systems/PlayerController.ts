@@ -73,13 +73,15 @@ export class PlayerController {
     // Decay step cooldown
     if (this.stepCooldown > 0) this.stepCooldown = Math.max(0, this.stepCooldown - deltaSeconds);
 
-    // Determine underwater state with hysteresis to avoid flicker at the plane
+    // Determine underwater state with hysteresis using HEAD vs true water surface (top of water block)
     const prevUnder = this.underwater;
-    const hys = 0.2; // meters
+    const surfaceY = WATER_LEVEL + 1.0 - 0.001; // match render alignment
+    const headY = this.camera.position.y + (this.height - this.eyeHeight);
+    const hys = 0.3; // meters of hysteresis to avoid flicker and allow emerge assist
     if (this.underwater) {
-      if (this.camera.position.y > WATER_LEVEL + hys) this.underwater = false;
+      if (headY > surfaceY + hys) this.underwater = false;
     } else {
-      if (this.camera.position.y < WATER_LEVEL - hys) this.underwater = true;
+      if (headY < surfaceY - hys) this.underwater = true;
     }
     const isUnderWater = this.underwater;
 
@@ -253,8 +255,9 @@ export class PlayerController {
     if (this.input.isJumpHeld()) {
       // Upward thrust
       this.swimVelocity.y += swim.verticalAccel * dt * sprintMul;
-      // Snap toward surface (WATER_LEVEL) when below it
-      const below = WATER_LEVEL - this.camera.position.y;
+      // Snap toward surface (top of water block) when below it
+      const surfaceY = WATER_LEVEL + 1.0 - 0.001;
+      const below = surfaceY - this.camera.position.y;
       if (below > 0) {
         this.swimVelocity.y += swim.surfaceSnapStrength * below * dt;
       }
@@ -263,8 +266,9 @@ export class PlayerController {
     // Gravity reduced in water + buoyancy/float near surface
     const waterGravity = this.gravity * swim.gravityScale; // negative
     this.swimVelocity.y += waterGravity * dt;
-    // Floating spring: only slows sinking (no upward lift at rest)
-    const depth = WATER_LEVEL - this.camera.position.y;
+    // Floating spring: only slows sinking (no upward lift at rest). Measure depth to top surface
+    const surfaceY2 = WATER_LEVEL + 1.0 - 0.001;
+    const depth = surfaceY2 - this.camera.position.y;
     if (depth > 0 && depth < swim.floatBand && this.swimVelocity.y < 0) {
       this.swimVelocity.y += swim.floatStrength * depth * dt;
     }
@@ -322,16 +326,22 @@ export class PlayerController {
     if (hitZ) this.swimVelocity.z = 0;
 
     const baseYNow = this.getBaseY();
-    const nearSurface = (WATER_LEVEL - this.camera.position.y) < (PLAYER.swim.floatBand + 0.75);
+    const surfaceY3 = WATER_LEVEL + 1.0 - 0.001;
+    const nearSurface = (surfaceY3 - this.camera.position.y) < (PLAYER.swim.floatBand + 0.75);
     const hasSupport = this.hasSolidGroundBelow();
     const hasInput = desiredDir.lengthSq() > 1e-6;
     // Enhanced conditions: also trigger when close to surface regardless of other factors to prevent getting stuck
-    const veryNearSurface = Math.abs(WATER_LEVEL - this.camera.position.y) < 0.5;
-    if (this.emergeLiftRemaining <= 0 && this.stepCooldown <= 0 && (hitX || hitZ) && hasInput && (nearSurface || hasSupport || this.input.isJumpHeld() || veryNearSurface)) {
+    const veryNearSurface = Math.abs(surfaceY3 - this.camera.position.y) < 0.5;
+    if (this.emergeLiftRemaining <= 0 && this.stepCooldown <= 0 && hasInput && (hitX || hitZ || hasSupport || veryNearSurface) && (nearSurface || this.input.isJumpHeld())) {
       // Plan a smooth emerge lift if clearance exists
-      const toSurface = Math.max(0, WATER_LEVEL - baseYNow + 0.6);
-      const primary = Math.min(PLAYER.swim.maxStepOut, Math.max(0.25, toSurface));
-      const candidates = [primary, 1.0, 0.75, 0.5, 0.25];
+      // Prefer to bring the feet to just above the water surface + 1 block to guarantee > 1 block clearance
+      const toSurface = Math.max(0, surfaceY3 - baseYNow);
+      const toSurfacePlusOne = Math.max(0, surfaceY3 + PLAYER.swim.stepOutHeadroom - baseYNow);
+      // Allow larger emerge than land step, up to maxEmergeStepOut
+      const primary = Math.min(PLAYER.swim.maxEmergeStepOut, Math.max(0.25, toSurfacePlusOne));
+      // Fallback candidates include exactly toSurface (no extra headroom) and common step sizes
+      const toSurfaceClamped = Math.min(PLAYER.swim.maxEmergeStepOut, Math.max(0.25, toSurface));
+      const candidates = [primary, toSurfaceClamped, 1.25, 1.0, 0.75, 0.5, 0.25];
       let chosen = 0;
       for (const h of candidates) {
         if (this.canStepUp(h, desiredDir)) { chosen = h; break; }

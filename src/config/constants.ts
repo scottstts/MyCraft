@@ -38,8 +38,15 @@ export const PLAYER = {
     surfaceSnapStrength: 10.0, // accel per meter below surface when space held
     // Small constant sink bias when idle to prevent hovering
     sinkBias: 0.6,
-    // Max step height when climbing out at shoreline
+    // Max step height when climbing out at shoreline (on land)
     maxStepOut: 1.25,
+    // Max vertical emerge height from water when stepping onto shore
+    // Needs to exceed eyeHeight + 1 block (~2.6 for 1.8m tall) to allow
+    // getting feet onto the last stair from surface. Keep conservative.
+    maxEmergeStepOut: 2.8,
+    // Additional headroom above water surface to clear final stair lip when emerging
+    // 1.01 = 101% of one block to guarantee >1 block clearance
+    stepOutHeadroom: 1.01,
     // Smooth emerge from water: vertical lift speed (blocks/s)
     emergeLiftSpeed: 6.0,
     // Smooth emerge from water: small forward nudge speed (blocks/s)

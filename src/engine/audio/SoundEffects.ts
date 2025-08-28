@@ -191,8 +191,8 @@ export class SoundEffects {
     // Determine if touching water surface blocks
     const touchingWater = this.isTouchingWaterSurface()
 
-    // Determine underwater state: camera below water surface plane
-    const isUnderWater = (this.camera.position.y < WATER_LEVEL)
+    // Determine underwater state: camera (eyes) below the top of the water block
+    const isUnderWater = (this.camera.position.y < (WATER_LEVEL + 1.0 - 0.001))
 
     // Footstep loop when grounded and moving on solid, not touching water and not underwater
     const inputVec = this.input.getMoveInput?.() || { x: 0, z: 0 }
