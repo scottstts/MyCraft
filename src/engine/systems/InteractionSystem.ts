@@ -102,8 +102,9 @@ export class InteractionSystem {
   private shouldFillWithWater(x: number, y: number, z: number): boolean {
     // Only at global surface level
     if (y !== WATER_LEVEL) return false;
-    // Ensure above is air so this cell represents the surface
-    if (this.world.getBlock(x, y + 1, z) !== this.airId) return false;
+    // Allow water propagation if above is air (surface) OR water (underwater breaking)
+    const blockAbove = this.world.getBlock(x, y + 1, z);
+    if (blockAbove !== this.airId && blockAbove !== this.waterId) return false;
     // If any 4-neighbors at same level are water, consider it an edge of water body
     const neighbors: Array<[number, number]> = [
       [1, 0], [-1, 0], [0, 1], [0, -1]

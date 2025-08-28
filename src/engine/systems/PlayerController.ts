@@ -95,10 +95,18 @@ export class PlayerController {
       return;
     }
 
-    // Transitioned out of water: reset swim state gradually
+    // Transitioned out of water: reset swim state gradually with momentum preservation
     if (prevUnder) {
-      // Preserve only upward carry if exiting while moving up; otherwise reset
+      // Preserve upward carry if exiting while moving up
       this.velocityY = Math.max(this.velocityY, this.swimVelocity.y);
+      // Gradually transfer horizontal swim momentum to prevent teleporting feel
+      const swimHorizontalMagnitude = Math.hypot(this.swimVelocity.x, this.swimVelocity.z);
+      if (swimHorizontalMagnitude > 0.5) {
+        // Apply a forward boost in the direction of movement to smooth the transition
+        const momentumBoost = Math.min(2.0, swimHorizontalMagnitude * 0.6);
+        const swimDir = new THREE.Vector3(this.swimVelocity.x, 0, this.swimVelocity.z).normalize();
+        this.camera.position.add(swimDir.multiplyScalar(momentumBoost * deltaSeconds));
+      }
       this.swimVelocity.set(0, 0, 0);
     }
     // Jump edge-trigger: only if grounded
@@ -317,7 +325,9 @@ export class PlayerController {
     const nearSurface = (WATER_LEVEL - this.camera.position.y) < (PLAYER.swim.floatBand + 0.75);
     const hasSupport = this.hasSolidGroundBelow();
     const hasInput = desiredDir.lengthSq() > 1e-6;
-    if (this.emergeLiftRemaining <= 0 && this.stepCooldown <= 0 && (hitX || hitZ) && hasInput && (nearSurface || hasSupport || this.input.isJumpHeld())) {
+    // Enhanced conditions: also trigger when close to surface regardless of other factors to prevent getting stuck
+    const veryNearSurface = Math.abs(WATER_LEVEL - this.camera.position.y) < 0.5;
+    if (this.emergeLiftRemaining <= 0 && this.stepCooldown <= 0 && (hitX || hitZ) && hasInput && (nearSurface || hasSupport || this.input.isJumpHeld() || veryNearSurface)) {
       // Plan a smooth emerge lift if clearance exists
       const toSurface = Math.max(0, WATER_LEVEL - baseYNow + 0.6);
       const primary = Math.min(PLAYER.swim.maxStepOut, Math.max(0.25, toSurface));

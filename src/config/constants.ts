@@ -43,7 +43,7 @@ export const PLAYER = {
     // Smooth emerge from water: vertical lift speed (blocks/s)
     emergeLiftSpeed: 6.0,
     // Smooth emerge from water: small forward nudge speed (blocks/s)
-    emergeNudgeSpeed: 1.2
+    emergeNudgeSpeed: 2.4
   }
 } as const;
 
