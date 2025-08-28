@@ -59,8 +59,8 @@ export class OceanHorizon {
     for (const t of tiles) {
       const mesh = new THREE.Mesh(this.makeQuad(t.x0, t.z0, t.x1, t.z1, y), this.material)
       mesh.frustumCulled = true
-      // Draw before chunk transparent water to ensure consistent blending stack
-      mesh.renderOrder = 1
+      // Draw after chunk transparent water to match terrain water blending
+      mesh.renderOrder = 2
       this.group.add(mesh)
     }
 
