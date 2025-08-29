@@ -30,6 +30,15 @@ export class InteractionSystem {
 
   private readonly airId: number = 0;
   private readonly waterId: number = getBlockIdByName('water') ?? 5;
+  // Cached IDs for strike logic
+  private readonly grassId: number = getBlockIdByName('grass') ?? 1;
+  private readonly dirtId: number = getBlockIdByName('dirt') ?? 2;
+  private readonly stoneId: number = getBlockIdByName('stone') ?? 3; // cobblestone faces
+  private readonly sandId: number = getBlockIdByName('sand') ?? 4;
+  private readonly woodId: number = getBlockIdByName('wood') ?? 6; // tree trunk
+  private readonly leavesId: number = getBlockIdByName('leaves') ?? 7;
+  // Track current strike progress for a targeted block
+  private currentHit: { x: number; y: number; z: number; id: number; count: number } | null = null;
   
 
   constructor(
@@ -56,21 +65,39 @@ export class InteractionSystem {
         const { x, y, z } = sel.hitCell;
         const blockId = this.world.getBlock(x, y, z);
         if (blockId !== this.airId) {
-          // Only play break sound for solid blocks
-          const wasSolid = this.world.isBlockSolid(x, y, z);
-          if (wasSolid) {
-            (window as WindowWithSfxHooks).__sfxBreak?.();
+          // Increment or reset strike counter based on targeted cell and block id
+          if (
+            this.currentHit &&
+            this.currentHit.x === x &&
+            this.currentHit.y === y &&
+            this.currentHit.z === z &&
+            this.currentHit.id === blockId
+          ) {
+            this.currentHit.count += 1;
+          } else {
+            this.currentHit = { x, y, z, id: blockId, count: 1 };
           }
-          // Remove the block
-          this.world.setBlock(x, y, z, this.airId);
-          // Water surface edge-fill: if this cell is at water surface level, open to air above,
-          // and adjacent to water at the same level, immediately fill with water.
-          if (wasSolid && this.shouldFillWithWater(x, y, z)) {
-            this.world.setBlock(x, y, z, this.waterId);
+
+          const required = this.getRequiredStrikes(blockId);
+          if (this.currentHit.count >= required) {
+            // Only play break sound for solid blocks
+            const wasSolid = this.world.isBlockSolid(x, y, z);
+            if (wasSolid) {
+              (window as WindowWithSfxHooks).__sfxBreak?.();
+            }
+            // Remove the block
+            this.world.setBlock(x, y, z, this.airId);
+            // Water surface edge-fill: if this cell is at water surface level, open to air above,
+            // and adjacent to water at the same level, immediately fill with water.
+            if (wasSolid && this.shouldFillWithWater(x, y, z)) {
+              this.world.setBlock(x, y, z, this.waterId);
+            }
+            // Add drop to inventory
+            addToInventory(blockId, 1);
+            this.remeshAffectedChunks(x, y, z);
+            // Reset strike progress after successful break
+            this.currentHit = null;
           }
-          // Add drop to inventory
-          addToInventory(blockId, 1);
-          this.remeshAffectedChunks(x, y, z);
         }
       }
     }
@@ -96,6 +123,18 @@ export class InteractionSystem {
         }
       }
     }
+  }
+
+  /** Return required strikes to break a block id per simple rules */
+  private getRequiredStrikes(id: number): number {
+    // Leaves and grass: 1
+    if (id === this.leavesId || id === this.grassId) return 1;
+    // Dirt and sand: 2
+    if (id === this.dirtId || id === this.sandId) return 2;
+    // Cobblestone (stone id) and wood: 3
+    if (id === this.stoneId || id === this.woodId) return 3;
+    // All other blocks: 1 (unchanged)
+    return 1;
   }
 
   /** Determine if breaking (x,y,z) should cause a water surface block to flow into this cell */
