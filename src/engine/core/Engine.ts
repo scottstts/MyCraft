@@ -485,8 +485,8 @@ async function start(canvas: HTMLCanvasElement) {
   // Player controller (movement + gravity + collisions)
   playerController = new PlayerController(camera, world, inputSystem, bounds);
   
-  // Selection system (raycast + debug outline)
-  selectionSystem = new SelectionSystem(camera, world, scene);
+  // Selection system (raycast + debug outline). Pass world bounds so selection highlights don't appear outside.
+  selectionSystem = new SelectionSystem(camera, world, scene, bounds);
   
   // Interaction system (mine/place + re-mesh)
   interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);

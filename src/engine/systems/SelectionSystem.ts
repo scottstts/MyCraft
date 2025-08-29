@@ -20,6 +20,7 @@ export class SelectionSystem {
   private camera: THREE.PerspectiveCamera;
   private world: World;
   private scene: THREE.Scene;
+  private bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
 
   private readonly reach: number = INTERACTION.reach;
   private selection: SelectionResult = { hit: false };
@@ -27,10 +28,16 @@ export class SelectionSystem {
   // Debug visualization
   private boxMesh: THREE.LineSegments | null = null;
 
-  constructor(camera: THREE.PerspectiveCamera, world: World, scene: THREE.Scene) {
+  constructor(
+    camera: THREE.PerspectiveCamera,
+    world: World,
+    scene: THREE.Scene,
+    bounds?: { minX: number; maxX: number; minZ: number; maxZ: number }
+  ) {
     this.camera = camera;
     this.world = world;
     this.scene = scene;
+    if (bounds) this.bounds = bounds;
 
     this.boxMesh = this.createWireBox();
     this.boxMesh.visible = false;
@@ -43,10 +50,26 @@ export class SelectionSystem {
     const origin = this.camera.position;
 
     const hit = raycastVoxels(this.world, origin, dir, this.reach);
+
+    // If a world bounds rectangle is defined, suppress selection when hit is outside bounds
+    let finalHit = hit.hit;
+    let finalHitCell = hit.hitCell;
+    let finalPlaceCell = hit.placeCell;
+    if (this.bounds && hit.hit && hit.hitCell) {
+      const { minX, maxX, minZ, maxZ } = this.bounds;
+      const inside = hit.hitCell.x >= minX && hit.hitCell.x < maxX &&
+                     hit.hitCell.z >= minZ && hit.hitCell.z < maxZ;
+      if (!inside) {
+        finalHit = false;
+        finalHitCell = undefined;
+        finalPlaceCell = undefined;
+      }
+    }
+
     this.selection = {
-      hit: hit.hit,
-      hitCell: hit.hitCell,
-      placeCell: hit.placeCell,
+      hit: finalHit,
+      hitCell: finalHitCell,
+      placeCell: finalPlaceCell,
     };
 
     this.updateDebugMesh();
@@ -84,5 +107,4 @@ export class SelectionSystem {
     return lines;
   }
 }
-
 
