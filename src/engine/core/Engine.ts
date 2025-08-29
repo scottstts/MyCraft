@@ -467,6 +467,10 @@ async function start(canvas: HTMLCanvasElement) {
       farDistance: farOceanDistance,
       map: waterTex ?? undefined,
       tileScale: 1.0,
+      enableSeabed: true,
+      seed: world.getSeed(),
+      worldRadius,
+      blockMaterialSource: blockMaterial ?? undefined,
     });
   }
 
