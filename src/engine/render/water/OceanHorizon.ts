@@ -319,9 +319,10 @@ export class OceanHorizon {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
-    // Provide per-vertex color = 1 so BlockMaterial (which now expects a color attribute) matches block look
+    // Provide per-vertex color slightly < 1 to darken seabed a touch to match in-world sand
     const colors = new Float32Array(vertCount * 3)
-    for (let i = 0; i < colors.length; i++) colors[i] = 1.0
+    const seabedDarken = 0.70 // 70% brightness
+    for (let i = 0; i < colors.length; i++) colors[i] = seabedDarken
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
     geometry.setIndex(new THREE.BufferAttribute(indices, 1))
     geometry.computeBoundingBox()
