@@ -186,6 +186,15 @@ export class OceanHorizon {
 
     // If we have a source block material, immediately sync key uniforms (and will continue per-frame)
     if (this.blockMaterialSource) {
+      // If source uses env map, mirror that define + sampler so reflections match blocks
+      const src = this.blockMaterialSource as unknown as THREE.ShaderMaterial
+      const dst = this.seabedMaterial as unknown as THREE.ShaderMaterial
+      const srcEnv = (src.uniforms as Record<string, THREE.IUniform>).envMap?.value
+      if (src.defines && (src.defines as Record<string, unknown>).USE_ENVMAP && srcEnv) {
+        dst.defines = { ...(dst.defines || {}), USE_ENVMAP: true }
+        ;(dst.uniforms as Record<string, THREE.IUniform>).envMap.value = srcEnv
+        dst.needsUpdate = true
+      }
       this.syncSeabedUniforms(this.blockMaterialSource)
     }
 
@@ -310,6 +319,10 @@ export class OceanHorizon {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+    // Provide per-vertex color = 1 so BlockMaterial (which now expects a color attribute) matches block look
+    const colors = new Float32Array(vertCount * 3)
+    for (let i = 0; i < colors.length; i++) colors[i] = 1.0
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
     geometry.setIndex(new THREE.BufferAttribute(indices, 1))
     geometry.computeBoundingBox()
     geometry.computeBoundingSphere()

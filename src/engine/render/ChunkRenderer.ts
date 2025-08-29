@@ -39,12 +39,15 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     this.removeChunkMesh(key);
     const group = new THREE.Group();
 
-    const makeMesh = (buf: { positions: Float32Array; normals: Float32Array; uvs: Float32Array; indices: Uint16Array | Uint32Array }, mat: THREE.Material, isTransparent: boolean): THREE.Mesh | null => {
+    const makeMesh = (buf: { positions: Float32Array; normals: Float32Array; uvs: Float32Array; colors: Float32Array; indices: Uint16Array | Uint32Array }, mat: THREE.Material, isTransparent: boolean): THREE.Mesh | null => {
       if (!buf.positions.length) return null;
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(buf.positions, 3));
       geometry.setAttribute('normal', new THREE.BufferAttribute(buf.normals, 3));
       geometry.setAttribute('uv', new THREE.BufferAttribute(buf.uvs, 2));
+      if (buf.colors && buf.colors.length) {
+        geometry.setAttribute('color', new THREE.BufferAttribute(buf.colors, 3));
+      }
       geometry.setIndex(new THREE.BufferAttribute(buf.indices, 1));
       const mesh = new THREE.Mesh(geometry, mat);
       mesh.castShadow = !isTransparent;

@@ -14,47 +14,24 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     normalMap?: THREE.Texture
   ) {
     const vertexShader = `
-      // Block vertex shader with enhanced lighting and ambient occlusion
+      // Block vertex shader using per-vertex colors for AO/skylight/tint
+      attribute vec3 color;
+      varying vec3 vColor;
       varying vec2 vUv;
       varying vec3 vNormal;
       varying vec3 vWorldPosition;
       varying vec3 vViewPosition;
-      varying float vAmbientOcclusion;
-
-      // Ambient occlusion calculation based on vertex position
-      float calculateVertexAO(vec3 worldPos, vec3 normal) {
-          vec3 blockPos = floor(worldPos);
-          vec3 localPos = worldPos - blockPos;
-          
-          // Calculate occlusion based on proximity to block corners/edges
-          vec3 edgeDistance = min(localPos, 1.0 - localPos);
-          float minEdgeDistance = min(min(edgeDistance.x, edgeDistance.y), edgeDistance.z);
-          
-          // Apply stronger occlusion at edges and corners
-          float edgeOcclusion = 1.0 - smoothstep(0.0, 0.2, minEdgeDistance);
-          
-          // Face-specific occlusion
-          float faceOcclusion = 0.0;
-          if (abs(normal.y) > 0.5) {
-              faceOcclusion = edgeOcclusion * 0.3; // Top/bottom faces
-          } else {
-              faceOcclusion = edgeOcclusion * 0.6; // Side faces
-          }
-          
-          return 1.0 - faceOcclusion;
-      }
 
       void main() {
           vUv = uv;
           vNormal = normalize(normalMatrix * normal);
+          vColor = color;
           
           vec4 worldPosition = modelMatrix * vec4(position, 1.0);
           vWorldPosition = worldPosition.xyz;
           
           vec4 viewPosition = viewMatrix * worldPosition;
           vViewPosition = viewPosition.xyz;
-          
-          vAmbientOcclusion = calculateVertexAO(vWorldPosition, vNormal);
           
           gl_Position = projectionMatrix * viewPosition;
       }
@@ -65,7 +42,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       varying vec3 vNormal;
       varying vec3 vWorldPosition;
       varying vec3 vViewPosition;
-      varying float vAmbientOcclusion;
+      varying vec3 vColor;
 
       uniform sampler2D map;
       uniform sampler2D normalMap;
@@ -262,7 +239,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 nightAmb = vec3(0.01, 0.015, 0.02) * 0.12;
           vec3 ambBase = mix(nightAmb, dayAmb, clamp(dayLight, 0.0, 1.0));
           vec3 starAmb = vec3(0.02, 0.025, 0.04) * 0.35 * clamp(starLight, 0.0, 1.0);
-          vec3 ambient = (ambBase + starAmb) * vAmbientOcclusion;
+          vec3 ambient = (ambBase + starAmb);
           
       // Main sun light (provided via uniforms)
       vec3 sunDir = normalize(sunDirection);
@@ -314,12 +291,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       void main() {
           vec4 texColor = texture2D(map, vUv);
           vec3 albedo = texColor.rgb;
+          vec3 tinted = albedo * vColor;
           
           vec3 normal = normalize(vNormal);
           vec3 viewDir = normalize(cameraPosition - vWorldPosition);
           
-          vec3 lit = calculateEnhancedLighting(albedo, normal, viewDir) * albedo;
-          vec3 color = mix(albedo, lit, clamp(lightingMix, 0.0, 1.0));
+          vec3 lit = calculateEnhancedLighting(tinted, normal, viewDir) * tinted;
+          vec3 color = mix(tinted, lit, clamp(lightingMix, 0.0, 1.0));
           
           float distance = length(vViewPosition);
           color = applyAtmosphericFog(color, distance);

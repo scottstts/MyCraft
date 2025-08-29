@@ -61,7 +61,7 @@ function handleMeshChunk(request: MeshChunkRequest): void {
   }
   
   // Build mesh from chunk data
-  const mesh = buildChunkMesh(chunkData, neighbors);
+  const mesh = buildChunkMesh(chunkData, neighbors, key);
   
   const response: ChunkMeshResponse = {
     type: 'CHUNK_MESH',
@@ -76,35 +76,74 @@ function handleMeshChunk(request: MeshChunkRequest): void {
       mesh.opaque.normals.buffer,
       mesh.opaque.uvs.buffer,
       mesh.opaque.indices.buffer,
+      mesh.opaque.colors.buffer,
       mesh.transparent.positions.buffer,
       mesh.transparent.normals.buffer,
       mesh.transparent.uvs.buffer,
       mesh.transparent.indices.buffer,
+      mesh.transparent.colors.buffer,
     ] 
   });
 }
 
 // Block registry is now provided from main thread, no hardcoded initialization needed
 
-function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors?: {
+function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
   posX?: { voxels: Uint8Array };
   negX?: { voxels: Uint8Array };
   posY?: { voxels: Uint8Array };
   negY?: { voxels: Uint8Array };
   posZ?: { voxels: Uint8Array };
   negZ?: { voxels: Uint8Array };
-}) {
+} | undefined, key: string) {
+  // Parse chunk coordinates from key for world-space hashing
+  const [cxStr, cyStr, czStr] = key.split(',');
+  const cx = parseInt(cxStr, 10) || 0;
+  const cy = parseInt(cyStr, 10) || 0;
+  const cz = parseInt(czStr, 10) || 0;
+
+  // Precompute skylight column visibility: lowest Y that is open-to-sky per (lx,lz)
+  const skyOpenFromY = new Int16Array(CHUNK_SIZE.x * CHUNK_SIZE.z);
+  for (let lz = 0; lz < CHUNK_SIZE.z; lz++) {
+    for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
+      const colIndex = lz * CHUNK_SIZE.x + lx;
+      // If any opaque block in the chunk above in this column, column is closed to sky entirely
+      let closedByAbove = false;
+      if (neighbors?.posY) {
+        for (let y = 0; y < CHUNK_SIZE.y; y++) {
+          const id = neighbors.posY.voxels[localToIndex(lx, y, lz)];
+          const def = blockRegistry.get(id);
+          if (def && def.opaque) { closedByAbove = true; break; }
+        }
+      }
+      if (closedByAbove) {
+        skyOpenFromY[colIndex] = CHUNK_SIZE.y + 1; // never open
+        continue;
+      }
+      // Find highest opaque in this column within current chunk
+      let highestOpaque = -1;
+      for (let y = CHUNK_SIZE.y - 1; y >= 0; y--) {
+        const id = chunkData.voxels[localToIndex(lx, y, lz)];
+        const def = blockRegistry.get(id);
+        if (def && def.opaque) { highestOpaque = y; break; }
+      }
+      skyOpenFromY[colIndex] = highestOpaque + 1; // 0..CHUNK_SIZE.y
+    }
+  }
+
   // Opaque and transparent buffers are built separately so we can render
   // them with different materials and blending order on the main thread.
   const positionsO: number[] = [];
   const normalsO: number[] = [];
   const uvsO: number[] = [];
+  const colorsO: number[] = [];
   const indicesO: number[] = [];
   let vertexCountO = 0;
 
   const positionsT: number[] = [];
   const normalsT: number[] = [];
   const uvsT: number[] = [];
+  const colorsT: number[] = [];
   const indicesT: number[] = [];
   let vertexCountT = 0;
   
@@ -121,6 +160,20 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors?: {
         const block = blockRegistry.get(blockId);
         if (!block) continue;
         
+        // Compute world coords of this voxel for per-block hashing
+        const gx = cx * CHUNK_SIZE.x + lx;
+        const gy = cy * CHUNK_SIZE.y + ly;
+        const gz = cz * CHUNK_SIZE.z + lz;
+
+        // Compute simple skylight from precomputed map
+        const colIndex = lz * CHUNK_SIZE.x + lx;
+        const skylight = ly >= skyOpenFromY[colIndex] ? 1.0 : 0.7;
+
+        // Per-block UV rotation and tiny tint jitter to kill tiling (solid blocks only)
+        // Do NOT rotate grass or wood — their textures have a required orientation
+        const rot = (block.name === 'grass' || block.name === 'wood') ? 0 : getUVRotation(gx, gy, gz);
+        const tint = getTintJitter(gx, gy, gz);
+
         // Check each face
         for (const face of FACES) {
           // Special-case: only render the top face for water blocks
@@ -196,13 +249,21 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors?: {
             if (isOpaque) {
               addFaceQuad(
                 lx, ly, lz, face, block,
-                positionsO, normalsO, uvsO, indicesO, vertexCountO
+                positionsO, normalsO, uvsO, colorsO, indicesO, vertexCountO,
+                chunkData, // for in-chunk AO sampling
+                neighbors, // for AO sampling across chunk borders
+                skylight, rot, tint, // per-block
+                gx, gy, gz
               );
               vertexCountO += 4;
             } else {
               addFaceQuad(
                 lx, ly, lz, face, block,
-                positionsT, normalsT, uvsT, indicesT, vertexCountT
+                positionsT, normalsT, uvsT, colorsT, indicesT, vertexCountT,
+                chunkData,
+                neighbors,
+                1.0, 0, 1.0, // no skylight/tint/rotation for water; safe defaults
+                gx, gy, gz
               );
               vertexCountT += 4;
             }
@@ -217,12 +278,14 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors?: {
       positions: new Float32Array(positionsO),
       normals: new Float32Array(normalsO),
       uvs: new Float32Array(uvsO),
+      colors: new Float32Array(colorsO),
       indices: new Uint32Array(indicesO)
     },
     transparent: {
       positions: new Float32Array(positionsT),
       normals: new Float32Array(normalsT),
       uvs: new Float32Array(uvsT),
+      colors: new Float32Array(colorsT),
       indices: new Uint32Array(indicesT)
     }
   };
@@ -238,8 +301,21 @@ function addFaceQuad(
   lx: number, ly: number, lz: number,
   face: Face,
   block: BlockDef,
-  positions: number[], normals: number[], uvs: number[], indices: number[],
-  vertexOffset: number
+  positions: number[], normals: number[], uvs: number[], colors: number[], indices: number[],
+  vertexOffset: number,
+  chunkData: { voxels: Uint8Array },
+  neighbors: {
+    posX?: { voxels: Uint8Array };
+    negX?: { voxels: Uint8Array };
+    posY?: { voxels: Uint8Array };
+    negY?: { voxels: Uint8Array };
+    posZ?: { voxels: Uint8Array };
+    negZ?: { voxels: Uint8Array };
+  } | undefined,
+  skylight: number,
+  uvRotation: number,
+  tintJitter: number,
+  gx: number, gy: number, gz: number
 ): void {
   const [nx, ny, nz] = face.normal;
   
@@ -329,11 +405,83 @@ function addFaceQuad(
   const u1 = u0 + tileSizeU - 2 * epsilonU;
   const v1 = v0 + tileSizeV - 2 * epsilonV;
   
-  // UV coordinates for quad (counter-clockwise)
-  uvs.push(u0, v1); // bottom-left
-  uvs.push(u1, v1); // bottom-right
-  uvs.push(u1, v0); // top-right
-  uvs.push(u0, v0); // top-left
+  // UV coordinates for quad (counter-clockwise), with optional 0/90/180/270 rotation per block
+  // Base corners
+  const uvBL: [number, number] = [u0, v1];
+  const uvBR: [number, number] = [u1, v1];
+  const uvTR: [number, number] = [u1, v0];
+  const uvTL: [number, number] = [u0, v0];
+  let uvOrder: Array<[number, number]> = [uvBL, uvBR, uvTR, uvTL];
+  const rot = uvRotation & 3;
+  if (rot === 1) {
+    // 90 deg: BL->TL, BR->BL, TR->BR, TL->TR
+    uvOrder = [uvTL, uvBL, uvBR, uvTR];
+  } else if (rot === 2) {
+    // 180 deg
+    uvOrder = [uvTR, uvTL, uvBL, uvBR];
+  } else if (rot === 3) {
+    // 270 deg
+    uvOrder = [uvBR, uvTR, uvTL, uvBL];
+  }
+  for (const uv of uvOrder) {
+    uvs.push(uv[0], uv[1]);
+  }
+
+  // Per-vertex ambient occlusion for solid blocks only (skip water)
+  const isSolid = !!block.solid && block.name !== 'water';
+  const aoTable = [1.0, 0.8, 0.6, 0.45];
+
+  // Neighbor 'air' block position just outside this face
+  const bnX = lx + face.dir[0];
+  const bnY = ly + face.dir[1];
+  const bnZ = lz + face.dir[2];
+
+  // Tangent axes for this face (indices into [x=0,y=1,z=2])
+  const t1Axis = (face.name === 'front' || face.name === 'back' || face.name === 'top' || face.name === 'bottom')
+    ? (face.name === 'top' || face.name === 'bottom' ? 0 : 0) // X for Z faces; X for Y faces
+    : 2; // for left/right faces, t1 is Z
+  const t2Axis = (face.name === 'top' || face.name === 'bottom') ? 2
+    : (face.name === 'front' || face.name === 'back' ? 1 : 1);
+
+  // Helper to read component by axis
+  const comp = (arr: number[], axis: number) => arr[axis];
+
+  // Precompute bn vector
+  const bn = [bnX, bnY, bnZ];
+
+  // For each vertex, compute AO count from 3 samples (two sides + corner), map to factor
+  for (let i = 0; i < 4; i++) {
+    // Vertex world-ish coordinates (local to chunk)
+    const vx = quad[i][0];
+    const vy = quad[i][1];
+    const vz = quad[i][2];
+    const v = [vx, vy, vz];
+
+    // Decide signs based on which side of the bn this vertex lies along the tangent axes
+    const uSign = comp(v, t1Axis) > comp(bn, t1Axis) ? 1 : -1;
+    const vSign = comp(v, t2Axis) > comp(bn, t2Axis) ? 1 : -1;
+
+    // Sample positions around bn (the outside cell) in voxel space
+    const s1 = [...bn] as number[]; s1[t1Axis] += uSign;
+    const s2 = [...bn] as number[]; s2[t2Axis] += vSign;
+    const sc = [...bn] as number[]; sc[t1Axis] += uSign; sc[t2Axis] += vSign;
+
+    let aoFactor = 1.0;
+    if (isSolid) {
+    const oc1 = isOccluding(s1[0], s1[1], s1[2], chunkData, neighbors);
+    const oc2 = isOccluding(s2[0], s2[1], s2[2], chunkData, neighbors);
+    const ocC = isOccluding(sc[0], sc[1], sc[2], chunkData, neighbors);
+      let occ = 0;
+      if (oc1) occ++;
+      if (oc2) occ++;
+      if (ocC && !(oc1 && oc2)) occ++;
+      aoFactor = aoTable[occ];
+    }
+
+    // Combine AO with skylight and per-block jitter
+    const c = aoFactor * skylight * (isSolid ? tintJitter : 1.0);
+    colors.push(c, c, c);
+  }
   
   // Add indices for two triangles
   indices.push(
@@ -375,4 +523,91 @@ function getFaceUV(block: BlockDef, faceName: string): [number, number] {
   }
 
   return tileCoords;
+}
+
+// --- Helpers for AO/skylight/variation ---
+
+function localInside(x: number, y: number, z: number): boolean {
+  return x >= 0 && x < CHUNK_SIZE.x && y >= 0 && y < CHUNK_SIZE.y && z >= 0 && z < CHUNK_SIZE.z;
+}
+
+function getBlockIdAt(x: number, y: number, z: number, chunkData: { voxels: Uint8Array }): number {
+  if (!localInside(x, y, z)) return 0;
+  return chunkData.voxels[localToIndex(x, y, z)];
+}
+
+function getDefById(id: number): BlockDef | undefined { return blockRegistry.get(id); }
+
+// Lookup occupancy across current chunk and the 6 axis-adjacent neighbors. If the coordinate lies
+// in a diagonal neighbor (i.e., needs more than one axis outside), we return false (non-occluding).
+function isOccluding(x: number, y: number, z: number, chunkData: { voxels: Uint8Array }, neighbors: {
+  posX?: { voxels: Uint8Array };
+  negX?: { voxels: Uint8Array };
+  posY?: { voxels: Uint8Array };
+  negY?: { voxels: Uint8Array };
+  posZ?: { voxels: Uint8Array };
+  negZ?: { voxels: Uint8Array };
+} | undefined): boolean {
+  // First, try current chunk if inside; else determine which single-axis neighbor contains it
+  let id = -1;
+  if (localInside(x, y, z)) {
+    id = chunkData.voxels[localToIndex(x, y, z)];
+  } else {
+    // Determine which axis is out of bounds
+    const outX = x < 0 ? -1 : (x >= CHUNK_SIZE.x ? 1 : 0);
+    const outY = y < 0 ? -1 : (y >= CHUNK_SIZE.y ? 1 : 0);
+    const outZ = z < 0 ? -1 : (z >= CHUNK_SIZE.z ? 1 : 0);
+    const outs = Math.abs(outX) + Math.abs(outY) + Math.abs(outZ);
+    if (outs > 1) return false; // diagonal neighbor not available
+    if (outX === -1 && neighbors?.negX) {
+      const lx = CHUNK_SIZE.x - 1;
+      const idx = localToIndex(lx, Math.max(0, Math.min(CHUNK_SIZE.y - 1, y)), Math.max(0, Math.min(CHUNK_SIZE.z - 1, z)));
+      id = neighbors.negX.voxels[idx];
+    } else if (outX === 1 && neighbors?.posX) {
+      const lx = 0;
+      const idx = localToIndex(lx, Math.max(0, Math.min(CHUNK_SIZE.y - 1, y)), Math.max(0, Math.min(CHUNK_SIZE.z - 1, z)));
+      id = neighbors.posX.voxels[idx];
+    } else if (outZ === -1 && neighbors?.negZ) {
+      const lz = CHUNK_SIZE.z - 1;
+      const idx = localToIndex(Math.max(0, Math.min(CHUNK_SIZE.x - 1, x)), Math.max(0, Math.min(CHUNK_SIZE.y - 1, y)), lz);
+      id = neighbors.negZ.voxels[idx];
+    } else if (outZ === 1 && neighbors?.posZ) {
+      const lz = 0;
+      const idx = localToIndex(Math.max(0, Math.min(CHUNK_SIZE.x - 1, x)), Math.max(0, Math.min(CHUNK_SIZE.y - 1, y)), lz);
+      id = neighbors.posZ.voxels[idx];
+    } else if (outY === -1 && neighbors?.negY) {
+      const ly = CHUNK_SIZE.y - 1;
+      const idx = localToIndex(Math.max(0, Math.min(CHUNK_SIZE.x - 1, x)), ly, Math.max(0, Math.min(CHUNK_SIZE.z - 1, z)));
+      id = neighbors.negY.voxels[idx];
+    } else if (outY === 1 && neighbors?.posY) {
+      const ly = 0;
+      const idx = localToIndex(Math.max(0, Math.min(CHUNK_SIZE.x - 1, x)), ly, Math.max(0, Math.min(CHUNK_SIZE.z - 1, z)));
+      id = neighbors.posY.voxels[idx];
+    } else {
+      return false;
+    }
+  }
+  const def = id >= 0 ? blockRegistry.get(id) : undefined;
+  return !!(def && def.opaque);
+}
+
+// (Skylight computed via skyOpenFromY map in buildChunkMesh)
+
+function hash32(x: number, y: number, z: number): number {
+  // 32-bit mix (xorshift-like)
+  let h = (x * 374761393) ^ (y * 668265263) ^ (z * 2147483647);
+  h = (h ^ (h >>> 13)) * 1274126177;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+function getUVRotation(gx: number, gy: number, gz: number): number {
+  const h = hash32(gx, gy, gz);
+  return h & 3; // 0..3
+}
+
+function getTintJitter(gx: number, gy: number, gz: number): number {
+  const h = hash32(gx + 11, gy + 121, gz + 211);
+  const r = (h & 0xffff) / 0xffff; // 0..1
+  // ±3% brightness jitter around 1.0
+  return 1.0 + (r * 0.06 - 0.03);
 }

@@ -57,6 +57,7 @@ export interface MeshBuffers {
   positions: Float32Array;
   normals: Float32Array;
   uvs: Float32Array;
+  colors: Float32Array;
   indices: Uint16Array | Uint32Array;
 }
 
@@ -108,9 +109,11 @@ export function isChunkMeshResponse(msg: any): msg is ChunkMeshResponse {
          msg.payload.opaque.positions instanceof Float32Array &&
          msg.payload.opaque.normals instanceof Float32Array &&
          msg.payload.opaque.uvs instanceof Float32Array &&
+         msg.payload.opaque.colors instanceof Float32Array &&
          (msg.payload.opaque.indices instanceof Uint16Array || msg.payload.opaque.indices instanceof Uint32Array) &&
          msg.payload.transparent.positions instanceof Float32Array &&
          msg.payload.transparent.normals instanceof Float32Array &&
          msg.payload.transparent.uvs instanceof Float32Array &&
+         msg.payload.transparent.colors instanceof Float32Array &&
          (msg.payload.transparent.indices instanceof Uint16Array || msg.payload.transparent.indices instanceof Uint32Array);
 }
