@@ -39,6 +39,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uWaveAmp: { value: 0.15 },         // wave normal perturbation amplitude
         uWaveScale: { value: 0.035 },      // world scaling of waves
         uFresnel: { value: 0.08 },         // subtle view-angle brightening
+        // Far-distance de-tiling (subtle, distance-gated)
+        uDeTileEnabled: { value: true },
+        uDeTileStrength: { value: 1.2 },   // world-units offset for second sample
+        uDeTileStart: { value: 60.0 },     // start blending at 60m
+        uDeTileEnd: { value: 160.0 },      // fully applied by 160m
       },
       vertexShader: `
         varying vec3 vWorld;
@@ -60,6 +65,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uEdgeStrength; uniform float uEdgeWidth; uniform float uAlpha;
         // Refraction uniforms
         uniform float uRefractStrength; uniform float uEta; uniform float uWaveAmp; uniform float uWaveScale; uniform float uFresnel;
+        // De-tiling uniforms
+        uniform bool uDeTileEnabled; uniform float uDeTileStrength; uniform float uDeTileStart; uniform float uDeTileEnd;
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash(i); float b=hash(i+vec2(1.0,0.0)); float c=hash(i+vec2(0.0,1.0)); float d=hash(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y; }
         vec2 uvY(vec3 w){ return vec2(w.x / uTileScale, -w.z / uTileScale); }
@@ -74,6 +81,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec3 cz = texture2D(uMap, uvZ(wpos)).rgb;
           return cx*an.x + cy*an.y + cz*an.z;
         }
+        mat2 rot2(float a){ float s=sin(a), c=cos(a); return mat2(c,-s,s,c); }
         vec3 sampleWaterColor(){
           if (!uUseMap) {
             vec2 p = vWorld.xz * 0.03;
@@ -100,7 +108,23 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             vec3 R = refract(-V, N, uEta);
             // Offset sample position along refracted direction
             vec3 wpos = vWorld + R * uRefractStrength;
-            vec3 col = sampleTriPlanar(wpos, N);
+            // Base color sample
+            vec3 col0 = sampleTriPlanar(wpos, N);
+            // Far-distance de-tiling: blend a second rotated/offset sample at distance
+            float dist = length(cameraPosition - vWorld);
+            float dt = (uDeTileEnabled) ? smoothstep(uDeTileStart, uDeTileEnd, dist) : 0.0;
+            if (dt > 0.0) {
+              vec3 w1 = wpos;
+              vec2 h = vWorld.xz * 0.01; // low-frequency domain to keep offset stable
+              float r1 = noise(h + vec2(3.17, -2.41));
+              float r2 = noise(h + vec2(-1.73, 4.06));
+              vec2 off = (vec2(r1, r2) - 0.5) * (uDeTileStrength);
+              vec2 xz = rot2(0.61) * (wpos.xz + off);
+              w1.x = xz.x; w1.z = xz.y;
+              vec3 col1 = sampleTriPlanar(w1, N);
+              col0 = mix(col0, col1, clamp(dt * 0.5, 0.0, 0.5));
+            }
+            vec3 col = col0;
             // Fresnel rim for extra depth
             float fres = pow(max(0.0, 1.0 - dot(N, V)), 5.0);
             col = mix(col, vec3(1.0), uFresnel * fres);
@@ -149,5 +173,13 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     this.uniforms.uWaveAmp.value = Math.max(0, waveAmp);
     this.uniforms.uWaveScale.value = Math.max(1e-4, waveScale);
     this.uniforms.uFresnel.value = Math.max(0, fresnel);
+  }
+
+  // Configure far-distance de-tiling.
+  setDeTiling(params: { enabled?: boolean; strength?: number; start?: number; end?: number }){
+    if (params.enabled !== undefined) this.uniforms.uDeTileEnabled.value = !!params.enabled
+    if (params.strength !== undefined) this.uniforms.uDeTileStrength.value = Math.max(0, params.strength)
+    if (params.start !== undefined) this.uniforms.uDeTileStart.value = Math.max(0, params.start)
+    if (params.end !== undefined) this.uniforms.uDeTileEnd.value = Math.max(this.uniforms.uDeTileStart.value as number, params.end)
   }
 }

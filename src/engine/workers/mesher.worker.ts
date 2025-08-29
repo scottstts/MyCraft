@@ -253,7 +253,7 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
                 chunkData, // for in-chunk AO sampling
                 neighbors, // for AO sampling across chunk borders
                 skylight, rot, tint, // per-block
-                gx, gy, gz
+                
               );
               vertexCountO += 4;
             } else {
@@ -263,7 +263,7 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
                 chunkData,
                 neighbors,
                 1.0, 0, 1.0, // no skylight/tint/rotation for water; safe defaults
-                gx, gy, gz
+                
               );
               vertexCountT += 4;
             }
@@ -314,8 +314,7 @@ function addFaceQuad(
   } | undefined,
   skylight: number,
   uvRotation: number,
-  tintJitter: number,
-  gx: number, gy: number, gz: number
+  tintJitter: number
 ): void {
   const [nx, ny, nz] = face.normal;
   
@@ -531,12 +530,7 @@ function localInside(x: number, y: number, z: number): boolean {
   return x >= 0 && x < CHUNK_SIZE.x && y >= 0 && y < CHUNK_SIZE.y && z >= 0 && z < CHUNK_SIZE.z;
 }
 
-function getBlockIdAt(x: number, y: number, z: number, chunkData: { voxels: Uint8Array }): number {
-  if (!localInside(x, y, z)) return 0;
-  return chunkData.voxels[localToIndex(x, y, z)];
-}
-
-function getDefById(id: number): BlockDef | undefined { return blockRegistry.get(id); }
+// (helpers removed if unused)
 
 // Lookup occupancy across current chunk and the 6 axis-adjacent neighbors. If the coordinate lies
 // in a diagonal neighbor (i.e., needs more than one axis outside), we return false (non-occluding).
