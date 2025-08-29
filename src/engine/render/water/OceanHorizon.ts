@@ -228,20 +228,20 @@ export class OceanHorizon {
   private makeQuadWorldUV(x0: number, z0: number, x1: number, z1: number, y: number): THREE.BufferGeometry {
     const positions = new Float32Array([
     x0, y, z0,
-    x1, y, z0,
+    x0, y, z1,
     x1, y, z1,
     x0, y, z0,
     x1, y, z1,
-    x0, y, z1,
+    x1, y, z0,
    ])
     // World-space UVs so the sand texture tiles per block and aligns with terrain
     const uvs = new Float32Array([
       x0, -z0,
-      x1, -z0,
+      x0, -z1,
       x1, -z1,
       x0, -z0,
       x1, -z1,
-      x0, -z1,
+      x1, -z0,
     ])
     const normals = new Float32Array([
       0, 1, 0,
@@ -269,26 +269,28 @@ export class OceanHorizon {
     // North edge: z = minZ, x in [minX, maxX]
     for (let x = minX; x <= maxX; x += step) {
     const h = getHeightAtPosition(x, minZ, seed, worldRadius)
-    heights.push(h + 1)
+    heights.push(h)
     }
     // South edge: z = maxZ - 1 (last in-bounds voxel row)
     for (let x = minX; x <= maxX; x += step) {
       const h = getHeightAtPosition(x, maxZ - 1, seed, worldRadius)
-      heights.push(h + 1)
+      heights.push(h)
     }
 
     // West edge: x = minX, z in [minZ, maxZ]
     for (let z = minZ; z <= maxZ; z += step) {
       const h = getHeightAtPosition(minX, z, seed, worldRadius)
-      heights.push(h + 1)
+      heights.push(h)
     }
       // East edge: x = maxX - 1
     for (let z = minZ; z <= maxZ; z += step) {
       const h = getHeightAtPosition(maxX - 1, z, seed, worldRadius)
-      heights.push(h + 1)
+      heights.push(h)
     }
       // Use the minimum height to guarantee we never float above the real seabed at the edge
       let y = heights.length ? Math.min(...heights) : (params.bounds.minZ) // fallback shouldn't occur
+      // Lower by 11 blocks to match actual seabed level
+      y -= 13
       // Small bias down to avoid z-fighting at seam
       y -= 0.001
       return y
