@@ -190,7 +190,8 @@ export class OceanHorizon {
     }
 
     // Geometry: build 8 tiles around the world bounds (tic-tac-toe minus center)
-    // All tiles lie at a single height sampled from the real seabed along the world edge.
+    // Each tile raises with stepped heights in the far distance until it reaches sea level,
+    // then continues flat at sea level to the horizon. This eliminates the distant gap.
     const { minX, maxX, minZ, maxZ } = opts.bounds
     const seed = opts.seed ?? 12345
     const worldRadius = opts.worldRadius ?? Math.max(maxX - minX, maxZ - minZ) / 2
@@ -215,8 +216,20 @@ export class OceanHorizon {
     { x0: maxX,       x1: maxX + far, z0: maxZ,       z1: maxZ + far }, // bottom-right corner
   ]
 
+  // Determine where to start/finish the step-up to sea level, using a rectangular radius
+  const edgeR = Math.max(
+    Math.max(Math.abs(minX), Math.abs(maxX)),
+    Math.max(Math.abs(minZ), Math.abs(maxZ))
+  )
+  const chunkW = Math.max(CHUNK_SIZE.x, CHUNK_SIZE.z)
+  const rampStart = edgeR + chunkW * 0.5
+  const rampEnd = rampStart + chunkW * 2.0
+  const stepHeight = 1.0
+  // Slightly below the water surface to avoid z-fighting with far-water ring
+  const seaPlane = opts.waterLevel + 1.0 - 0.05
+
   for (const q of quads) {
-    const geom = this.makeQuadWorldUV(q.x0, q.z0, q.x1, q.z1, yEdge)
+    const geom = this.makeSteppedQuadWorldUV(q.x0, q.z0, q.x1, q.z1, yEdge, rampStart, rampEnd, seaPlane, stepHeight)
     const mesh = new THREE.Mesh(geom, this.seabedMaterial as THREE.Material)
     mesh.frustumCulled = true
     mesh.renderOrder = 0 // opaque
@@ -225,36 +238,79 @@ export class OceanHorizon {
     scene.add(this.seabedGroup)
   }
 
-  private makeQuadWorldUV(x0: number, z0: number, x1: number, z1: number, y: number): THREE.BufferGeometry {
-    const positions = new Float32Array([
-    x0, y, z0,
-    x0, y, z1,
-    x1, y, z1,
-    x0, y, z0,
-    x1, y, z1,
-    x1, y, z0,
-   ])
-    // World-space UVs so the sand texture tiles per block and aligns with terrain
-    const uvs = new Float32Array([
-      x0, -z0,
-      x0, -z1,
-      x1, -z1,
-      x0, -z0,
-      x1, -z1,
-      x1, -z0,
-    ])
-    const normals = new Float32Array([
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0,
-    ])
+  private makeSteppedQuadWorldUV(
+    x0: number, z0: number, x1: number, z1: number,
+    yBase: number, rampStart: number, rampEnd: number,
+    seaLevelY: number, stepHeight: number
+  ): THREE.BufferGeometry {
+    const width = Math.abs(x1 - x0)
+    const depth = Math.abs(z1 - z0)
+    // Choose a grid resolution based on tile size but keep it modest
+    const targetCell = Math.max(8, Math.min(CHUNK_SIZE.x, CHUNK_SIZE.z)) / 2
+    const nx = Math.max(2, Math.min(64, Math.ceil(width / targetCell)))
+    const nz = Math.max(2, Math.min(64, Math.ceil(depth / targetCell)))
+
+    const vertCount = (nx + 1) * (nz + 1)
+    const positions = new Float32Array(vertCount * 3)
+    const uvs = new Float32Array(vertCount * 2)
+    const normals = new Float32Array(vertCount * 3)
+
+    // Helper: rectangular (Chebyshev) radius from world origin
+    const rEdge = (x: number, z: number) => Math.max(Math.abs(x), Math.abs(z))
+
+    let idxP = 0, idxUV = 0, idxN = 0
+    for (let j = 0; j <= nz; j++) {
+      const tz = j / nz
+      const z = z0 + (z1 - z0) * tz
+      for (let i = 0; i <= nx; i++) {
+        const tx = i / nx
+        const x = x0 + (x1 - x0) * tx
+        // Rectangular distance from world center to decide how high we step
+        const r = rEdge(x, z)
+        const t = THREE.MathUtils.clamp((r - rampStart) / Math.max(1e-3, rampEnd - rampStart), 0, 1)
+        let y = THREE.MathUtils.lerp(yBase, seaLevelY, t)
+        if (stepHeight > 0) {
+          // Quantize to steps relative to yBase
+          const steps = Math.floor((y - yBase) / stepHeight)
+          y = yBase + steps * stepHeight
+          y = Math.min(y, seaLevelY)
+        }
+        positions[idxP++] = x
+        positions[idxP++] = y
+        positions[idxP++] = z
+        uvs[idxUV++] = x
+        uvs[idxUV++] = -z
+        normals[idxN++] = 0
+        normals[idxN++] = 1
+        normals[idxN++] = 0
+      }
+    }
+
+    // Build triangle indices
+    const indexCount = nx * nz * 6
+    const indices = new Uint32Array(indexCount)
+    let idxI = 0
+    for (let j = 0; j < nz; j++) {
+      for (let i = 0; i < nx; i++) {
+        const a = j * (nx + 1) + i
+        const b = a + 1
+        const c = a + (nx + 1)
+        const d = c + 1
+        // two triangles: a,c,b and b,c,d (ensure consistent winding)
+        indices[idxI++] = a
+        indices[idxI++] = c
+        indices[idxI++] = b
+        indices[idxI++] = b
+        indices[idxI++] = c
+        indices[idxI++] = d
+      }
+    }
+
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1))
     geometry.computeBoundingBox()
     geometry.computeBoundingSphere()
     return geometry
