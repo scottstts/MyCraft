@@ -189,174 +189,109 @@ export class OceanHorizon {
       this.syncSeabedUniforms(this.blockMaterialSource)
     }
 
-    // Geometry: four strips around the world bounds, extending toward far plane
-    // Inner edge heights sampled from world generator to be seamless with real terrain
+    // Geometry: build 8 tiles around the world bounds (tic-tac-toe minus center)
+    // All tiles lie at a single height sampled from the real seabed along the world edge.
     const { minX, maxX, minZ, maxZ } = opts.bounds
     const seed = opts.seed ?? 12345
     const worldRadius = opts.worldRadius ?? 200
     const far = Math.max(opts.farDistance, 1)
 
+    // Determine uniform seabed height to use for all fake tiles
+    const yEdge = this.sampleEdgeSeabedHeight({ bounds: opts.bounds, seed, worldRadius })
     this.seabedGroup = new THREE.Group()
     this.seabedGroup.name = 'SeabedHorizon'
 
-    const step = CHUNK_SIZE.x // sample once per chunk along each edge
+    const quads: Array<{ x0:number, x1:number, z0:number, z1:number }> = [
+    // Top row (north)
+    { x0: minX,       x1: maxX,       z0: minZ - far, z1: minZ       }, // top-middle
+    { x0: minX - far, x1: minX,       z0: minZ - far, z1: minZ       }, // top-left corner
+    { x0: maxX,       x1: maxX + far, z0: minZ - far, z1: minZ       }, // top-right corner
+    // Middle row (west/east)
+    { x0: minX - far, x1: minX,       z0: minZ,       z1: maxZ       }, // left-middle
+    { x0: maxX,       x1: maxX + far, z0: minZ,       z1: maxZ       }, // right-middle
+    // Bottom row (south)
+    { x0: minX,       x1: maxX,       z0: maxZ,       z1: maxZ + far }, // bottom-middle
+    { x0: minX - far, x1: minX,       z0: maxZ,       z1: maxZ + far }, // bottom-left corner
+    { x0: maxX,       x1: maxX + far, z0: maxZ,       z1: maxZ + far }, // bottom-right corner
+  ]
 
-    // North edge (minZ): runs along X
-    this.seabedGroup.add(
-      this.buildSeabedStrip({
-        startA: new THREE.Vector3(minX, 0, minZ),
-        endA:   new THREE.Vector3(maxX, 0, minZ),
-        startB: new THREE.Vector3(minX, 0, minZ - far),
-        endB:   new THREE.Vector3(maxX, 0, minZ - far),
-        sampleAlong: 'x',
-        step,
-        seed,
-        worldRadius,
-      })
-    )
-    // South edge (maxZ): runs along X
-    this.seabedGroup.add(
-      this.buildSeabedStrip({
-        startA: new THREE.Vector3(minX, 0, maxZ),
-        endA:   new THREE.Vector3(maxX, 0, maxZ),
-        startB: new THREE.Vector3(minX, 0, maxZ + far),
-        endB:   new THREE.Vector3(maxX, 0, maxZ + far),
-        sampleAlong: 'x',
-        step,
-        seed,
-        worldRadius,
-      })
-    )
-    // West edge (minX): runs along Z
-    this.seabedGroup.add(
-      this.buildSeabedStrip({
-        startA: new THREE.Vector3(minX, 0, minZ),
-        endA:   new THREE.Vector3(minX, 0, maxZ),
-        startB: new THREE.Vector3(minX - far, 0, minZ),
-        endB:   new THREE.Vector3(minX - far, 0, maxZ),
-        sampleAlong: 'z',
-        step,
-        seed,
-        worldRadius,
-      })
-    )
-    // East edge (maxX): runs along Z
-    this.seabedGroup.add(
-      this.buildSeabedStrip({
-        startA: new THREE.Vector3(maxX, 0, minZ),
-        endA:   new THREE.Vector3(maxX, 0, maxZ),
-        startB: new THREE.Vector3(maxX + far, 0, minZ),
-        endB:   new THREE.Vector3(maxX + far, 0, maxZ),
-        sampleAlong: 'z',
-        step,
-        seed,
-        worldRadius,
-      })
-    )
-
-    // Ensure seabed renders before transparent water (opaque render path)
-    this.seabedGroup.traverse(obj => {
-      const mesh = obj as THREE.Mesh
-      if (mesh && mesh.material) {
-        mesh.renderOrder = 0 // default; draw with other opaque
-      }
-    })
-
+  for (const q of quads) {
+    const geom = this.makeQuadWorldUV(q.x0, q.z0, q.x1, q.z1, yEdge)
+    const mesh = new THREE.Mesh(geom, this.seabedMaterial as THREE.Material)
+    mesh.frustumCulled = true
+    mesh.renderOrder = 0 // opaque
+    this.seabedGroup.add(mesh)
+  }
     scene.add(this.seabedGroup)
   }
 
-  private buildSeabedStrip(params: {
-    startA: THREE.Vector3; // inner edge start
-    endA: THREE.Vector3;   // inner edge end
-    startB: THREE.Vector3; // far edge start
-    endB: THREE.Vector3;   // far edge end
-    sampleAlong: 'x' | 'z';
-    step: number;
-    seed: number;
-    worldRadius: number;
-  }): THREE.Mesh {
-    const { startA, endA, startB, endB, sampleAlong, step, seed, worldRadius } = params
+  private makeQuadWorldUV(x0: number, z0: number, x1: number, z1: number, y: number): THREE.BufferGeometry {
+    const positions = new Float32Array([
+    x0, y, z0,
+    x1, y, z0,
+    x1, y, z1,
+    x0, y, z0,
+    x1, y, z1,
+    x0, y, z1,
+   ])
+    // World-space UVs so the sand texture tiles per block and aligns with terrain
+    const uvs = new Float32Array([
+      x0, -z0,
+      x1, -z0,
+      x1, -z1,
+      x0, -z0,
+      x1, -z1,
+      x0, -z1,
+    ])
+    const normals = new Float32Array([
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+    ])
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+    geometry.computeBoundingBox()
+    geometry.computeBoundingSphere()
+    return geometry
+  }
 
-    // Build a strip segmented along the inner edge to match real seabed heights
-    const axisLen = sampleAlong === 'x' ? (endA.x - startA.x) : (endA.z - startA.z)
-    const dir = axisLen >= 0 ? 1 : -1
-    const totalLen = Math.abs(axisLen)
-    const nSeg = Math.max(1, Math.ceil(totalLen / Math.max(1, step)))
-    const segSize = totalLen / nSeg
-
-    // Precompute inner heights along samples
-    const innerSamples: Array<{ x: number; z: number; y: number }> = []
-    for (let i = 0; i <= nSeg; i++) {
-      const t = i / nSeg
-      const x = THREE.MathUtils.lerp(startA.x, endA.x, t)
-      const z = THREE.MathUtils.lerp(startA.z, endA.z, t)
-      const h = getHeightAtPosition(x, z, seed, worldRadius)
-      // Match top surface of voxel column (top face is at height + 1)
-      innerSamples.push({ x, z, y: h + 1 })
+  private sampleEdgeSeabedHeight(params: { bounds: { minX:number; maxX:number; minZ:number; maxZ:number }, seed:
+    number, worldRadius: number }): number {
+    const { minX, maxX, minZ, maxZ } = params.bounds
+    const { seed, worldRadius } = params
+    const step = Math.max(1, Math.floor(CHUNK_SIZE.x / 2))
+    const heights: number[] = []
+    // North edge: z = minZ, x in [minX, maxX]
+    for (let x = minX; x <= maxX; x += step) {
+    const h = getHeightAtPosition(x, minZ, seed, worldRadius)
+    heights.push(h + 1)
     }
-    // Far edge height: smooth average of inner heights to avoid sharp slopes
-    const avgY = innerSamples.reduce((s, p) => s + p.y, 0) / innerSamples.length
-    const farY = avgY
-
-    // Build buffers
-    const positions: number[] = []
-    const normals: number[] = []
-    const uvs: number[] = []
-    const indices: number[] = []
-    let vtx = 0
-
-    for (let i = 0; i < nSeg; i++) {
-      // Segment endpoints on inner edge
-      const a0 = innerSamples[i]
-      const a1 = innerSamples[i + 1]
-      // Corresponding points on far edge (same parametric t, constant farY)
-      const t0 = i / nSeg
-      const t1 = (i + 1) / nSeg
-      const b0 = new THREE.Vector3(
-        THREE.MathUtils.lerp(startB.x, endB.x, t0),
-        farY,
-        THREE.MathUtils.lerp(startB.z, endB.z, t0),
-      )
-      const b1 = new THREE.Vector3(
-        THREE.MathUtils.lerp(startB.x, endB.x, t1),
-        farY,
-        THREE.MathUtils.lerp(startB.z, endB.z, t1),
-      )
-
-      // Two triangles per segment: a0-a1-b1 and a0-b1-b0
-      const quad = [
-        new THREE.Vector3(a0.x, a0.y, a0.z),
-        new THREE.Vector3(a1.x, a1.y, a1.z),
-        b1,
-        new THREE.Vector3(a0.x, a0.y, a0.z),
-        b1,
-        b0,
-      ]
-      for (const p of quad) {
-        positions.push(p.x, p.y, p.z)
-        // Upward normal to match top faces of blocks (saves GPU and matches sand tops)
-        normals.push(0, 1, 0)
-        // World-based UVs so tiles align with block grid (1 repeat per block)
-        // Match top-face UV orientation: U along +X, V along -Z to be consistent with mesher
-        uvs.push(p.x, -p.z)
-      }
-      indices.push(vtx, vtx + 1, vtx + 2, vtx + 3, vtx + 4, vtx + 5)
-      vtx += 6
+    // South edge: z = maxZ - 1 (last in-bounds voxel row)
+    for (let x = minX; x <= maxX; x += step) {
+      const h = getHeightAtPosition(x, maxZ - 1, seed, worldRadius)
+      heights.push(h + 1)
     }
 
-    const geom = new THREE.BufferGeometry()
-    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    geom.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
-    geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
-    geom.setIndex(indices)
-    geom.computeBoundingBox()
-    geom.computeBoundingSphere()
-
-    const mesh = new THREE.Mesh(geom, this.seabedMaterial as THREE.Material)
-    mesh.frustumCulled = true
-    // Draw before transparent water
-    mesh.renderOrder = 0
-    return mesh
+    // West edge: x = minX, z in [minZ, maxZ]
+    for (let z = minZ; z <= maxZ; z += step) {
+      const h = getHeightAtPosition(minX, z, seed, worldRadius)
+      heights.push(h + 1)
+    }
+      // East edge: x = maxX - 1
+    for (let z = minZ; z <= maxZ; z += step) {
+      const h = getHeightAtPosition(maxX - 1, z, seed, worldRadius)
+      heights.push(h + 1)
+    }
+      // Use the minimum height to guarantee we never float above the real seabed at the edge
+      let y = heights.length ? Math.min(...heights) : (params.bounds.minZ) // fallback shouldn't occur
+      // Small bias down to avoid z-fighting at seam
+      y -= 0.001
+      return y
   }
 
   private loadSandTexture(): Promise<THREE.Texture> {
