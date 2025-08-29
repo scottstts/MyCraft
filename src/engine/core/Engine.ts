@@ -446,6 +446,14 @@ async function start(canvas: HTMLCanvasElement) {
   // Update fog distance now that world size is known
   if (composer) {
     composer.setFog(true, 0.002, dynamicFogDistance);
+    // Add horizon haze above water level only, at far distance, leaving seabed alone
+    const hazeStart = Math.max(0, worldRadius - CHUNK_SIZE.x * 1.5);
+    const hazeDensity = 0.006;     // stronger extra fog at far distances
+    const hazeMaxMix = 0.85;       // allow near-obliteration of the horizon line
+    const hazeAngleBoost = 1.2;    // boost when looking near-horizon
+    const hazePlaneBoost = 0.7;    // extra boost within a small band over the water plane
+    const hazePlaneBand = 6.0;     // meters above water level for extra boost
+    composer.setHorizonHaze({ enabled: true, waterLevel: WATER_LEVEL + 1.0, hazeStart, hazeDensity, hazeMaxMix, hazeAngleBoost, hazePlaneBoost, hazePlaneBand });
   } else if (postProcessor) {
     postProcessor.updateSettings({ fogEnabled: true, fogBaseDensity: 0.002, fogMaxDistance: dynamicFogDistance });
   }

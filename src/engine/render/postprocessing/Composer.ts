@@ -97,6 +97,7 @@ export class Composer {
   setBloom(enabled: boolean, strength: number, threshold: number) { this.bloom.setSettings({ enabled, strength, threshold }) }
   setLens(enabled: boolean, intensity: number) { this.lens.setEnabled(enabled); this.lens.setIntensity(intensity) }
   setFog(enabled: boolean, baseDensity: number, maxDistance: number) { this.fog.setSettings({ enabled, baseDensity, maxDistance }) }
+  setHorizonHaze(params: { enabled?: boolean; waterLevel?: number; hazeStart?: number; hazeDensity?: number; hazeMaxMix?: number; hazeAngleBoost?: number; hazePlaneBoost?: number; hazePlaneBand?: number }) { this.fog.setHorizonHaze(params) }
   setFogColor(color: THREE.Color) { this.fog.setColor(color) }
   setFogDayLight(v: number) { this.fog.setDayLight(v) }
   setColorGrading(exposure: number, contrast: number, saturation: number) { this.fog.setColorGrading({ exposure, contrast, saturation }) }
