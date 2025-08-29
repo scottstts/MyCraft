@@ -193,7 +193,7 @@ export class OceanHorizon {
     // All tiles lie at a single height sampled from the real seabed along the world edge.
     const { minX, maxX, minZ, maxZ } = opts.bounds
     const seed = opts.seed ?? 12345
-    const worldRadius = opts.worldRadius ?? 200
+    const worldRadius = opts.worldRadius ?? Math.max(maxX - minX, maxZ - minZ) / 2
     const far = Math.max(opts.farDistance, 1)
 
     // Determine uniform seabed height to use for all fake tiles
@@ -264,11 +264,12 @@ export class OceanHorizon {
     number, worldRadius: number }): number {
     const { minX, maxX, minZ, maxZ } = params.bounds
     const { seed, worldRadius } = params
-    const step = Math.max(1, Math.floor(CHUNK_SIZE.x / 2))
+    // Sample at a resolution tied to chunk size, but not too sparse
+    const step = Math.max(4, Math.floor(Math.min(CHUNK_SIZE.x, CHUNK_SIZE.z) / 2))
     const heights: number[] = []
     
-    // Sample points well outside the bounds to get actual ocean floor heights
-    const oceanOffset = step * 2 // Sample points further out in the ocean
+    // Sample just outside the world bounds to match the seam closely
+    const oceanOffset = Math.max(1, Math.floor(Math.min(CHUNK_SIZE.x, CHUNK_SIZE.z) / 8))
     
     // North ocean edge: z = minZ - oceanOffset
     for (let x = minX; x <= maxX; x += step) {
@@ -291,13 +292,18 @@ export class OceanHorizon {
       heights.push(h)
     }
     
-    // Use the minimum height from ocean floor samples
-    let y = heights.length ? Math.min(...heights) : 37 // fallback to typical ocean floor level
-    // Lower by 9 blocks to match actual seabed level
-    y -= 12
-    // Small bias down to avoid z-fighting at seam
-    y -= 0.001
-    return y
+    // Choose a robust lower-bound estimate near the seam (25th percentile)
+    let y: number
+    if (heights.length) {
+      heights.sort((a, b) => a - b)
+      const idx = Math.max(0, Math.min(heights.length - 1, Math.floor(heights.length * 0.25)))
+      y = heights[idx]
+    } else {
+      // Dynamic fallback: sample one representative point just outside bounds
+      y = getHeightAtPosition(maxX + oceanOffset, minZ - oceanOffset, seed, worldRadius)
+    }
+    // Tiny bias down to avoid z-fighting at the seam
+    return y - 0.001
   }
 
   private loadSandTexture(): Promise<THREE.Texture> {

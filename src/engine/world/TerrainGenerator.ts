@@ -29,11 +29,8 @@ const WARP_AMPLITUDE = 6.0;
 const LAKE_THRESHOLD = -0.3;
 const LAKE_DEPTH = 8;
 
-// Ocean floor generation parameters
-const OCEAN_DEPTH_MIN = 5;              // Minimum ocean depth below water level
-const OCEAN_DEPTH_MAX = 15;             // Maximum ocean depth below water level
+// Ocean floor generation parameters (must mirror generator.worker.ts)
 const OCEAN_FLOOR_SCALE = 0.012;        // Ocean floor variation frequency
-const OCEAN_FLOOR_AMPLITUDE = 0.6;      // Ocean floor height variation (0-1)
 
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
@@ -103,10 +100,27 @@ export function getHeightAtPosition(x: number, z: number, seed: number, worldRad
   const isLand = normalizedDistance < islandRadius;
 
   if (!isLand) {
-    // Ocean floor with varied terrain
+    // Ocean floor with gradient drop based on distance from island (match generator.worker.ts)
     const oceanFloorNoise = fbm((a, b) => nOceanFloor(a * OCEAN_FLOOR_SCALE, b * OCEAN_FLOOR_SCALE), x, z, 3, 2.0, 0.5);
-    const depthVariation = OCEAN_DEPTH_MIN + (OCEAN_DEPTH_MAX - OCEAN_DEPTH_MIN) * (oceanFloorNoise * OCEAN_FLOOR_AMPLITUDE + 0.5);
-    const oceanFloorHeight = WATER_LEVEL - Math.floor(depthVariation);
+
+    // Calculate gradient depth based on distance from island edge
+    const islandEdgeDistance = Math.max(0, normalizedDistance - islandRadius);
+    const maxDistanceFromIsland = Math.max(1e-6, 1.0 - islandRadius); // avoid div by zero
+    const normalizedDepthDistance = Math.min(1.0, islandEdgeDistance / maxDistanceFromIsland);
+
+    // Smooth gradient from shallow near coastline to deep at edges
+    const gradientDepth = smoothstep(0.0, 1.0, normalizedDepthDistance);
+
+    // Near coastline: shallow (close to land level), far away: deep
+    const minDepthNearCoast = 2;  // Very shallow near coastline
+    const maxDepthAtEdge = 25;    // Deep at the edge of the world
+    const baseDepth = minDepthNearCoast + (maxDepthAtEdge - minDepthNearCoast) * gradientDepth;
+
+    // Add noise variation but scale it down to preserve the gradient
+    const noiseVariation = oceanFloorNoise * 3.0; // Reduced noise impact
+    const finalDepth = baseDepth + noiseVariation;
+
+    const oceanFloorHeight = WATER_LEVEL - Math.floor(finalDepth);
     return Math.max(BEDROCK_LEVEL + 1, oceanFloorHeight);
   }
 
