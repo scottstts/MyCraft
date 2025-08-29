@@ -315,8 +315,9 @@ export class OceanHorizon {
   private syncSeabedUniforms(src: BlockMaterial) {
     if (!this.seabedMaterial) return
     const dst = this.seabedMaterial
-    const su = (src as any).uniforms as Record<string, { value: unknown }>
-    const du = (dst as any).uniforms as Record<string, { value: unknown }>
+    // Access ShaderMaterial uniforms with proper typing
+    const su = (src as THREE.ShaderMaterial).uniforms as Record<string, THREE.IUniform>
+    const du = (dst as THREE.ShaderMaterial).uniforms as Record<string, THREE.IUniform>
     // Copy core lighting/shadow/time uniforms so appearance matches blocks exactly
     const keys = [
       'sunDirection','sunColor','dayLight','starLight',
