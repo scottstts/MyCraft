@@ -293,6 +293,8 @@ export class OceanHorizon {
     
     // Use the minimum height from ocean floor samples
     let y = heights.length ? Math.min(...heights) : 37 // fallback to typical ocean floor level
+    // Lower by 9 blocks to match actual seabed level
+    y -= 12
     // Small bias down to avoid z-fighting at seam
     y -= 0.001
     return y
