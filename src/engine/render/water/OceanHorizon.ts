@@ -266,34 +266,36 @@ export class OceanHorizon {
     const { seed, worldRadius } = params
     const step = Math.max(1, Math.floor(CHUNK_SIZE.x / 2))
     const heights: number[] = []
-    // North edge: z = minZ, x in [minX, maxX]
+    
+    // Sample points well outside the bounds to get actual ocean floor heights
+    const oceanOffset = step * 2 // Sample points further out in the ocean
+    
+    // North ocean edge: z = minZ - oceanOffset
     for (let x = minX; x <= maxX; x += step) {
-    const h = getHeightAtPosition(x, minZ, seed, worldRadius)
-    heights.push(h)
+      const h = getHeightAtPosition(x, minZ - oceanOffset, seed, worldRadius)
+      heights.push(h)
     }
-    // South edge: z = maxZ - 1 (last in-bounds voxel row)
+    // South ocean edge: z = maxZ + oceanOffset  
     for (let x = minX; x <= maxX; x += step) {
-      const h = getHeightAtPosition(x, maxZ - 1, seed, worldRadius)
+      const h = getHeightAtPosition(x, maxZ + oceanOffset, seed, worldRadius)
       heights.push(h)
     }
-
-    // West edge: x = minX, z in [minZ, maxZ]
+    // West ocean edge: x = minX - oceanOffset
     for (let z = minZ; z <= maxZ; z += step) {
-      const h = getHeightAtPosition(minX, z, seed, worldRadius)
+      const h = getHeightAtPosition(minX - oceanOffset, z, seed, worldRadius)
       heights.push(h)
     }
-      // East edge: x = maxX - 1
+    // East ocean edge: x = maxX + oceanOffset
     for (let z = minZ; z <= maxZ; z += step) {
-      const h = getHeightAtPosition(maxX - 1, z, seed, worldRadius)
+      const h = getHeightAtPosition(maxX + oceanOffset, z, seed, worldRadius)
       heights.push(h)
     }
-      // Use the minimum height to guarantee we never float above the real seabed at the edge
-      let y = heights.length ? Math.min(...heights) : (params.bounds.minZ) // fallback shouldn't occur
-      // Lower by 11 blocks to match actual seabed level
-      y -= 13
-      // Small bias down to avoid z-fighting at seam
-      y -= 0.001
-      return y
+    
+    // Use the minimum height from ocean floor samples
+    let y = heights.length ? Math.min(...heights) : 37 // fallback to typical ocean floor level
+    // Small bias down to avoid z-fighting at seam
+    y -= 0.001
+    return y
   }
 
   private loadSandTexture(): Promise<THREE.Texture> {
