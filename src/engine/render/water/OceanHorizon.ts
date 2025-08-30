@@ -231,15 +231,14 @@ export class OceanHorizon {
     Math.max(Math.abs(minZ), Math.abs(maxZ))
   )
   const chunkW = Math.max(CHUNK_SIZE.x, CHUNK_SIZE.z)
-  const rampStart = edgeR + chunkW * 8.0
+  const rampStart = edgeR + chunkW * 6.0
   // Make the ramp much longer to create a very gradual transition
-  const rampEnd = rampStart + chunkW * 20.0
-  const stepHeight = 1.0
-  // Slightly below the water surface to avoid z-fighting with far-water ring
-  const seaPlane = opts.waterLevel + 1.0 - 0.05
+  const rampEnd = rampStart + chunkW * 15.0
+  // Use the actual water surface level for the ramp destination
+  const waterSurfaceY = opts.waterLevel + 1.0
 
   for (const q of quads) {
-    const geom = this.makeSteppedQuadWorldUV(q.x0, q.z0, q.x1, q.z1, yEdge, rampStart, rampEnd, seaPlane, stepHeight)
+    const geom = this.makeSteppedQuadWorldUV(q.x0, q.z0, q.x1, q.z1, yEdge, rampStart, rampEnd, waterSurfaceY)
     const mesh = new THREE.Mesh(geom, this.seabedMaterial as THREE.Material)
     mesh.frustumCulled = true
     mesh.renderOrder = 0 // opaque
@@ -251,7 +250,7 @@ export class OceanHorizon {
   private makeSteppedQuadWorldUV(
     x0: number, z0: number, x1: number, z1: number,
     yBase: number, rampStart: number, rampEnd: number,
-    seaLevelY: number, stepHeight: number
+    seaLevelY: number
   ): THREE.BufferGeometry {
     const width = Math.abs(x1 - x0)
     const depth = Math.abs(z1 - z0)
@@ -279,7 +278,7 @@ export class OceanHorizon {
         const r = rEdge(x, z)
         const t = THREE.MathUtils.clamp((r - rampStart) / Math.max(1e-3, rampEnd - rampStart), 0, 1)
         // Smooth ramp from yBase to seaLevelY, then flat at sea level to horizon
-        let y = THREE.MathUtils.lerp(yBase, seaLevelY, t)
+        const y = THREE.MathUtils.lerp(yBase, seaLevelY, t)
         positions[idxP++] = x
         positions[idxP++] = y
         positions[idxP++] = z
