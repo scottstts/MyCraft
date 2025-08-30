@@ -102,6 +102,9 @@ export class FirstPersonBody {
   // Right arm (single segment)
   private armAnchor: THREE.Group
   private rArm: THREE.Group
+  // Left arm (single segment)
+  private lArmAnchor: THREE.Group
+  private lArm: THREE.Group
   // Legs (single segments)
   private lLeg: THREE.Group
   private rLeg: THREE.Group
@@ -177,6 +180,9 @@ export class FirstPersonBody {
     // Right arm chain
     this.armAnchor = new THREE.Group(); this.armAnchor.name = 'ArmAnchor'
     this.rArm = new THREE.Group(); this.rArm.name = 'RArm'
+    // Left arm chain
+    this.lArmAnchor = new THREE.Group(); this.lArmAnchor.name = 'LArmAnchor'
+    this.lArm = new THREE.Group(); this.lArm.name = 'LArm'
 
     // Legs
     this.lLeg = new THREE.Group(); this.lLeg.name = 'LLeg'
@@ -216,6 +222,20 @@ export class FirstPersonBody {
     rHandMesh.position.set(0, armBodyLen + shortHandLen, 0)
     rHandMesh.rotation.z = Math.PI
     this.rArm.add(rHandMesh)
+    
+    // Left arm: mirror of right arm at left shoulder, idle straight down, swings during locomotion
+    this.chest.add(this.lArmAnchor)
+    // Place left arm at mirrored shoulder location relative to right arm
+    this.lArmAnchor.position.set(-(CFG.shoulderOffsetX + 0.2), -0.4, -0.4)
+    this.lArmAnchor.add(this.lArm)
+    const lArmBodyMesh = this.createSegmentMesh(CFG.arm.thickness, armBodyLen, CFG.arm.thickness, this.armMat)
+    lArmBodyMesh.position.set(0, armBodyLen, 0)
+    lArmBodyMesh.rotation.z = Math.PI
+    this.lArm.add(lArmBodyMesh)
+    const lHandMesh = this.createSegmentMesh(CFG.arm.thickness * 0.9, shortHandLen, CFG.arm.thickness * 0.9, this.armMat)
+    lHandMesh.position.set(0, armBodyLen + shortHandLen, 0)
+    lHandMesh.rotation.z = Math.PI
+    this.lArm.add(lHandMesh)
 
     // Legs: single segment each, attach to pelvis with lateral offsets
     this.pelvis.add(this.lLeg)
@@ -302,6 +322,24 @@ export class FirstPersonBody {
       idle.shoulderYaw + swingRot.yaw,
       idle.shoulderRoll
     )
+
+    // Left arm locomotion swing: idle straight down; swing when moving; subtle bob jitter
+    {
+      const moveScale = THREE.MathUtils.clamp(this.locomotionBlend * (0.5 + 0.1 * speed), 0, 1)
+      const bob = Math.sin(this.idleTime * CFG.idle.bobSpeed * (1 + 0.5 * moveScale))
+      const swingAmp = THREE.MathUtils.degToRad(22) * this.locomotionBlend
+      // Oppose left leg for natural gait (arms/legs counter-phase)
+      const swing = Math.sin(legPhase + Math.PI) * swingAmp
+      const swayYaw = Math.sin(legPhase) * THREE.MathUtils.degToRad(3) * this.locomotionBlend
+      const jitterPitch = bob * 0.035 * this.locomotionBlend
+      const jitterRoll = bob * 0.025 * this.locomotionBlend
+      const baseYaw = THREE.MathUtils.degToRad(22) * this.locomotionBlend // slight inward when moving; none when idle
+      this.lArm.rotation.set(
+        -(0 + swing + jitterPitch), // Opposite-day pitch for in-game visual alignment
+        -(baseYaw + swayYaw),       // Opposite-day yaw
+        -(0 + jitterRoll)          // Opposite-day roll
+      )
+    }
 
     // Leg visibility based on pitch
     const pitchDeg = THREE.MathUtils.radToDeg(pitch)
