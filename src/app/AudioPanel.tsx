@@ -113,8 +113,8 @@ export const AudioPanel: React.FC = () => {
           }}
           onMouseOver={(e) => {
             e.currentTarget.style.transform = 'translateY(-2px)'
-            e.currentTarget.style.boxShadow = '0 8px 32px rgba(0,153,255,0.4), 0 4px 16px rgba(0,0,0,0.4)'
-            e.currentTarget.style.borderColor = 'rgba(0,153,255,0.4)'
+            e.currentTarget.style.boxShadow = '0 8px 32px rgba(147,51,234,0.4), 0 4px 16px rgba(0,0,0,0.4)'
+            e.currentTarget.style.borderColor = 'rgba(147,51,234,0.4)'
             e.currentTarget.style.background = 'linear-gradient(145deg, rgba(42,49,59,0.98), rgba(32,37,45,0.98))'
           }}
           onMouseOut={(e) => {
