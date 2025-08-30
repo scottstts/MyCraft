@@ -33,16 +33,22 @@ export interface WorldSettings {
 
 export interface WorldSavePayload {
   kind: 'MyCraftWorld';
-  version: 1;
+  version: 2; // encrypted format
   meta: { createdAt: string };
   settings: WorldSettings;
   chunks: SavedChunk[];
-  inventory?: SavedInventory; // optional for backward compatibility
+  inventory?: SavedInventory; // optional for forward/backward flexibility
 }
 
-export interface WorldSaveFile extends WorldSavePayload {
-  // Signing metadata
-  signatureAlg: string;    // e.g., MC-HMAC-SHA256-v1
-  signatureB64: string;    // signature over JSON.stringify(payload) bytes
-  publicKeyId: string;     // static identifier to verify origin
+export interface WorldSaveFile {
+  kind: 'MyCraftWorld';
+  version: 2;
+  // Encrypted payload
+  encAlg: string;          // e.g., MC-AES-GCM-256-v1
+  ivB64: string;           // base64 12-byte IV
+  cipherB64: string;       // base64 ciphertext of JSON.stringify(payload)
+  // Signing metadata (signature over plaintext payload)
+  signatureAlg: string;
+  signatureB64: string;
+  publicKeyId: string;
 }

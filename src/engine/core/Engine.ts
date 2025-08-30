@@ -35,8 +35,8 @@ import { InteractionSystem } from '../systems/InteractionSystem';
 import { useUIStore } from '../../state/ui';
 import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
-import type { WorldSaveFile, WorldSavePayload, SavedChunk, SavedInventory } from '../../types/save';
-import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, base64FromBytes, buildSaveFile, signPayload } from '../../shared/save';
+import type { WorldSavePayload, SavedChunk, SavedInventory, WorldSaveFile } from '../../types/save';
+import { base64FromBytes, signPayload, encryptPayload, SAVE_ENC_ALG, SAVE_SIGNATURE_ALG, SAVE_PUBLIC_KEY_ID } from '../../shared/save';
 import { CHUNK_SIZE as CONST_CHUNK_SIZE } from '../../config/constants';
 import { getInventorySlots } from '../../state/inventory';
 import FirstPersonBody from '../render/FirstPersonBody';
@@ -77,7 +77,7 @@ let lastMoveActive = false;
 // Snapshot pending from StartPanel (global handoff)
 declare global {
   interface Window {
-    __WORLD_SNAPSHOT?: WorldSaveFile;
+    __WORLD_SNAPSHOT?: WorldSavePayload;
     __saveWorld?: () => void;
   }
 }
@@ -133,7 +133,7 @@ async function saveWorldToFile(): Promise<void> {
 
     const payload: WorldSavePayload = {
       kind: 'MyCraftWorld',
-      version: 1,
+      version: 2,
       meta: { createdAt: new Date().toISOString() },
       settings: {
         seed: world.getSeed(),
@@ -150,11 +150,17 @@ async function saveWorldToFile(): Promise<void> {
     };
 
     const signatureB64 = await signPayload(payload);
-    const save: WorldSaveFile = buildSaveFile(payload, signatureB64);
-    // Include identifier for debugging
-    if (save.publicKeyId !== SAVE_PUBLIC_KEY_ID) {
-      throw new Error('Signing key mismatch');
-    }
+    const { ivB64, cipherB64 } = await encryptPayload(payload);
+    const save: WorldSaveFile = {
+      kind: 'MyCraftWorld',
+      version: 2,
+      encAlg: SAVE_ENC_ALG,
+      ivB64,
+      cipherB64,
+      signatureAlg: SAVE_SIGNATURE_ALG,
+      signatureB64,
+      publicKeyId: SAVE_PUBLIC_KEY_ID,
+    };
     downloadJson(`mycraft-world-${Date.now()}.json`, save);
   } catch (e) {
     console.error('Save world failed:', e);
@@ -612,12 +618,12 @@ async function start(canvas: HTMLCanvasElement) {
   });
   
   // If a saved snapshot is provided via global, ingest it directly and skip generation
-  const pendingSave = (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
-  const wasVerified = (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED;
+  const pendingSave = (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
+  const wasVerified = (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED;
   if (pendingSave && pendingSave.kind === 'MyCraftWorld') {
     try {
-      // Require Start Panel to have verified the snapshot and the expected key id/alg
-      if (!wasVerified || pendingSave.publicKeyId !== SAVE_PUBLIC_KEY_ID || pendingSave.signatureAlg !== SAVE_SIGNATURE_ALG) {
+      // Require Start Panel to have verified the snapshot
+      if (!wasVerified) {
         throw new Error('Save not verified by loader');
       }
       // Validate chunk size compatibility
@@ -644,8 +650,8 @@ async function start(canvas: HTMLCanvasElement) {
       return; // abort start
     } finally {
       // Clear the pending snapshot so restarts don’t reuse
-      delete (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
-      delete (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED;
+      delete (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
+      delete (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED;
     }
   } else {
     // Request NxN grid of chunks around origin

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useUIStore } from '../state/ui'
 import type { WorldSaveFile, WorldSavePayload, SavedInventory } from '../types/save'
-import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, verifyPayload, bytesFromBase64, base64FromBytes } from '../shared/save'
+import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, SAVE_ENC_ALG, verifyPayload, bytesFromBase64, base64FromBytes, decryptPayload } from '../shared/save'
 import { CHUNK_SIZE } from '../config/constants'
 import { replaceInventory } from '../state/inventory'
 
@@ -52,40 +52,47 @@ export function StartPanel() {
           alert('Invalid JSON file.')
           return
         }
-        const save = json as Partial<WorldSaveFile>
-        if (save.kind !== 'MyCraftWorld' || save.version !== 1) {
+        const save = json as WorldSaveFile
+        let payload: WorldSavePayload
+        // Accept v2 (encrypted) only
+        if (save.kind !== 'MyCraftWorld') {
           alert('Not a MyCraft world save.')
           return
         }
-        if (save.publicKeyId !== SAVE_PUBLIC_KEY_ID || save.signatureAlg !== SAVE_SIGNATURE_ALG) {
-          alert('Save file not recognized (signature key mismatch).')
+        if (save.version !== 2 || save.encAlg !== SAVE_ENC_ALG) {
+          alert('Save file version not supported.')
           return
         }
-        // Build payload view to re-verify signature
-        const payload: WorldSavePayload = {
-          kind: 'MyCraftWorld',
-          version: 1,
-          meta: save.meta as WorldSavePayload['meta'],
-          settings: save.settings as WorldSavePayload['settings'],
-          chunks: save.chunks as WorldSavePayload['chunks'],
-          // Include inventory if present to exactly match signed payload
-          inventory: (save as WorldSaveFile).inventory as WorldSavePayload['inventory'],
+        if (save.publicKeyId !== SAVE_PUBLIC_KEY_ID || save.signatureAlg !== SAVE_SIGNATURE_ALG) {
+          alert('Save file not recognized (metadata mismatch).')
+          return
         }
-        // Basic presence checks
-        if (typeof save.signatureB64 !== 'string' || !save.signatureB64) {
+        if (!save.ivB64 || !save.cipherB64 || !save.signatureB64) {
+          alert('Save file missing fields (iv/cipher/signature).')
+          return
+        }
+        try {
+          payload = await decryptPayload(save.ivB64, save.cipherB64)
+        } catch (e) {
+          console.error('Decryption failed:', e)
+          alert('Save file decryption failed. The file may be corrupted.')
+          return
+        }
+        const sigB64 = save.signatureB64
+        // Basic presence checks for signature
+        if (typeof sigB64 !== 'string' || !sigB64) {
           alert('Save file missing signature.')
           return
         }
         // Verify signature. Any error is treated as invalid.
         try {
-          // Enforce canonical base64 form so simple edits like removing padding are caught
-          const sigBytes = bytesFromBase64(save.signatureB64)
+          const sigBytes = bytesFromBase64(sigB64)
           const canonical = base64FromBytes(sigBytes)
-          if (canonical !== save.signatureB64) {
+          if (canonical !== sigB64) {
             alert('Save signature is malformed (base64 altered).')
             return
           }
-          const ok = await verifyPayload(payload, save.signatureB64)
+          const ok = await verifyPayload(payload, sigB64)
           if (!ok) {
             alert('Save signature verification failed (data may be corrupted).')
             return
@@ -144,7 +151,7 @@ export function StartPanel() {
           }
         }
         // Validate and apply inventory if present
-        const inv = (save as WorldSaveFile).inventory as SavedInventory | undefined
+        const inv = payload.inventory as SavedInventory | undefined
         if (inv) {
           const slots = Array.isArray(inv.slots) ? inv.slots : []
           if (slots.length !== 9) {
@@ -167,7 +174,8 @@ export function StartPanel() {
         }
 
         // Push into global for engine to ingest after start
-        ;(window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT = save as WorldSaveFile
+        // For engine: pass the verified plaintext payload only
+        ;(window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT = payload
         ;(window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED = true
         // Sync UI selections from save for consistency
         setChunkCount(payload.settings.chunkCount)
