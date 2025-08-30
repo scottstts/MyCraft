@@ -120,8 +120,8 @@ function update(dtSeconds: number) {
     if (playerBody && inputSystem) {
       const mv = inputSystem.getMoveInput?.() || { x: 0, z: 0 };
       const active = (Math.hypot(mv.x, mv.z) > 0.01) || !!inputSystem.isJumpHeld?.();
-      if (active && !lastMoveActive) playerBody.onMovementInputStart?.(['WASD/Space']);
-      if (!active && lastMoveActive) playerBody.onMovementInputEnd?.(['WASD/Space']);
+      if (active && !lastMoveActive) playerBody.onMovementInputStart?.();
+      if (!active && lastMoveActive) playerBody.onMovementInputEnd?.();
       lastMoveActive = !!active;
     }
     if (selectionSystem) {

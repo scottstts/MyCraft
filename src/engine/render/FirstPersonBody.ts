@@ -311,8 +311,8 @@ export class FirstPersonBody {
   onSecondaryClick(): void { this.enqueueSwing('RMB') }
 
   /** Movement input edge notifications; optional since update() derives motion from camera speed. */
-  onMovementInputStart(_keys?: string[]): void { this.movingFlag = true }
-  onMovementInputEnd(_keys?: string[]): void { this.movingFlag = false }
+  onMovementInputStart(): void { this.movingFlag = true }
+  onMovementInputEnd(): void { this.movingFlag = false }
 
   /** Cleanup */
   dispose(): void {
