@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useUIStore } from '../state/ui'
 import type { WorldSaveFile, WorldSavePayload } from '../types/save'
-import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, verifyPayload, bytesFromBase64 } from '../shared/save'
+import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, verifyPayload, bytesFromBase64, base64FromBytes } from '../shared/save'
 import { CHUNK_SIZE } from '../config/constants'
 
 // Allowed total chunk options: odd squares to ensure a single center chunk
@@ -75,6 +75,13 @@ export function StartPanel() {
         }
         // Verify signature. Any error is treated as invalid.
         try {
+          // Enforce canonical base64 form so simple edits like removing padding are caught
+          const sigBytes = bytesFromBase64(save.signatureB64)
+          const canonical = base64FromBytes(sigBytes)
+          if (canonical !== save.signatureB64) {
+            alert('Save signature is malformed (base64 altered).')
+            return
+          }
           const ok = await verifyPayload(payload, save.signatureB64)
           if (!ok) {
             alert('Save signature verification failed (data may be corrupted).')
