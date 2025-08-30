@@ -62,7 +62,7 @@ const CFG = {
   },
   idle: {
     // Base raised pose like Minecraft
-    baseShoulderPitch: THREE.MathUtils.degToRad(-35), // forward/upward at 35 degrees
+    baseShoulderPitch: THREE.MathUtils.degToRad(-65), // forward/upward at 15 degrees (reduced by 20)
     baseShoulderYaw: THREE.MathUtils.degToRad(8),     // slight outward
     baseShoulderRoll: THREE.MathUtils.degToRad(12),   // tilt up to the right
     forearmLag: THREE.MathUtils.degToRad(8),
@@ -191,7 +191,7 @@ export class FirstPersonBody {
     // Right arm: shoulder attaches to chest at actual shoulder point (no camera sync)
     this.chest.add(this.armAnchor)
     // Position anchor at right shoulder of torso (adjustable)
-    this.armAnchor.position.set(CFG.shoulderOffsetX + 0.2, -0.6, 0.1)
+    this.armAnchor.position.set(CFG.shoulderOffsetX + 0.2, -0.4, 0.4)
     this.armAnchor.add(this.rArm)
     // Build single arm block (upper+lower+hand unified). Pivot at top so rotation swings down.
     const armLen = CFG.arm.upperLen + CFG.arm.lowerLen + CFG.arm.handLen
