@@ -35,6 +35,7 @@ import { InteractionSystem } from '../systems/InteractionSystem';
 import { useUIStore } from '../../state/ui';
 import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
+import FirstPersonBody from '../render/FirstPersonBody';
 
 let rafId: number | null = null;
 let running = false;
@@ -66,6 +67,9 @@ let fpsLastReportNow: number = 0;
 let lastPaused: boolean = false;
 let sfx: SoundEffects | null = null;
 let dynamicFogDistance = 600; // default, updated based on world size
+let playerRigRoot: THREE.Group | null = null;
+let playerBody: FirstPersonBody | null = null;
+let lastMoveActive = false;
 
 function update(dtSeconds: number) {
   // Always allow pause toggle to be consumed
@@ -96,6 +100,11 @@ function update(dtSeconds: number) {
     if (inputSystem) {
       inputSystem.update();
     }
+    // Feed click peeks to body animator so block interactions remain independent
+    if (playerBody && inputSystem) {
+      if (inputSystem.peekLeftClick?.()) playerBody.onPrimaryClick();
+      if (inputSystem.peekRightClick?.()) playerBody.onSecondaryClick();
+    }
     // Handle number key slot selection (UI side-effect is fine here)
     if (inputSystem) {
       const slot = inputSystem.consumeSelectedSlot?.();
@@ -107,6 +116,14 @@ function update(dtSeconds: number) {
     if (playerController) {
       playerController.update(dtSeconds);
     }
+    // Movement edge notifications for body rig
+    if (playerBody && inputSystem) {
+      const mv = inputSystem.getMoveInput?.() || { x: 0, z: 0 };
+      const active = (Math.hypot(mv.x, mv.z) > 0.01) || !!inputSystem.isJumpHeld?.();
+      if (active && !lastMoveActive) playerBody.onMovementInputStart?.(['WASD/Space']);
+      if (!active && lastMoveActive) playerBody.onMovementInputEnd?.(['WASD/Space']);
+      lastMoveActive = !!active;
+    }
     if (selectionSystem) {
       selectionSystem.update();
     }
@@ -117,6 +134,10 @@ function update(dtSeconds: number) {
   // Update sound effects after movement/collision updates
   if (sfx) {
     sfx.update(dtSeconds, paused, inGame);
+  }
+  // Update in-world body rig after movement update, before render
+  if (playerBody && inGame && !paused) {
+    playerBody.update(dtSeconds);
   }
   
   // Update material uniforms
@@ -312,6 +333,13 @@ async function start(canvas: HTMLCanvasElement) {
   waterMaterial.setRefraction(0.18, 0.75, 0.12, 0.035, 0.06);
 
   chunkRenderer = new ChunkRenderer(scene, { opaque: blockMaterial, transparent: waterMaterial });
+  
+  // Create player rig root and in-world first-person body
+  playerRigRoot = new THREE.Group();
+  playerRigRoot.name = 'PlayerRigRoot';
+  scene.add(playerRigRoot);
+  playerBody = new FirstPersonBody();
+  playerBody.init(playerRigRoot, camera);
 
   // Initialize post-processing pipeline
   const canvasSize = renderer.getCanvasSize();
@@ -598,6 +626,12 @@ function stop() {
     sfx.dispose();
     sfx = null;
   }
+  
+  // Clean up player body rig
+  try { playerBody?.dispose(); } catch { /* ignore */ }
+  playerBody = null;
+  if (scene && playerRigRoot) { try { scene.remove(playerRigRoot); } catch { /* ignore */ } }
+  playerRigRoot = null;
   
   // Clean up world
   if (world) {

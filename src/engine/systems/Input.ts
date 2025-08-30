@@ -240,6 +240,8 @@ export class InputSystem {
     }
     return false;
   }
+  /** Non-consuming peek for left click (for animation triggers) */
+  peekLeftClick(): boolean { return this.leftClickQueued; }
 
   /** Edge-triggered right click */
   consumeRightClick(): boolean {
@@ -249,6 +251,8 @@ export class InputSystem {
     }
     return false;
   }
+  /** Non-consuming peek for right click (for animation triggers) */
+  peekRightClick(): boolean { return this.rightClickQueued; }
 
   /** Edge-triggered number slot 0..8, or null if none queued */
   consumeSelectedSlot(): number | null {
@@ -266,4 +270,3 @@ export class InputSystem {
     return false;
   }
 }
-
