@@ -226,7 +226,7 @@ export class FirstPersonBody {
     // Left arm: mirror of right arm at left shoulder, idle straight down, swings during locomotion
     this.chest.add(this.lArmAnchor)
     // Place left arm at mirrored shoulder location relative to right arm
-    this.lArmAnchor.position.set(-(CFG.shoulderOffsetX + 0.2), -0.4, -0.4)
+    this.lArmAnchor.position.set(-(CFG.shoulderOffsetX + 0.2), 0.2, 0.2)
     this.lArmAnchor.add(this.lArm)
     const lArmBodyMesh = this.createSegmentMesh(CFG.arm.thickness, armBodyLen, CFG.arm.thickness, this.armMat)
     lArmBodyMesh.position.set(0, armBodyLen, 0)
@@ -335,7 +335,7 @@ export class FirstPersonBody {
       const jitterRoll = bob * 0.025 * this.locomotionBlend
       const baseYaw = THREE.MathUtils.degToRad(22) * this.locomotionBlend // slight inward when moving; none when idle
       this.lArm.rotation.set(
-        -(0 + swing + jitterPitch), // Opposite-day pitch for in-game visual alignment
+        -(THREE.MathUtils.degToRad(165) + swing + jitterPitch), // Point straight down when idle
         -(baseYaw + swayYaw),       // Opposite-day yaw
         -(0 + jitterRoll)          // Opposite-day roll
       )
