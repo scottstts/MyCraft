@@ -69,6 +69,7 @@ export function Crosshair() {
 
 export function TopRightWidget() {
   const fps = useUIStore(s => s.fps)
+  const gameStarted = useUIStore(s => s.gameStarted)
   
   // Read time from engine globals for clock
   const [t, setT] = React.useState(0);
@@ -94,6 +95,8 @@ export function TopRightWidget() {
 
   const clockSize = 36
   const center = clockSize / 2
+
+  if (!gameStarted) return null
 
   return (
     <div style={{

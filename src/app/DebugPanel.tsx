@@ -39,6 +39,7 @@ interface PostProcessingSettings {
 
 export const DebugPanel: React.FC = () => {
   const { debugVisible, setDebugVisible, setAudioVisible } = useUIStore();
+  const gameStarted = useUIStore(s => s.gameStarted)
   const panelRef = React.useRef<HTMLDivElement | null>(null)
   const [settings, setSettings] = useState<PostProcessingSettings>({
     ssaoEnabled: true,
@@ -156,6 +157,9 @@ export const DebugPanel: React.FC = () => {
   React.useEffect(() => {
     if (debugVisible) setAudioVisible(false)
   }, [debugVisible, setAudioVisible])
+
+  // Hide entire debug UI (including the launcher button) until game starts
+  if (!gameStarted) return null
 
   if (!debugVisible) {
     return (

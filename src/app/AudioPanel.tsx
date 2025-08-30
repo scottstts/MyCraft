@@ -8,6 +8,7 @@ export const AudioPanel: React.FC = () => {
   const setAudioVisible = useUIStore(s => s.setAudioVisible)
   const setDebugVisible = useUIStore(s => s.setDebugVisible)
   const setLoading = useUIStore(s => s.setLoading)
+  const gameStarted = useUIStore(s => s.gameStarted)
   const [vol, setVol] = React.useState(0.2)
   const [sfxVol, setSfxVol] = React.useState(0.7)
 
@@ -45,6 +46,9 @@ export const AudioPanel: React.FC = () => {
   React.useEffect(() => {
     if (audioVisible) setDebugVisible(false)
   }, [audioVisible, setDebugVisible])
+
+  // Hide launcher buttons while StartPanel is visible
+  if (!gameStarted) return null
 
   if (!audioVisible) {
     return (
