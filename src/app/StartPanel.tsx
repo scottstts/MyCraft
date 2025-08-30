@@ -385,7 +385,25 @@ export function StartPanel() {
             Launch World
           </button>
 
-          <button
+          <div style={{
+            marginTop: 24,
+            padding: 20,
+            background: 'rgba(255,255,255,0.02)',
+            border: '1px solid rgba(255,255,255,0.06)',
+            borderRadius: 12,
+            display: 'grid',
+            gap: 16
+          }}>
+            <div style={{ 
+              fontSize: 12, 
+              color: '#64748b',
+              fontStyle: 'italic',
+              lineHeight: 1.4
+            }}>
+              You can also load a saved world and enter that world by clicking "Load World", and select the saved JSON file".
+            </div>
+
+            <button
             onClick={handleLoadWorld}
             style={{ 
               padding: '16px 24px', 
@@ -421,6 +439,7 @@ export function StartPanel() {
           >
             Load World
           </button>
+          </div>
         </div>
       </div>
     </div>
