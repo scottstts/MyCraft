@@ -32,10 +32,10 @@ const CFG = {
   shoulderOffsetZ: -0.10, // slight back so arm sits to the side
   torsoBackOffset: 0.24, // push torso behind camera so it's not visible at neutral angles
   arm: {
-    upperLen: 0.38,
-    lowerLen: 0.36,
-    handLen: 0.14,
-    thickness: 0.16,
+    upperLen: 0.38,  // shorter upper arm
+    lowerLen: 0.36,  // shorter lower arm  
+    handLen: 0.14,   // shorter hand
+    thickness: 0.10, // much thinner
   },
   leg: {
     thighLen: 0.48,
@@ -191,7 +191,7 @@ export class FirstPersonBody {
     // Right arm: shoulder attaches to chest at actual shoulder point (no camera sync)
     this.chest.add(this.armAnchor)
     // Position anchor at right shoulder of torso (adjustable)
-    this.armAnchor.position.set(CFG.shoulderOffsetX + 0.2, -0.6, 0.4)
+    this.armAnchor.position.set(CFG.shoulderOffsetX + 0.2, -0.6, 0.1)
     this.armAnchor.add(this.rArm)
     // Build single arm block (upper+lower+hand unified). Pivot at top so rotation swings down.
     const armLen = CFG.arm.upperLen + CFG.arm.lowerLen + CFG.arm.handLen
