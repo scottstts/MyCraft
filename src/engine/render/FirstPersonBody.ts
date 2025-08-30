@@ -193,13 +193,19 @@ export class FirstPersonBody {
     // Position anchor at right shoulder of torso (adjustable)
     this.armAnchor.position.set(CFG.shoulderOffsetX + 0.2, -0.4, 0.4)
     this.armAnchor.add(this.rArm)
-    // Build single arm block (upper+lower+hand unified). Pivot at top so rotation swings down.
-    const armLen = CFG.arm.upperLen + CFG.arm.lowerLen + CFG.arm.handLen
-    const rArmMesh = this.createSegmentMesh(CFG.arm.thickness, armLen, CFG.arm.thickness, this.armMat)
-    // Position mesh upward but rotate 180 degrees to fix texture orientation
-    rArmMesh.position.set(0, armLen, 0)
-    rArmMesh.rotation.z = Math.PI  // Flip 180 degrees around Z-axis
-    this.rArm.add(rArmMesh)
+    // Build arm body (upper+lower) + separate shorter hand tip
+    const armBodyLen = CFG.arm.upperLen + CFG.arm.lowerLen
+    const rArmBodyMesh = this.createSegmentMesh(CFG.arm.thickness, armBodyLen, CFG.arm.thickness, this.armMat)
+    rArmBodyMesh.position.set(0, armBodyLen, 0)
+    rArmBodyMesh.rotation.z = Math.PI
+    this.rArm.add(rArmBodyMesh)
+    
+    // Shorter hand tip mesh
+    const shortHandLen = CFG.arm.handLen * 0.4  // Make hand 60% shorter
+    const rHandMesh = this.createSegmentMesh(CFG.arm.thickness * 0.9, shortHandLen, CFG.arm.thickness * 0.9, this.armMat)
+    rHandMesh.position.set(0, armBodyLen + shortHandLen, 0)
+    rHandMesh.rotation.z = Math.PI
+    this.rArm.add(rHandMesh)
 
     // Legs: single segment each, attach to pelvis with lateral offsets
     this.pelvis.add(this.lLeg)
