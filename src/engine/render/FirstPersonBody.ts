@@ -188,11 +188,10 @@ export class FirstPersonBody {
     this.torsoMesh.position.set(0, -CFG.torso.height * 0.5, 0)
     this.chest.add(this.torsoMesh)
 
-    // Right arm: shoulder attaches to chest with lateral/back offsets
-    // Anchor the arm to the neck so it rotates exactly with the camera (yaw + pitch)
-    this.neck.add(this.armAnchor)
-    // Move arm backward to connect hand with shoulder on torso
-    this.armAnchor.position.set(0.5, -0.3, -0.6)
+    // Right arm: shoulder attaches to chest at actual shoulder point (no camera sync)
+    this.chest.add(this.armAnchor)
+    // Position anchor at right shoulder of torso (adjustable)
+    this.armAnchor.position.set(CFG.shoulderOffsetX + 0.2, -0.6, 0.4)
     this.armAnchor.add(this.rArm)
     // Build single arm block (upper+lower+hand unified). Pivot at top so rotation swings down.
     const armLen = CFG.arm.upperLen + CFG.arm.lowerLen + CFG.arm.handLen
