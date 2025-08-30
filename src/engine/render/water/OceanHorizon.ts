@@ -225,14 +225,15 @@ export class OceanHorizon {
     { x0: maxX,       x1: maxX + far, z0: maxZ,       z1: maxZ + far }, // bottom-right corner
   ]
 
-  // Determine where to start/finish the step-up to sea level, using a rectangular radius
+  // Determine where to start/finish the ramp to sea level, using a rectangular radius
   const edgeR = Math.max(
     Math.max(Math.abs(minX), Math.abs(maxX)),
     Math.max(Math.abs(minZ), Math.abs(maxZ))
   )
   const chunkW = Math.max(CHUNK_SIZE.x, CHUNK_SIZE.z)
-  const rampStart = edgeR + chunkW * 0.5
-  const rampEnd = rampStart + chunkW * 2.0
+  const rampStart = edgeR + chunkW * 8.0
+  // Make the ramp much longer to create a very gradual transition
+  const rampEnd = rampStart + chunkW * 20.0
   const stepHeight = 1.0
   // Slightly below the water surface to avoid z-fighting with far-water ring
   const seaPlane = opts.waterLevel + 1.0 - 0.05
@@ -274,16 +275,11 @@ export class OceanHorizon {
       for (let i = 0; i <= nx; i++) {
         const tx = i / nx
         const x = x0 + (x1 - x0) * tx
-        // Rectangular distance from world center to decide how high we step
+        // Rectangular distance from world center to decide ramp height
         const r = rEdge(x, z)
         const t = THREE.MathUtils.clamp((r - rampStart) / Math.max(1e-3, rampEnd - rampStart), 0, 1)
+        // Smooth ramp from yBase to seaLevelY, then flat at sea level to horizon
         let y = THREE.MathUtils.lerp(yBase, seaLevelY, t)
-        if (stepHeight > 0) {
-          // Quantize to steps relative to yBase
-          const steps = Math.floor((y - yBase) / stepHeight)
-          y = yBase + steps * stepHeight
-          y = Math.min(y, seaLevelY)
-        }
         positions[idxP++] = x
         positions[idxP++] = y
         positions[idxP++] = z
