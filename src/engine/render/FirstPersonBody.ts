@@ -108,10 +108,10 @@ export class FirstPersonBody {
   // Torso mesh
   private torsoMesh: THREE.Mesh
 
-  // Materials and textures
-  private armMat: THREE.MeshBasicMaterial
-  private legMat: THREE.MeshBasicMaterial
-  private torsoMat: THREE.MeshBasicMaterial
+  // Materials and textures (use lit PBR for natural shading)
+  private armMat: THREE.MeshStandardMaterial
+  private legMat: THREE.MeshStandardMaterial
+  private torsoMat: THREE.MeshStandardMaterial
 
   // Animation state
   private locomotionBlend: number = 0 // 0..1 engage factor
@@ -152,9 +152,19 @@ export class FirstPersonBody {
     const legTex = mkTex(legTexUrl)
     const torsoTex = mkTex(torsoTexUrl)
 
-    this.armMat = new THREE.MeshBasicMaterial({ map: armTex, transparent: true })
-    this.legMat = new THREE.MeshBasicMaterial({ map: legTex, transparent: true })
-    this.torsoMat = new THREE.MeshBasicMaterial({ map: torsoTex, transparent: true })
+    // Use MeshStandardMaterial for proper scene lighting and environment
+    const mkBodyMat = (map: THREE.Texture) => new THREE.MeshStandardMaterial({
+      map,
+      transparent: true,
+      alphaTest: 0.5,     // cut out fully transparent texels cleanly
+      roughness: 0.9,     // matte, fabric-like
+      metalness: 0.0,     // non-metal
+      envMapIntensity: 0.25, // subtle ambient from scene.environment
+      dithering: true,    // reduce banding on smooth gradients
+    })
+    this.armMat = mkBodyMat(armTex)
+    this.legMat = mkBodyMat(legTex)
+    this.torsoMat = mkBodyMat(torsoTex)
 
     // Build hierarchy
     this.root = new THREE.Group()
