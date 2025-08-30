@@ -388,30 +388,36 @@ export function StartPanel() {
           <button
             onClick={handleLoadWorld}
             style={{ 
-              padding: '14px 18px',
-              background: 'linear-gradient(135deg, #00c6ff 0%, #0072ff 100%)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 12,
-              cursor: 'pointer',
+              padding: '16px 24px', 
+              background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', 
+              color: '#fff', 
+              border: 'none', 
+              borderRadius: 12, 
+              cursor: 'pointer', 
               fontWeight: 700,
-              fontSize: 14,
-              letterSpacing: 0.4,
+              fontSize: 16,
+              letterSpacing: 0.5,
               textTransform: 'uppercase',
-              boxShadow: '0 8px 24px rgba(0,114,255,0.35)',
-              transition: 'all 0.25s ease',
-              outline: 'none'
+              boxShadow: '0 8px 24px rgba(240,147,251,0.4), 0 4px 12px rgba(245,87,108,0.3)',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              outline: 'none',
+              position: 'relative',
+              overflow: 'hidden'
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 12px 32px rgba(0,114,255,0.45)'
+              e.currentTarget.style.boxShadow = '0 12px 32px rgba(240,147,251,0.5), 0 6px 16px rgba(245,87,108,0.4)'
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,114,255,0.35)'
+              e.currentTarget.style.boxShadow = '0 8px 24px rgba(240,147,251,0.4), 0 4px 12px rgba(245,87,108,0.3)'
             }}
-            onMouseDown={(e) => { e.currentTarget.style.transform = 'translateY(0) scale(0.98)' }}
-            onMouseUp={(e) => { e.currentTarget.style.transform = 'translateY(-2px) scale(1)' }}
+            onMouseDown={(e) => {
+              e.currentTarget.style.transform = 'translateY(0) scale(0.98)'
+            }}
+            onMouseUp={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px) scale(1)'
+            }}
           >
             Load World
           </button>
