@@ -7,6 +7,7 @@ export const AudioPanel: React.FC = () => {
   const audioVisible = useUIStore(s => s.audioVisible)
   const setAudioVisible = useUIStore(s => s.setAudioVisible)
   const setDebugVisible = useUIStore(s => s.setDebugVisible)
+  const setLoading = useUIStore(s => s.setLoading)
   const [vol, setVol] = React.useState(0.2)
   const [sfxVol, setSfxVol] = React.useState(0.7)
 
@@ -90,7 +91,18 @@ export const AudioPanel: React.FC = () => {
         </button>
 
         <button
-          onClick={() => { (window as Window & { __saveWorld?: () => void }).__saveWorld?.() }}
+          onClick={async () => { 
+            setLoading(true)
+            try {
+              ;(window as Window & { __saveWorld?: () => void }).__saveWorld?.()
+              // Add a small delay to show the loader
+              await new Promise(resolve => setTimeout(resolve, 500))
+            } catch (e) {
+              console.error('Save failed:', e)
+            } finally {
+              setLoading(false)
+            }
+          }}
           style={{
             padding: '8px 12px',
             background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',

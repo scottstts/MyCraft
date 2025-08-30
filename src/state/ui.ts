@@ -50,6 +50,10 @@ export interface UIState {
   // Chunk sizing options: { x: width, y: height, z: depth } in blocks
   chunkSize: { x: number; y: number; z: number }; 
   setChunkSize: (size: { x: number; y: number; z: number }) => void;
+
+  // Loading state for save/load operations
+  loading: boolean;
+  setLoading: (loading: boolean) => void;
 }
 
 const DEFAULT_HOTBAR: number[] = [
@@ -91,6 +95,9 @@ export const useUIStore = create<UIState>((set) => ({
 
   chunkSize: { x: 48, y: 96, z: 48 }, // Default from constants
   setChunkSize: (size: { x: number; y: number; z: number }) => set({ chunkSize: size }),
+
+  loading: false,
+  setLoading: (loading: boolean) => set({ loading }),
 }));
 
 export function getSelectedBlockId(): number | null {

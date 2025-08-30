@@ -23,6 +23,7 @@ export function StartPanel() {
   const setChunkCount = useUIStore(s => s.setChunkCount)
   const chunkSize = useUIStore(s => s.chunkSize)
   const setChunkSize = useUIStore(s => s.setChunkSize)
+  const setLoading = useUIStore(s => s.setLoading)
 
   const [localCount, setLocalCount] = useState<number>(chunkCount || 9)
   const [localSize, setLocalSize] = useState<{ x: number; y: number; z: number }>(
@@ -39,18 +40,23 @@ export function StartPanel() {
 
   const handleLoadWorld = async () => {
     try {
+      setLoading(true)
       const input = document.createElement('input')
       input.type = 'file'
       input.accept = 'application/json'
       input.onchange = async () => {
         const file = input.files?.[0]
-        if (!file) return
+        if (!file) {
+          setLoading(false)
+          return
+        }
         const text = await file.text()
         let json: unknown
         try {
           json = JSON.parse(text)
         } catch {
           alert('Invalid JSON file.')
+          setLoading(false)
           return
         }
         const save = json as WorldSaveFile
@@ -58,18 +64,22 @@ export function StartPanel() {
         // Accept v2 (encrypted) only
         if (save.kind !== 'MyCraftWorld') {
           alert('Not a MyCraft world save.')
+          setLoading(false)
           return
         }
         if (save.version !== 2 || save.encAlg !== SAVE_ENC_ALG) {
           alert('Save file version not supported.')
+          setLoading(false)
           return
         }
         if (save.publicKeyId !== SAVE_PUBLIC_KEY_ID || save.signatureAlg !== SAVE_SIGNATURE_ALG) {
           alert('Save file not recognized (metadata mismatch).')
+          setLoading(false)
           return
         }
         if (!save.ivB64 || !save.cipherB64 || !save.signatureB64) {
           alert('Save file missing fields (iv/cipher/signature).')
+          setLoading(false)
           return
         }
         try {
@@ -77,12 +87,14 @@ export function StartPanel() {
         } catch (e) {
           console.error('Decryption failed:', e)
           alert('Save file decryption failed. The file may be corrupted.')
+          setLoading(false)
           return
         }
         const sigB64 = save.signatureB64
         // Basic presence checks for signature
         if (typeof sigB64 !== 'string' || !sigB64) {
           alert('Save file missing signature.')
+          setLoading(false)
           return
         }
         // Verify signature. Any error is treated as invalid.
@@ -91,37 +103,44 @@ export function StartPanel() {
           const canonical = base64FromBytes(sigBytes)
           if (canonical !== sigB64) {
             alert('Save signature is malformed (base64 altered).')
+            setLoading(false)
             return
           }
           const ok = await verifyPayload(payload, sigB64)
           if (!ok) {
             alert('Save signature verification failed (data may be corrupted).')
+            setLoading(false)
             return
           }
         } catch (err) {
           console.error('Signature verification error:', err)
           alert('Unable to verify save signature. The file may be corrupted or browser crypto is unavailable.')
+          setLoading(false)
           return
         }
         // Validate chunk size compatibility with current build
         const s = payload.settings.chunkSize
         if (!s || typeof s.x !== 'number' || typeof s.y !== 'number' || typeof s.z !== 'number') {
           alert('Save file missing chunk size.')
+          setLoading(false)
           return
         }
         if (s.x !== CHUNK_SIZE.x || s.y !== CHUNK_SIZE.y || s.z !== CHUNK_SIZE.z) {
           alert(`Save chunk size ${s.x}x${s.y}x${s.z} does not match game chunk size ${CHUNK_SIZE.x}x${CHUNK_SIZE.y}x${CHUNK_SIZE.z}.`)
+          setLoading(false)
           return
         }
         // Validate chunks array shape and data sanity
         if (!Array.isArray(payload.chunks) || payload.chunks.length === 0) {
           alert('Save has no chunks.')
+          setLoading(false)
           return
         }
         const expectedLen = s.x * s.y * s.z
         for (const ch of payload.chunks) {
           if (!ch || typeof ch !== 'object') {
             alert('Save chunk entry invalid.')
+            setLoading(false)
             return
           }
           const { key, cx, cy, cz, size, voxelsB64 } = ch as {
@@ -129,25 +148,30 @@ export function StartPanel() {
           }
           if (typeof key !== 'string' || `${cx},${cy},${cz}` !== key) {
             alert('Save chunk key mismatch.')
+            setLoading(false)
             return
           }
           if (!size || size.x !== s.x || size.y !== s.y || size.z !== s.z) {
             alert('Save chunk size mismatch.')
+            setLoading(false)
             return
           }
           if (typeof voxelsB64 !== 'string' || !voxelsB64) {
             alert('Save chunk data missing.')
+            setLoading(false)
             return
           }
           try {
             const bytes = bytesFromBase64(voxelsB64)
             if (bytes.length !== expectedLen) {
               alert('Save chunk data corrupted (length mismatch).')
+              setLoading(false)
               return
             }
           } catch (e) {
             console.error('Chunk decode error:', e)
             alert('Save chunk data is not valid base64.')
+            setLoading(false)
             return
           }
         }
@@ -157,6 +181,7 @@ export function StartPanel() {
           const slots = Array.isArray(inv.slots) ? inv.slots : []
           if (slots.length !== 9) {
             alert('Save inventory invalid (must have 9 slots).')
+            setLoading(false)
             return
           }
           // Normalize and set inventory
@@ -182,11 +207,13 @@ export function StartPanel() {
         setChunkCount(payload.settings.chunkCount)
         setChunkSize(payload.settings.chunkSize)
         setGameStarted(true)
+        setLoading(false)
       }
       input.click()
     } catch (e) {
       console.error('Load world failed:', e)
       alert('Failed to load world save.')
+      setLoading(false)
     }
   }
 

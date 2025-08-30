@@ -188,6 +188,7 @@ export function PauseMenu() {
   const bumpRestartToken = useUIStore(s => s.bumpRestartToken)
   const inGame = useUIStore(s => s.inGame)
   const setGameStarted = useUIStore(s => s.setGameStarted)
+  const setLoading = useUIStore(s => s.setLoading)
   if (!paused) return null
   return (
     <div style={{ 
@@ -260,7 +261,18 @@ export function PauseMenu() {
             Resume
           </button>
           <button 
-            onClick={() => { (window as Window & { __saveWorld?: () => void }).__saveWorld?.() }} 
+            onClick={async () => { 
+              setLoading(true)
+              try {
+                ;(window as Window & { __saveWorld?: () => void }).__saveWorld?.()
+                // Add a small delay to show the loader
+                await new Promise(resolve => setTimeout(resolve, 500))
+              } catch (e) {
+                console.error('Save failed:', e)
+              } finally {
+                setLoading(false)
+              }
+            }} 
             style={{ 
               flex: 1, 
               padding: '16px 24px', 

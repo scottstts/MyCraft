@@ -4,6 +4,7 @@ import MusicController from './app/MusicController'
 import AudioPanel from './app/AudioPanel'
 import { DebugPanel } from './app/DebugPanel'
 import { StartPanel } from './app/StartPanel'
+import { LoadingOverlay } from './app/LoadingOverlay'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
       <MusicController />
       <DebugPanel />
       <AudioPanel />
+      <LoadingOverlay />
     </>
   )
 }
