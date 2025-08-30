@@ -35,7 +35,7 @@ const CFG = {
     upperLen: 0.38,  // shorter upper arm
     lowerLen: 0.36,  // shorter lower arm  
     handLen: 0.14,   // shorter hand
-    thickness: 0.10, // much thinner
+    thickness: 0.08, // much thinner
   },
   leg: {
     thighLen: 0.48,
