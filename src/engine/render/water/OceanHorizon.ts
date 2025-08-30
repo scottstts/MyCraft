@@ -234,8 +234,8 @@ export class OceanHorizon {
   const rampStart = edgeR + chunkW * 6.0
   // Make the ramp much longer to create a very gradual transition
   const rampEnd = rampStart + chunkW * 15.0
-  // Use the actual water surface level for the ramp destination
-  const waterSurfaceY = opts.waterLevel + 1.0
+  // Use the actual water surface level for the ramp destination (match water tiles exactly)
+  const waterSurfaceY = opts.waterLevel + 1.0 - 0.001
 
   for (const q of quads) {
     const geom = this.makeSteppedQuadWorldUV(q.x0, q.z0, q.x1, q.z1, yEdge, rampStart, rampEnd, waterSurfaceY)
@@ -264,8 +264,8 @@ export class OceanHorizon {
     const uvs = new Float32Array(vertCount * 2)
     const normals = new Float32Array(vertCount * 3)
 
-    // Helper: rectangular (Chebyshev) radius from world origin
-    const rEdge = (x: number, z: number) => Math.max(Math.abs(x), Math.abs(z))
+    // Helper: Euclidean radius from world origin (handles corners properly)
+    const rEdge = (x: number, z: number) => Math.sqrt(x * x + z * z)
 
     let idxP = 0, idxUV = 0, idxN = 0
     for (let j = 0; j <= nz; j++) {
