@@ -93,13 +93,13 @@ export const DebugPanel: React.FC = () => {
   useEffect(() => {
     // Apply initial settings to the engine with a small delay to ensure engine is ready
     const timer = setTimeout(() => {
-      console.log('[DebugPanel] Initializing settings on mount');
+      // console.log('[DebugPanel] Initializing settings on mount');
       const updateFn = (window as WindowWithEngineGlobals).updatePostProcessingSettings;
       if (updateFn) {
         updateFn(settings);
-        console.log('[DebugPanel] Applied initial post-processing settings');
+        // console.log('[DebugPanel] Applied initial post-processing settings');
       } else {
-        console.warn('[DebugPanel] Post-processing not available during initialization');
+        // console.warn('[DebugPanel] Post-processing not available during initialization');
       }
       
       const updateShadowFn = (window as WindowWithEngineGlobals).updateShadowSettings;
@@ -115,9 +115,9 @@ export const DebugPanel: React.FC = () => {
           intensity: settings.shadowIntensity,
         };
         updateShadowFn(shadowSettings);
-        console.log('[DebugPanel] Applied initial shadow settings');
+        // console.log('[DebugPanel] Applied initial shadow settings');
       } else {
-        console.warn('[DebugPanel] Shadow system not available during initialization');
+        // console.warn('[DebugPanel] Shadow system not available during initialization');
       }
       // Initialize time-of-day controls
       (window as WindowWithEngineGlobals).updateGraphicsSettings?.({
@@ -213,13 +213,13 @@ export const DebugPanel: React.FC = () => {
     const newSettings = { ...settings, [key]: value };
     setSettings(newSettings);
 
-    console.log(`[DebugPanel] Setting ${key} to ${value}`);
+    // (`[DebugPanel] Setting ${key} to ${value}`);
     
     // Communicate with engine
     const updateFn = (window as WindowWithEngineGlobals).updatePostProcessingSettings;
     if (updateFn) {
       updateFn(newSettings);
-      console.log(`[DebugPanel] Updated post-processing:`, newSettings);
+      // console.log(`[DebugPanel] Updated post-processing:`, newSettings);
     } else {
       console.error('[DebugPanel] updatePostProcessingSettings not available!');
     }
@@ -237,7 +237,7 @@ export const DebugPanel: React.FC = () => {
         intensity: newSettings.shadowIntensity,
       };
       updateShadowFn(shadowSettings);
-      console.log(`[DebugPanel] Updated shadow settings:`, shadowSettings);
+      // console.log(`[DebugPanel] Updated shadow settings:`, shadowSettings);
     } else {
       console.error('[DebugPanel] updateShadowSettings not available!');
     }

@@ -344,35 +344,35 @@ export class SimplePostProcessor {
    * Update post-processing settings
    */
   updateSettings(newSettings: Partial<PostProcessorSettings>): void {
-    const oldSettings = { ...this.settings };
+    // const oldSettings = { ...this.settings };
     this.settings = { ...this.settings, ...newSettings };
     
-    console.log('[PostProcessor] Updating settings:', {
-      old: oldSettings,
-      new: this.settings,
-      changes: newSettings
-    });
+    // console.log('[PostProcessor] Updating settings:', {
+    //   old: oldSettings,
+    //   new: this.settings,
+    //   changes: newSettings
+    // });
 
     if (this.quadMaterial) {
       const uniforms = this.quadMaterial.uniforms as Record<string, { value: unknown }>;
       
       if (newSettings.ssaoEnabled !== undefined) {
         uniforms.ssaoEnabled.value = newSettings.ssaoEnabled;
-        console.log('[PostProcessor] SSAO enabled:', newSettings.ssaoEnabled);
+        // console.log('[PostProcessor] SSAO enabled:', newSettings.ssaoEnabled);
       }
       if (newSettings.ssaoIntensity !== undefined) uniforms.ssaoIntensity.value = newSettings.ssaoIntensity;
       if (newSettings.ssaoRadius !== undefined) uniforms.ssaoRadius.value = newSettings.ssaoRadius;
       if (newSettings.bloomEnabled !== undefined) {
         uniforms.bloomEnabled.value = newSettings.bloomEnabled;
-        console.log('[PostProcessor] Bloom enabled:', newSettings.bloomEnabled);
+        // console.log('[PostProcessor] Bloom enabled:', newSettings.bloomEnabled);
       }
       if (newSettings.bloomStrength !== undefined) {
         uniforms.bloomStrength.value = newSettings.bloomStrength;
-        console.log('[PostProcessor] Bloom strength:', newSettings.bloomStrength);
+        // console.log('[PostProcessor] Bloom strength:', newSettings.bloomStrength);
       }
       if (newSettings.bloomThreshold !== undefined) {
         uniforms.bloomThreshold.value = newSettings.bloomThreshold;
-        console.log('[PostProcessor] Bloom threshold:', newSettings.bloomThreshold);
+        // console.log('[PostProcessor] Bloom threshold:', newSettings.bloomThreshold);
       }
       if (newSettings.exposure !== undefined) uniforms.exposure.value = newSettings.exposure;
       if (newSettings.contrast !== undefined) uniforms.contrast.value = newSettings.contrast;

@@ -354,22 +354,22 @@ export class ShadowSystem {
     
     this.settings = { ...this.settings, ...newSettings };
     
-    console.log('[ShadowSystem] Updating settings:', {
-      old: oldSettings,
-      new: this.settings,
-      changes: newSettings
-    });
+    // console.log('[ShadowSystem] Updating settings:', {
+    //   old: oldSettings,
+    //   new: this.settings,
+    //   changes: newSettings
+    // });
 
     // Reinitialize if resolution or cascade count changed
     if (oldResolution !== this.settings.resolution || oldCascades !== this.settings.cascades) {
-      console.log('[ShadowSystem] Reinitializing cascades due to resolution/cascade change');
+      // console.log('[ShadowSystem] Reinitializing cascades due to resolution/cascade change');
       this.dispose();
       this.initializeCascades();
     }
     
     // Recalculate cascade distances if shadowDistance changed
     else if (oldSettings.shadowDistance !== this.settings.shadowDistance) {
-      console.log('[ShadowSystem] Recalculating cascade distances due to shadowDistance change');
+      // console.log('[ShadowSystem] Recalculating cascade distances due to shadowDistance change');
       this.cascadeDistances = [];
       for (let i = 0; i < this.settings.cascades; i++) {
         const ratio = (i + 1) / this.settings.cascades;
@@ -391,9 +391,9 @@ export class ShadowSystem {
       this.renderer.shadowMap.needsUpdate = true;
     }
     
-    console.log('[ShadowSystem] Shadow mapping enabled:', this.settings.enabled);
-    console.log('[ShadowSystem] Shadow light casting:', this.shadowLight.castShadow);
-    console.log('[ShadowSystem] Renderer shadow map enabled:', this.renderer.shadowMap.enabled);
+    // console.log('[ShadowSystem] Shadow mapping enabled:', this.settings.enabled);
+    // console.log('[ShadowSystem] Shadow light casting:', this.shadowLight.castShadow);
+    // console.log('[ShadowSystem] Renderer shadow map enabled:', this.renderer.shadowMap.enabled);
     
     // Update shadow camera properties
     for (let i = 0; i < this.shadowCameras.length; i++) {

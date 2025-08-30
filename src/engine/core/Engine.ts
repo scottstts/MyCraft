@@ -457,7 +457,7 @@ async function start(canvas: HTMLCanvasElement) {
       canvasSize.width,
       canvasSize.height
     );
-    console.log('[Engine] Configuring post-processing settings');
+    // console.log('[Engine] Configuring post-processing settings');
     postProcessor.updateSettings({
       ssaoEnabled: true,
       ssaoIntensity: 0.3,
@@ -508,7 +508,7 @@ async function start(canvas: HTMLCanvasElement) {
   };
   
   // Configure shadows for optimal minecraft-style visuals
-  console.log('[Engine] Configuring shadow settings');
+  // console.log('[Engine] Configuring shadow settings');
   shadowSystem.updateSettings({
     enabled: true, // Enable shadows by default
     resolution: 1024,
@@ -800,17 +800,17 @@ function getGraphicsSettings(): GraphicsSettings {
 
 // Global function for UI to update post-processing settings
 function updatePostProcessingSettings(settings: PostProcessorSettings) {
-  console.log('[Engine] Received post-processing settings:', settings);
+  // console.log('[Engine] Received post-processing settings:', settings);
   if (composer) {
     composer.setSSAO(!!settings.ssaoEnabled, settings.ssaoIntensity, settings.ssaoRadius);
     composer.setBloom(!!settings.bloomEnabled, settings.bloomStrength, settings.bloomThreshold);
     composer.setFog(!!settings.fogEnabled, settings.fogBaseDensity ?? 0.002, settings.fogMaxDistance ?? dynamicFogDistance);
     composer.setVolumetrics(!!settings.volumetricsEnabled, settings.volumetricsIntensity ?? 0.1, settings.volumetricsSteps ?? 32);
     composer.setColorGrading(settings.exposure, settings.contrast, settings.saturation);
-    console.log('[Engine] Applied composer post-processing settings');
+    // console.log('[Engine] Applied composer post-processing settings');
   } else if (postProcessor) {
     postProcessor.updateSettings(settings);
-    console.log('[Engine] Applied post-processing settings successfully');
+    // console.log('[Engine] Applied post-processing settings successfully');
   } else {
     console.error('[Engine] Post-processor not available!');
   }
@@ -818,10 +818,10 @@ function updatePostProcessingSettings(settings: PostProcessorSettings) {
 
 // Global function for UI to update shadow settings
 function updateShadowSettings(settings: ShadowSettings) {
-  console.log('[Engine] Received shadow settings:', settings);
+  // console.log('[Engine] Received shadow settings:', settings);
   if (shadowSystem) {
     shadowSystem.updateSettings(settings);
-    console.log('[Engine] Applied shadow settings successfully');
+    // console.log('[Engine] Applied shadow settings successfully');
   } else {
     console.error('[Engine] Shadow system not available!');
   }
@@ -888,12 +888,12 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
 // Expose save function for UI
 (window as Window & { __saveWorld?: () => void }).__saveWorld = () => { void saveWorldToFile(); };
 
-console.log('[Engine] Global functions exposed to window:', {
-  updatePostProcessingSettings: !!(window as Window & { updatePostProcessingSettings?: unknown }).updatePostProcessingSettings,
-  updateShadowSettings: !!(window as Window & { updateShadowSettings?: unknown }).updateShadowSettings,
-  updateGraphicsSettings: !!(window as Window & { updateGraphicsSettings?: unknown }).updateGraphicsSettings,
-  getGraphicsSettings: !!(window as Window & { getGraphicsSettings?: unknown }).getGraphicsSettings,
-});
+// console.log('[Engine] Global functions exposed to window:', {
+//   updatePostProcessingSettings: !!(window as Window & { updatePostProcessingSettings?: unknown }).updatePostProcessingSettings,
+//   updateShadowSettings: !!(window as Window & { updateShadowSettings?: unknown }).updateShadowSettings,
+//   updateGraphicsSettings: !!(window as Window & { updateGraphicsSettings?: unknown }).updateGraphicsSettings,
+//   getGraphicsSettings: !!(window as Window & { getGraphicsSettings?: unknown }).getGraphicsSettings,
+// });
 
 // Expose SFX helpers to UI
 (window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__setSfxVolume = (v: number) => { sfx?.setVolume(v); };
