@@ -25,11 +25,12 @@ import swingSfxUrl from '../../assets/sounds/sound_effects/swing.mp3'
 // These are deliberately simple and Minecraft-like in proportion.
 const CFG = {
   // Proportions
-  torso: { width: 0.48, depth: 0.28, height: 0.70 }, // box size; attaches around spine/chest
+  torso: { width: 0.32, depth: 0.22, height: 0.70 }, // narrower to avoid blocking view
   spineLen: 0.52, // pelvis -> chest
   neckLen: 0.12,  // chest -> neck
   shoulderOffsetX: 0.26, // right shoulder lateral from spine
   shoulderOffsetZ: -0.10, // slight back so arm sits to the side
+  torsoBackOffset: 0.24, // push torso behind camera so it's not visible at neutral angles
   arm: {
     upperLen: 0.38,
     lowerLen: 0.36,
@@ -60,9 +61,11 @@ const CFG = {
     startStopDamping: 12.0, // lerp rate to engage/disengage locomotion
   },
   idle: {
-    shoulderPitch: THREE.MathUtils.degToRad(4),
-    shoulderRoll: THREE.MathUtils.degToRad(6),
-    forearmLag: THREE.MathUtils.degToRad(6),
+    // Base raised pose like Minecraft
+    baseShoulderPitch: THREE.MathUtils.degToRad(38), // forward/raised
+    baseShoulderYaw: THREE.MathUtils.degToRad(-12),  // slight inward
+    baseShoulderRoll: THREE.MathUtils.degToRad(-10), // tilt down to the right
+    forearmLag: THREE.MathUtils.degToRad(8),
     bobSpeed: 1.8,
   },
   swing: {
@@ -96,19 +99,12 @@ export class FirstPersonBody {
   private spine: THREE.Group
   private chest: THREE.Group
   private neck: THREE.Group
-  // Right arm chain
-  private rShoulder: THREE.Group
-  private rUpper: THREE.Group
-  private rFore: THREE.Group
-  private rHand: THREE.Group
-  // Left leg chain
-  private lThigh: THREE.Group
-  private lShin: THREE.Group
-  private lFoot: THREE.Group
-  // Right leg chain
-  private rThigh: THREE.Group
-  private rShin: THREE.Group
-  private rFoot: THREE.Group
+  // Right arm (single segment)
+  private armAnchor: THREE.Group
+  private rArm: THREE.Group
+  // Legs (single segments)
+  private lLeg: THREE.Group
+  private rLeg: THREE.Group
   // Torso mesh
   private torsoMesh: THREE.Mesh
 
@@ -169,18 +165,12 @@ export class FirstPersonBody {
     this.neck = new THREE.Group(); this.neck.name = 'Neck'
 
     // Right arm chain
-    this.rShoulder = new THREE.Group(); this.rShoulder.name = 'RShoulder'
-    this.rUpper = new THREE.Group(); this.rUpper.name = 'RUpperArm'
-    this.rFore = new THREE.Group(); this.rFore.name = 'RForearm'
-    this.rHand = new THREE.Group(); this.rHand.name = 'RHand'
+    this.armAnchor = new THREE.Group(); this.armAnchor.name = 'ArmAnchor'
+    this.rArm = new THREE.Group(); this.rArm.name = 'RArm'
 
     // Legs
-    this.lThigh = new THREE.Group(); this.lThigh.name = 'LThigh'
-    this.lShin = new THREE.Group(); this.lShin.name = 'LShin'
-    this.lFoot = new THREE.Group(); this.lFoot.name = 'LFoot'
-    this.rThigh = new THREE.Group(); this.rThigh.name = 'RThigh'
-    this.rShin = new THREE.Group(); this.rShin.name = 'RShin'
-    this.rFoot = new THREE.Group(); this.rFoot.name = 'RFoot'
+    this.lLeg = new THREE.Group(); this.lLeg.name = 'LLeg'
+    this.rLeg = new THREE.Group(); this.rLeg.name = 'RLeg'
 
     // Assemble hierarchy
     this.root.add(this.pelvis)
@@ -199,78 +189,29 @@ export class FirstPersonBody {
     this.chest.add(this.torsoMesh)
 
     // Right arm: shoulder attaches to chest with lateral/back offsets
-    this.chest.add(this.rShoulder)
-    this.rShoulder.position.set(CFG.shoulderOffsetX, -0.05, CFG.shoulderOffsetZ)
-    // Upper arm segment with pivot at shoulder top
-    const rUpperMesh = this.createSegmentMesh(
-      CFG.arm.thickness, CFG.arm.upperLen, CFG.arm.thickness, this.armMat
-    )
-    this.rUpper.add(rUpperMesh)
-    rUpperMesh.position.set(0, -CFG.arm.upperLen * 0.5, 0)
-    this.rShoulder.add(this.rUpper)
-    // Forearm
-    this.rUpper.add(this.rFore)
-    this.rFore.position.y = -CFG.arm.upperLen
-    const rForeMesh = this.createSegmentMesh(
-      CFG.arm.thickness * 0.95, CFG.arm.lowerLen, CFG.arm.thickness * 0.95, this.armMat
-    )
-    rForeMesh.position.set(0, -CFG.arm.lowerLen * 0.5, 0)
-    this.rFore.add(rForeMesh)
-    // Hand (small box)
-    this.rFore.add(this.rHand)
-    this.rHand.position.y = -CFG.arm.lowerLen
-    const rHandMesh = this.createSegmentMesh(
-      CFG.arm.thickness * 0.95, CFG.arm.handLen, CFG.arm.thickness * 0.95, this.armMat
-    )
-    rHandMesh.position.set(0, -CFG.arm.handLen * 0.5, 0)
-    this.rHand.add(rHandMesh)
+    // Anchor the arm to the neck so it rotates exactly with the camera (yaw + pitch)
+    this.neck.add(this.armAnchor)
+    // Position anchor so the arm sits front-right in camera space
+    this.armAnchor.position.set(0.24, -0.10, -0.28)
+    this.armAnchor.add(this.rArm)
+    // Build single arm block (upper+lower+hand unified). Pivot at top so rotation swings down.
+    const armLen = CFG.arm.upperLen + CFG.arm.lowerLen + CFG.arm.handLen
+    const rArmMesh = this.createSegmentMesh(CFG.arm.thickness, armLen, CFG.arm.thickness, this.armMat)
+    rArmMesh.position.set(0, -armLen * 0.5, 0)
+    this.rArm.add(rArmMesh)
 
-    // Legs: attach to pelvis with lateral offsets
-    // Left leg
-    this.pelvis.add(this.lThigh)
-    this.lThigh.position.set(-CFG.leg.hipOffsetX, 0, 0)
-    const lThighMesh = this.createSegmentMesh(
-      CFG.leg.thickness, CFG.leg.thighLen, CFG.leg.thickness, this.legMat
-    )
-    lThighMesh.position.set(0, -CFG.leg.thighLen * 0.5, 0)
-    this.lThigh.add(lThighMesh)
-    this.lThigh.add(this.lShin)
-    this.lShin.position.y = -CFG.leg.thighLen
-    const lShinMesh = this.createSegmentMesh(
-      CFG.leg.thickness * 0.95, CFG.leg.shinLen, CFG.leg.thickness * 0.95, this.legMat
-    )
-    lShinMesh.position.set(0, -CFG.leg.shinLen * 0.5, 0)
-    this.lShin.add(lShinMesh)
-    this.lShin.add(this.lFoot)
-    this.lFoot.position.y = -CFG.leg.shinLen
-    const lFootMesh = this.createBoxMesh(
-      CFG.leg.thickness * 1.05, CFG.leg.footHeight, CFG.leg.thickness * 1.4, this.legMat
-    )
-    lFootMesh.position.set(0, -CFG.leg.footHeight * 0.5, CFG.leg.thickness * 0.2)
-    this.lFoot.add(lFootMesh)
-
-    // Right leg
-    this.pelvis.add(this.rThigh)
-    this.rThigh.position.set(CFG.leg.hipOffsetX, 0, 0)
-    const rThighMesh = this.createSegmentMesh(
-      CFG.leg.thickness, CFG.leg.thighLen, CFG.leg.thickness, this.legMat
-    )
-    rThighMesh.position.set(0, -CFG.leg.thighLen * 0.5, 0)
-    this.rThigh.add(rThighMesh)
-    this.rThigh.add(this.rShin)
-    this.rShin.position.y = -CFG.leg.thighLen
-    const rShinMesh = this.createSegmentMesh(
-      CFG.leg.thickness * 0.95, CFG.leg.shinLen, CFG.leg.thickness * 0.95, this.legMat
-    )
-    rShinMesh.position.set(0, -CFG.leg.shinLen * 0.5, 0)
-    this.rShin.add(rShinMesh)
-    this.rShin.add(this.rFoot)
-    this.rFoot.position.y = -CFG.leg.shinLen
-    const rFootMesh = this.createBoxMesh(
-      CFG.leg.thickness * 1.05, CFG.leg.footHeight, CFG.leg.thickness * 1.4, this.legMat
-    )
-    rFootMesh.position.set(0, -CFG.leg.footHeight * 0.5, CFG.leg.thickness * 0.2)
-    this.rFoot.add(rFootMesh)
+    // Legs: single segment each, attach to pelvis with lateral offsets
+    this.pelvis.add(this.lLeg)
+    this.pelvis.add(this.rLeg)
+    this.lLeg.position.set(-CFG.leg.hipOffsetX, 0, 0)
+    this.rLeg.position.set(CFG.leg.hipOffsetX, 0, 0)
+    const legLen = CFG.leg.thighLen + CFG.leg.shinLen
+    const lLegMesh = this.createSegmentMesh(CFG.leg.thickness, legLen, CFG.leg.thickness, this.legMat)
+    lLegMesh.position.set(0, -legLen * 0.5, 0)
+    this.lLeg.add(lLegMesh)
+    const rLegMesh = this.createSegmentMesh(CFG.leg.thickness, legLen, CFG.leg.thickness, this.legMat)
+    rLegMesh.position.set(0, -legLen * 0.5, 0)
+    this.rLeg.add(rLegMesh)
   }
 
   /** Initialize and attach to player root; neck synced to camera each frame. */
@@ -318,33 +259,32 @@ export class FirstPersonBody {
     const pitch = cam.rotation.x
     this.neck.position.y = CFG.neckLen
     this.neck.rotation.set(pitch, 0, 0)
-    // Apply slight camera-forward offset to neck base (keeps torso behind near plane)
+    // Move whole body (pelvis+legs+torso) back toward camera so body isn't ahead of head
+    this.pelvis.position.set(0, 0, CFG.torsoBackOffset)
+    // Keep chest centered on pelvis; torso box is already narrow
     this.chest.position.set(0, 0, 0)
 
     // After root sync, apply torsion and bob to spine/chest
     this.spine.position.y = CFG.spineLen + torsoBob
     this.chest.rotation.set(0, torsoYaw, torsoRoll)
 
-    // Legs: gait cycle (opposed)
+    // Legs: gait cycle (opposed) using single-segment legs
     this.applyLegs(legPhase, this.locomotionBlend)
 
     // Right arm idle motion
     this.idleTime += dt
-    const idle = this.computeArmIdle(pitch, speed)
+    const idle = this.computeArmIdle(speed)
 
     // Swing overlay: advance and apply additive to right arm
     this.updateSwing(dt)
 
-    // Combine idle + swing overlay for right arm
+    // Combine idle + swing overlay for right arm (single segment)
     const swingRot = this.getCurrentSwingRot()
-    this.rShoulder.rotation.set(
+    this.rArm.rotation.set(
       idle.shoulderPitch + swingRot.pitch,
       idle.shoulderYaw + swingRot.yaw,
       idle.shoulderRoll
     )
-    this.rUpper.rotation.set(0, 0, 0)
-    this.rFore.rotation.set(idle.forearmPitch + swingRot.forePitch, 0, 0)
-    this.rHand.rotation.set(0, 0, 0)
 
     // Leg visibility based on pitch
     const pitchDeg = THREE.MathUtils.radToDeg(pitch)
@@ -395,33 +335,23 @@ export class FirstPersonBody {
   }
 
   private applyLegs(phase: number, blend: number): void {
-    // Opposing thighs and shins; hinge knees; small foot dorsiflex at contact
-    const thighA = Math.sin(phase) * CFG.locomotion.ampThigh * blend
-    const thighB = Math.sin(phase + Math.PI) * CFG.locomotion.ampThigh * blend
-    const shinA = Math.max(0, Math.sin(phase + Math.PI * 0.5)) * CFG.locomotion.ampShin * blend
-    const shinB = Math.max(0, Math.sin(phase + Math.PI * 1.5)) * CFG.locomotion.ampShin * blend
-    const footA = Math.max(0, Math.sin(phase + Math.PI * 0.5 + Math.PI * 0.25)) * CFG.locomotion.ampFoot * blend
-    const footB = Math.max(0, Math.sin(phase + Math.PI * 1.5 + Math.PI * 0.25)) * CFG.locomotion.ampFoot * blend
-
-    this.lThigh.rotation.set(thighA, 0, 0)
-    this.lShin.rotation.set(shinA, 0, 0)
-    this.lFoot.rotation.set(-footA * 0.5, 0, 0)
-
-    this.rThigh.rotation.set(thighB, 0, 0)
-    this.rShin.rotation.set(shinB, 0, 0)
-    this.rFoot.rotation.set(-footB * 0.5, 0, 0)
+    // Single segment legs: rotate at hip only, oppose phase
+    const legA = Math.sin(phase) * CFG.locomotion.ampThigh * blend
+    const legB = Math.sin(phase + Math.PI) * CFG.locomotion.ampThigh * blend
+    this.lLeg.rotation.set(legA, 0, 0)
+    this.rLeg.rotation.set(legB, 0, 0)
   }
 
-  private computeArmIdle(pitch: number, speed: number): { shoulderPitch: number; shoulderYaw: number; shoulderRoll: number; forearmPitch: number } {
-    // Gentle bob/sway; scales with locomotion blend and speed
+  private computeArmIdle(speed: number): { shoulderPitch: number; shoulderYaw: number; shoulderRoll: number; forearmPitch: number } {
+    // Base raised pose (constant relative to camera) with subtle bob
     const t = this.idleTime
     const moveScale = THREE.MathUtils.clamp(this.locomotionBlend * (0.5 + 0.1 * speed), 0, 1)
-    const bob = Math.sin(t * CFG.idle.bobSpeed * (1 + 0.6 * moveScale))
-    const shoulderPitch = -0.25 + bob * 0.05 + moveScale * 0.05 + pitch * 0.05
-    const shoulderRoll = -CFG.idle.shoulderRoll * (0.4 + moveScale * 0.6)
-    const shoulderYaw = 0.15
-    // Forearm lags slightly behind
-    const forearmPitch = shoulderPitch * 0.4 - 0.06
+    const bob = Math.sin(t * CFG.idle.bobSpeed * (1 + 0.5 * moveScale))
+    const shoulderPitch = CFG.idle.baseShoulderPitch + bob * 0.06
+    const shoulderYaw = CFG.idle.baseShoulderYaw + bob * 0.02
+    const shoulderRoll = CFG.idle.baseShoulderRoll + bob * 0.03
+    // Forearm lags slightly behind shoulder pitch
+    const forearmPitch = shoulderPitch * 0.35 - 0.04
     return { shoulderPitch, shoulderYaw, shoulderRoll, forearmPitch }
   }
 
@@ -474,21 +404,22 @@ export class FirstPersonBody {
     }
   }
 
-  private getCurrentSwingRot(): { pitch: number; yaw: number; forePitch: number } {
-    if (!this.swingActive) return { pitch: 0, yaw: 0, forePitch: 0 }
+  private getCurrentSwingRot(): { pitch: number; yaw: number } {
+    if (!this.swingActive) return { pitch: 0, yaw: 0 }
     const t = THREE.MathUtils.clamp(this.swingTime / (this.swingReturning ? CFG.swing.returnDuration : CFG.swing.duration), 0, 1)
     const easeIn = (x: number) => Math.pow(x, CFG.swing.easeIn)
     const easeOut = (x: number) => 1 - Math.pow(1 - x, CFG.swing.easeOut)
-    const forwardAmp = CFG.swing.amplitudePitch
+    // Downward strike amount from raised pose
+    const forwardAmp = CFG.swing.amplitudePitch * 0.8
     // Optional obstacle damping
     const damp = this.estimateObstacleDamping()
     const a = forwardAmp * damp
     if (!this.swingReturning) {
       const s = easeOut(t)
-      return { pitch: a * s, yaw: (this.swingKind === 'RMB' ? CFG.swing.amplitudeYawAlt : 0) * s, forePitch: a * 0.6 * s }
+      return { pitch: a * s, yaw: (this.swingKind === 'RMB' ? CFG.swing.amplitudeYawAlt : 0) * s }
     } else {
       const s = easeIn(1 - t)
-      return { pitch: a * s, yaw: (this.swingKind === 'RMB' ? CFG.swing.amplitudeYawAlt : 0) * s, forePitch: a * 0.6 * s }
+      return { pitch: a * s, yaw: (this.swingKind === 'RMB' ? CFG.swing.amplitudeYawAlt : 0) * s }
     }
   }
 
@@ -506,8 +437,8 @@ export class FirstPersonBody {
   }
 
   private setLegsVisible(v: boolean): void {
-    this.lThigh.visible = v; this.lShin.visible = v; this.lFoot.visible = v
-    this.rThigh.visible = v; this.rShin.visible = v; this.rFoot.visible = v
+    this.lLeg.visible = v;
+    this.rLeg.visible = v;
   }
 }
 
