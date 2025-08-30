@@ -15,6 +15,8 @@ export class PlayerController {
   private camera: THREE.PerspectiveCamera;
   private world: World;
   private input: InputSystem;
+  // Feature flag: land step-up assist (disabled per request)
+  private static readonly ENABLE_LAND_STEP_ASSIST = false;
 
   private velocityY: number = 0;
   private grounded: boolean = false;
@@ -142,11 +144,11 @@ export class PlayerController {
     this.velocityY += this.gravity * deltaSeconds;
     const dy = this.velocityY * deltaSeconds;
 
-    // Axis-separated sweep: resolve X, then Z, with land step-up assist, then Y
+    // Axis-separated sweep: resolve X, then Z, then Y
     const landHitX = this.resolveAxis('x', dx);
     const landHitZ = this.resolveAxis('z', dz);
-    if ((landHitX || landHitZ)) {
-      // Attempt small step-up on land to climb 1-block lips
+    // Land step-up assist is intentionally disabled. Water emerge logic remains below.
+    if (PlayerController.ENABLE_LAND_STEP_ASSIST && (landHitX || landHitZ)) {
       const landInput = this.input.getMoveInput();
       const yaw = this.camera.rotation.y;
       const forwardX = -Math.sin(yaw);
@@ -161,9 +163,8 @@ export class PlayerController {
         const candidates = [1.0, 0.75, 0.5, 0.25];
         const usedStep = this.tryStepUpMulti(candidates, desiredDir);
         if (usedStep > 0) {
-          // Smooth visual offset for stepped height
           this.startElevationTween(usedStep);
-          this.stepCooldown = 0.15; // prevent reattempt wiggle
+          this.stepCooldown = 0.15;
         }
       }
     }
