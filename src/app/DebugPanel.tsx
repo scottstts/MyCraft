@@ -184,6 +184,8 @@ export const DebugPanel: React.FC = () => {
             transition: 'all 0.2s ease',
             display: 'flex',
             alignItems: 'center',
+            minWidth: '140px',
+            justifyContent: 'flex-start',
           }}
           onMouseOver={(e) => {
             e.currentTarget.style.transform = 'translateY(-2px)'

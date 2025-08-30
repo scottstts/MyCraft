@@ -161,7 +161,7 @@ async function saveWorldToFile(): Promise<void> {
       signatureB64,
       publicKeyId: SAVE_PUBLIC_KEY_ID,
     };
-    downloadJson(`mycraft-world-${Date.now()}.json`, save);
+    downloadJson(`mycraft-world-${new Date().toISOString().replace(/[:.]/g,'-').replace('T','_').replace('Z','')}.json`, save);
   } catch (e) {
     console.error('Save world failed:', e);
     alert('Failed to save world. See console for details.');

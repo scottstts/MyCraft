@@ -47,7 +47,7 @@ export const AudioPanel: React.FC = () => {
 
   if (!audioVisible) {
     return (
-      <div style={{ position: 'fixed', top: '52px', left: '12px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div style={{ position: 'fixed', top: '54px', left: '12px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <button
           onClick={() => { setDebugVisible(false); setAudioVisible(true) }}
           style={{
@@ -67,6 +67,8 @@ export const AudioPanel: React.FC = () => {
             transition: 'all 0.2s ease',
             display: 'flex',
             alignItems: 'center',
+            minWidth: '140px',
+            justifyContent: 'flex-start',
           }}
           onMouseOver={(e) => {
             e.currentTarget.style.transform = 'translateY(-2px)'
@@ -106,6 +108,8 @@ export const AudioPanel: React.FC = () => {
             transition: 'all 0.2s ease',
             display: 'flex',
             alignItems: 'center',
+            minWidth: '140px',
+            justifyContent: 'flex-start',
           }}
           onMouseOver={(e) => {
             e.currentTarget.style.transform = 'translateY(-2px)'
@@ -132,7 +136,7 @@ export const AudioPanel: React.FC = () => {
   return (
     <div ref={panelRef} style={{
       position: 'fixed',
-      top: '92px', // directly under the Graphics Settings button
+      top: '94px', // directly under the Audio Settings button
       left: '12px',
       width: '320px',
       background: 'linear-gradient(145deg, rgba(32,39,49,0.98), rgba(22,27,35,0.98))',
