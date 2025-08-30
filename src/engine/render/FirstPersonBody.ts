@@ -62,9 +62,9 @@ const CFG = {
   },
   idle: {
     // Base raised pose like Minecraft
-    baseShoulderPitch: THREE.MathUtils.degToRad(38), // forward/raised
-    baseShoulderYaw: THREE.MathUtils.degToRad(-12),  // slight inward
-    baseShoulderRoll: THREE.MathUtils.degToRad(-10), // tilt down to the right
+    baseShoulderPitch: THREE.MathUtils.degToRad(-35), // forward/upward at 35 degrees
+    baseShoulderYaw: THREE.MathUtils.degToRad(8),     // slight outward
+    baseShoulderRoll: THREE.MathUtils.degToRad(12),   // tilt up to the right
     forearmLag: THREE.MathUtils.degToRad(8),
     bobSpeed: 1.8,
   },
@@ -191,13 +191,15 @@ export class FirstPersonBody {
     // Right arm: shoulder attaches to chest with lateral/back offsets
     // Anchor the arm to the neck so it rotates exactly with the camera (yaw + pitch)
     this.neck.add(this.armAnchor)
-    // Position anchor so the arm sits front-right in camera space
-    this.armAnchor.position.set(0.24, -0.10, -0.28)
+    // Move arm backward to connect hand with shoulder on torso
+    this.armAnchor.position.set(0.5, -0.3, -0.6)
     this.armAnchor.add(this.rArm)
     // Build single arm block (upper+lower+hand unified). Pivot at top so rotation swings down.
     const armLen = CFG.arm.upperLen + CFG.arm.lowerLen + CFG.arm.handLen
     const rArmMesh = this.createSegmentMesh(CFG.arm.thickness, armLen, CFG.arm.thickness, this.armMat)
-    rArmMesh.position.set(0, -armLen * 0.5, 0)
+    // Position mesh upward but rotate 180 degrees to fix texture orientation
+    rArmMesh.position.set(0, armLen, 0)
+    rArmMesh.rotation.z = Math.PI  // Flip 180 degrees around Z-axis
     this.rArm.add(rArmMesh)
 
     // Legs: single segment each, attach to pelvis with lateral offsets
@@ -409,11 +411,11 @@ export class FirstPersonBody {
     const t = THREE.MathUtils.clamp(this.swingTime / (this.swingReturning ? CFG.swing.returnDuration : CFG.swing.duration), 0, 1)
     const easeIn = (x: number) => Math.pow(x, CFG.swing.easeIn)
     const easeOut = (x: number) => 1 - Math.pow(1 - x, CFG.swing.easeOut)
-    // Downward strike amount from raised pose
-    const forwardAmp = CFG.swing.amplitudePitch * 0.8
+    // Downward strike amount from raised pose (negative pitch = downward)
+    const downwardAmp = CFG.swing.amplitudePitch * 0.8
     // Optional obstacle damping
     const damp = this.estimateObstacleDamping()
-    const a = forwardAmp * damp
+    const a = -downwardAmp * damp  // Negative for downward motion
     if (!this.swingReturning) {
       const s = easeOut(t)
       return { pitch: a * s, yaw: (this.swingKind === 'RMB' ? CFG.swing.amplitudeYawAlt : 0) * s }
