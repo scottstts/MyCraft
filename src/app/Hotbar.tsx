@@ -260,6 +260,35 @@ export function PauseMenu() {
             Resume
           </button>
           <button 
+            onClick={() => { (window as Window & { __saveWorld?: () => void }).__saveWorld?.() }} 
+            style={{ 
+              flex: 1, 
+              padding: '16px 24px', 
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', 
+              color: '#fff', 
+              border: 'none', 
+              borderRadius: 12, 
+              cursor: 'pointer', 
+              fontWeight: 700,
+              fontSize: 14,
+              letterSpacing: 0.5,
+              textTransform: 'uppercase',
+              boxShadow: '0 8px 24px rgba(16,185,129,0.4)',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              outline: 'none'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)'
+              e.currentTarget.style.boxShadow = '0 12px 32px rgba(16,185,129,0.5)'
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.boxShadow = '0 8px 24px rgba(16,185,129,0.4)'
+            }}
+          >
+            Save
+          </button>
+          <button 
             onClick={() => { setGameStarted(false); bumpRestartToken(); setPaused(false) }} 
             style={{ 
               flex: 1, 
