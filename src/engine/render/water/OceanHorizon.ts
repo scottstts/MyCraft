@@ -278,7 +278,9 @@ export class OceanHorizon {
         const r = rEdge(x, z)
         const t = THREE.MathUtils.clamp((r - rampStart) / Math.max(1e-3, rampEnd - rampStart), 0, 1)
         // Smooth ramp from yBase to seaLevelY, then flat at sea level to horizon
-        const y = THREE.MathUtils.lerp(yBase, seaLevelY, t)
+        // Use smoothstep for better transition and ensure we go slightly below water at far distances
+        const smoothT = t * t * (3 - 2 * t)
+        const y = THREE.MathUtils.lerp(yBase, seaLevelY - 0.05, smoothT)
         positions[idxP++] = x
         positions[idxP++] = y
         positions[idxP++] = z
