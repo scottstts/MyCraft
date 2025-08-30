@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useUIStore } from '../state/ui'
-import type { WorldSaveFile, WorldSavePayload } from '../types/save'
+import type { WorldSaveFile, WorldSavePayload, SavedInventory } from '../types/save'
 import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, verifyPayload, bytesFromBase64, base64FromBytes } from '../shared/save'
 import { CHUNK_SIZE } from '../config/constants'
+import { replaceInventory } from '../state/inventory'
 
 // Allowed total chunk options: odd squares to ensure a single center chunk
 const CHUNK_COUNT_OPTIONS = [1, 9, 25, 49, 81, 121, 169] // 1x1, 3x3, 5x5, 7x7, 9x9, 11x11, 13x13
@@ -67,6 +68,8 @@ export function StartPanel() {
           meta: save.meta as WorldSavePayload['meta'],
           settings: save.settings as WorldSavePayload['settings'],
           chunks: save.chunks as WorldSavePayload['chunks'],
+          // Include inventory if present to exactly match signed payload
+          inventory: (save as WorldSaveFile).inventory as WorldSavePayload['inventory'],
         }
         // Basic presence checks
         if (typeof save.signatureB64 !== 'string' || !save.signatureB64) {
@@ -140,6 +143,29 @@ export function StartPanel() {
             return
           }
         }
+        // Validate and apply inventory if present
+        const inv = (save as WorldSaveFile).inventory as SavedInventory | undefined
+        if (inv) {
+          const slots = Array.isArray(inv.slots) ? inv.slots : []
+          if (slots.length !== 9) {
+            alert('Save inventory invalid (must have 9 slots).')
+            return
+          }
+          // Normalize and set inventory
+          replaceInventory(slots.map((s) => ({
+            blockId: (s && (s.blockId === null || typeof s.blockId === 'number')) ? s.blockId : null,
+            count: Math.max(0, Math.floor((s && typeof s.count === 'number') ? s.count : 0)),
+          })))
+          if (typeof inv.selectedSlot === 'number') {
+            const sel = Math.max(0, Math.min(8, Math.floor(inv.selectedSlot)))
+            useUIStore.getState().setSelectedSlot(sel)
+          }
+        } else {
+          // If no inventory in save, reset to empty
+          replaceInventory(Array.from({ length: 9 }, () => ({ blockId: null, count: 0 })))
+          useUIStore.getState().setSelectedSlot(0)
+        }
+
         // Push into global for engine to ingest after start
         ;(window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT = save as WorldSaveFile
         ;(window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED = true

@@ -103,4 +103,21 @@ export function consumeOneFromSelected(): boolean {
   return useInventory.getState().consumeFromSelected(1) === 1;
 }
 
+// Utilities for save/load integration
+export function getInventorySlots(): Slot[] {
+  // Return a deep copy to avoid accidental mutations
+  return useInventory.getState().slots.map(s => ({ blockId: s.blockId, count: s.count }));
+}
+
+export function replaceInventory(slots: Slot[]): void {
+  // Normalize to exactly 9 slots
+  const norm: Slot[] = Array.from({ length: 9 }, (_, i) => {
+    const s = slots[i];
+    if (!s || typeof s !== 'object') return { blockId: null, count: 0 };
+    const blockId = (s.blockId === null || typeof s.blockId === 'number') ? s.blockId : null;
+    const count = Math.max(0, Math.floor(Number.isFinite(s.count) ? s.count : 0));
+    return { blockId, count };
+  });
+  useInventory.setState({ slots: norm });
+}
 

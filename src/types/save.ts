@@ -4,6 +4,16 @@
 
 import type { V3i } from './index.js';
 
+export interface SavedSlot {
+  blockId: number | null;
+  count: number;
+}
+
+export interface SavedInventory {
+  slots: SavedSlot[]; // length 9
+  selectedSlot: number; // 0..8
+}
+
 export interface SavedChunk {
   key: string;    // `${cx},${cy},${cz}`
   cx: number;
@@ -27,6 +37,7 @@ export interface WorldSavePayload {
   meta: { createdAt: string };
   settings: WorldSettings;
   chunks: SavedChunk[];
+  inventory?: SavedInventory; // optional for backward compatibility
 }
 
 export interface WorldSaveFile extends WorldSavePayload {
@@ -35,4 +46,3 @@ export interface WorldSaveFile extends WorldSavePayload {
   signatureB64: string;    // signature over JSON.stringify(payload) bytes
   publicKeyId: string;     // static identifier to verify origin
 }
-

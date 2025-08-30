@@ -35,9 +35,10 @@ import { InteractionSystem } from '../systems/InteractionSystem';
 import { useUIStore } from '../../state/ui';
 import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
-import type { WorldSaveFile, WorldSavePayload, SavedChunk } from '../../types/save';
+import type { WorldSaveFile, WorldSavePayload, SavedChunk, SavedInventory } from '../../types/save';
 import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, base64FromBytes, buildSaveFile, signPayload } from '../../shared/save';
 import { CHUNK_SIZE as CONST_CHUNK_SIZE } from '../../config/constants';
+import { getInventorySlots } from '../../state/inventory';
 import FirstPersonBody from '../render/FirstPersonBody';
 
 let rafId: number | null = null;
@@ -142,6 +143,10 @@ async function saveWorldToFile(): Promise<void> {
         worldRadius,
       },
       chunks,
+      inventory: {
+        slots: getInventorySlots().map(s => ({ blockId: s.blockId, count: s.count })),
+        selectedSlot: useUIStore.getState().selectedSlot,
+      } satisfies SavedInventory,
     };
 
     const signatureB64 = await signPayload(payload);
