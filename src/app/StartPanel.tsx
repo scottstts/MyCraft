@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useUIStore } from '../state/ui'
+import type { WorldSaveFile, WorldSavePayload } from '../types/save'
+import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, verifyPayload } from '../shared/save'
+import { CHUNK_SIZE } from '../config/constants'
 
 // Allowed total chunk options: odd squares to ensure a single center chunk
 const CHUNK_COUNT_OPTIONS = [1, 9, 25, 49, 81, 121, 169] // 1x1, 3x3, 5x5, 7x7, 9x9, 11x11, 13x13
@@ -31,6 +34,68 @@ export function StartPanel() {
   }, [chunkCount, chunkSize])
 
   if (gameStarted) return null
+
+  const handleLoadWorld = async () => {
+    try {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'application/json'
+      input.onchange = async () => {
+        const file = input.files?.[0]
+        if (!file) return
+        const text = await file.text()
+        let json: unknown
+        try {
+          json = JSON.parse(text)
+        } catch {
+          alert('Invalid JSON file.')
+          return
+        }
+        const save = json as Partial<WorldSaveFile>
+        if (save.kind !== 'MyCraftWorld' || save.version !== 1) {
+          alert('Not a MyCraft world save.')
+          return
+        }
+        if (save.publicKeyId !== SAVE_PUBLIC_KEY_ID || save.signatureAlg !== SAVE_SIGNATURE_ALG) {
+          alert('Save file not recognized (signature key mismatch).')
+          return
+        }
+        // Build payload view to re-verify signature
+        const payload: WorldSavePayload = {
+          kind: 'MyCraftWorld',
+          version: 1,
+          meta: save.meta as WorldSavePayload['meta'],
+          settings: save.settings as WorldSavePayload['settings'],
+          chunks: save.chunks as WorldSavePayload['chunks'],
+        }
+        const ok = await verifyPayload(payload, save.signatureB64 as string)
+        if (!ok) {
+          alert('Save signature verification failed (data may be corrupted).')
+          return
+        }
+        // Validate chunk size compatibility with current build
+        const s = payload.settings.chunkSize
+        if (!s || typeof s.x !== 'number' || typeof s.y !== 'number' || typeof s.z !== 'number') {
+          alert('Save file missing chunk size.')
+          return
+        }
+        if (s.x !== CHUNK_SIZE.x || s.y !== CHUNK_SIZE.y || s.z !== CHUNK_SIZE.z) {
+          alert(`Save chunk size ${s.x}x${s.y}x${s.z} does not match game chunk size ${CHUNK_SIZE.x}x${CHUNK_SIZE.y}x${CHUNK_SIZE.z}.`)
+          return
+        }
+        // Push into global for engine to ingest after start
+        ;(window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile }).__WORLD_SNAPSHOT = save as WorldSaveFile
+        // Sync UI selections from save for consistency
+        setChunkCount(payload.settings.chunkCount)
+        setChunkSize(payload.settings.chunkSize)
+        setGameStarted(true)
+      }
+      input.click()
+    } catch (e) {
+      console.error('Load world failed:', e)
+      alert('Failed to load world save.')
+    }
+  }
 
   return (
     <div style={{ 
@@ -227,6 +292,37 @@ export function StartPanel() {
           >
             Launch World
           </button>
+
+          <button
+            onClick={handleLoadWorld}
+            style={{ 
+              padding: '14px 18px',
+              background: 'linear-gradient(135deg, #00c6ff 0%, #0072ff 100%)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 12,
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: 14,
+              letterSpacing: 0.4,
+              textTransform: 'uppercase',
+              boxShadow: '0 8px 24px rgba(0,114,255,0.35)',
+              transition: 'all 0.25s ease',
+              outline: 'none'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)'
+              e.currentTarget.style.boxShadow = '0 12px 32px rgba(0,114,255,0.45)'
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,114,255,0.35)'
+            }}
+            onMouseDown={(e) => { e.currentTarget.style.transform = 'translateY(0) scale(0.98)' }}
+            onMouseUp={(e) => { e.currentTarget.style.transform = 'translateY(-2px) scale(1)' }}
+          >
+            Load World
+          </button>
         </div>
       </div>
     </div>
@@ -234,4 +330,3 @@ export function StartPanel() {
 }
 
 export default StartPanel
-

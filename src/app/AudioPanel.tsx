@@ -47,7 +47,7 @@ export const AudioPanel: React.FC = () => {
 
   if (!audioVisible) {
     return (
-      <div style={{ position: 'fixed', top: '52px', left: '12px', zIndex: 1000 }}>
+      <div style={{ position: 'fixed', top: '52px', left: '12px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <button
           onClick={() => { setDebugVisible(false); setAudioVisible(true) }}
           style={{
@@ -85,6 +85,45 @@ export const AudioPanel: React.FC = () => {
             <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" fill="currentColor" opacity="0.8"/>
           </svg>
           Audio Settings
+        </button>
+
+        <button
+          onClick={() => { (window as Window & { __saveWorld?: () => void }).__saveWorld?.() }}
+          style={{
+            padding: '8px 12px',
+            background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+            color: '#f8f9fa',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '12px',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            fontWeight: 600,
+            letterSpacing: 0.3,
+            pointerEvents: 'auto',
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+            transition: 'all 0.2s ease',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)'
+            e.currentTarget.style.boxShadow = '0 8px 32px rgba(0,153,255,0.4), 0 4px 16px rgba(0,0,0,0.4)'
+            e.currentTarget.style.borderColor = 'rgba(0,153,255,0.4)'
+            e.currentTarget.style.background = 'linear-gradient(145deg, rgba(42,49,59,0.98), rgba(32,37,45,0.98))'
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)'
+            e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.3)'
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+            e.currentTarget.style.background = 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))'
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', flexShrink: 0 }}>
+            <path d="M17 3H7a2 2 0 00-2 2v14l7-3 7 3V5a2 2 0 00-2-2z" fill="currentColor" opacity="0.8"/>
+          </svg>
+          Save World
         </button>
       </div>
     )

@@ -35,6 +35,9 @@ import { InteractionSystem } from '../systems/InteractionSystem';
 import { useUIStore } from '../../state/ui';
 import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
+import type { WorldSaveFile, WorldSavePayload, SavedChunk } from '../../types/save';
+import { SAVE_PUBLIC_KEY_ID, base64FromBytes, buildSaveFile, signPayload } from '../../shared/save';
+import { CHUNK_SIZE as CONST_CHUNK_SIZE } from '../../config/constants';
 import FirstPersonBody from '../render/FirstPersonBody';
 
 let rafId: number | null = null;
@@ -70,6 +73,89 @@ let dynamicFogDistance = 600; // default, updated based on world size
 let playerRigRoot: THREE.Group | null = null;
 let playerBody: FirstPersonBody | null = null;
 let lastMoveActive = false;
+// Snapshot pending from StartPanel (global handoff)
+declare global {
+  interface Window {
+    __WORLD_SNAPSHOT?: WorldSaveFile;
+    __saveWorld?: () => void;
+  }
+}
+
+function computeBoundsFromChunkCount(totalChunks: number) {
+  const sideApprox = Math.max(1, Math.round(Math.sqrt(totalChunks)));
+  const side = sideApprox;
+  const negRadius = Math.floor(side / 2);
+  const posRadius = side - 1 - negRadius;
+  const bounds = {
+    minX: -negRadius * CHUNK_SIZE.x,
+    maxX: (posRadius + 1) * CHUNK_SIZE.x,
+    minZ: -negRadius * CHUNK_SIZE.z,
+    maxZ: (posRadius + 1) * CHUNK_SIZE.z,
+  } as const;
+  const worldRadius = Math.max(Math.abs(bounds.maxX - bounds.minX), Math.abs(bounds.maxZ - bounds.minZ)) / 2;
+  return { bounds, worldRadius };
+}
+
+function downloadJson(filename: string, data: unknown): void {
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function saveWorldToFile(): Promise<void> {
+  try {
+    if (!world) throw new Error('World not initialized');
+    const ui = useUIStore.getState();
+    const totalChunks = Math.max(1, Math.floor(ui.chunkCount || 9));
+    const { bounds, worldRadius } = computeBoundsFromChunkCount(totalChunks);
+
+    const chunks = world.getLoadedChunkKeys().map((key): SavedChunk => {
+      const chunk = world!.getChunkByKey(key)!;
+      const [cx, cy, cz] = key.split(',').map((s) => parseInt(s, 10));
+      const data = chunk.getData();
+      return {
+        key,
+        cx,
+        cy,
+        cz,
+        size: { ...data.size },
+        voxelsB64: base64FromBytes(data.voxels),
+      };
+    });
+
+    const payload: WorldSavePayload = {
+      kind: 'MyCraftWorld',
+      version: 1,
+      meta: { createdAt: new Date().toISOString() },
+      settings: {
+        seed: world.getSeed(),
+        chunkCount: totalChunks,
+        chunkSize: { ...CONST_CHUNK_SIZE },
+        bounds,
+        worldRadius,
+      },
+      chunks,
+    };
+
+    const signatureB64 = await signPayload(payload);
+    const save: WorldSaveFile = buildSaveFile(payload, signatureB64);
+    // Include identifier for debugging
+    if (save.publicKeyId !== SAVE_PUBLIC_KEY_ID) {
+      throw new Error('Signing key mismatch');
+    }
+    downloadJson(`mycraft-world-${Date.now()}.json`, save);
+  } catch (e) {
+    console.error('Save world failed:', e);
+    alert('Failed to save world. See console for details.');
+  }
+}
 
 function update(dtSeconds: number) {
   // Always allow pause toggle to be consumed
@@ -443,18 +529,7 @@ async function start(canvas: HTMLCanvasElement) {
 
   // Determine world size (total chunks -> NxN grid)
   const totalChunks = Math.max(1, Math.floor(useUIStore.getState().chunkCount || 9));
-  const sideApprox = Math.max(1, Math.round(Math.sqrt(totalChunks)));
-  const side = sideApprox; // UI constrains to odd squares; general handling if not
-  const negRadius = Math.floor(side / 2);
-  const posRadius = side - 1 - negRadius;
-
-  // Configure world bounds for player (invisible force field)
-  const bounds = {
-    minX: -negRadius * CHUNK_SIZE.x,
-    maxX: (posRadius + 1) * CHUNK_SIZE.x,
-    minZ: -negRadius * CHUNK_SIZE.z,
-    maxZ: (posRadius + 1) * CHUNK_SIZE.z,
-  } as const;
+  const { bounds, worldRadius } = computeBoundsFromChunkCount(totalChunks);
 
   // Update water material edge bounds for consistent seam blend
   if (waterMaterial) {
@@ -462,11 +537,7 @@ async function start(canvas: HTMLCanvasElement) {
     waterMaterial.setEdge(0.0, 2.0); // disable edge brightening to avoid visible grid
   }
 
-  // Calculate world radius for terrain generation
-  const worldRadius = Math.max(
-    Math.abs(bounds.maxX - bounds.minX),
-    Math.abs(bounds.maxZ - bounds.minZ)
-  ) / 2;
+  // worldRadius computed above
 
   // Calculate dynamic fog distance to avoid horizon gaps
   const margin = CHUNK_SIZE.x * 2; // small cushion
@@ -535,10 +606,44 @@ async function start(canvas: HTMLCanvasElement) {
     }
   });
   
-  // Request NxN grid of chunks around origin
-  for (let cx = -negRadius; cx <= posRadius; cx++) {
-    for (let cz = -negRadius; cz <= posRadius; cz++) {
-      world.ensureChunk(cx, 0, cz);
+  // If a saved snapshot is provided via global, ingest it directly and skip generation
+  const pendingSave = (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile }).__WORLD_SNAPSHOT;
+  if (pendingSave && pendingSave.kind === 'MyCraftWorld') {
+    try {
+      // Validate chunk size compatibility
+      const s = pendingSave.settings.chunkSize;
+      if (s.x !== CHUNK_SIZE.x || s.y !== CHUNK_SIZE.y || s.z !== CHUNK_SIZE.z) {
+        throw new Error(`Chunk size mismatch: save ${s.x}x${s.y}x${s.z}, game ${CHUNK_SIZE.x}x${CHUNK_SIZE.y}x${CHUNK_SIZE.z}`);
+      }
+      // Set world seed from save
+      world.setSeed(pendingSave.settings.seed);
+      // Ingest chunks
+      for (const ch of pendingSave.chunks) {
+        const key = ch.key;
+        const vox = new Uint8Array(atob(ch.voxelsB64).split('').map((c) => c.charCodeAt(0)));
+        const chunkData = { size: ch.size, voxels: vox };
+        world.chunkPipeline.ingestChunkData(key, chunkData);
+      }
+    } catch (e) {
+      console.error('Failed to load snapshot; falling back to generation.', e);
+      // Fall through to normal generation
+      for (let cx = Math.floor(bounds.minX / CHUNK_SIZE.x); cx < Math.floor(bounds.maxX / CHUNK_SIZE.x); cx++) {
+        for (let cz = Math.floor(bounds.minZ / CHUNK_SIZE.z); cz < Math.floor(bounds.maxZ / CHUNK_SIZE.z); cz++) {
+          world.ensureChunk(cx, 0, cz);
+        }
+      }
+    } finally {
+      // Clear the pending snapshot so restarts don’t reuse
+      delete (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile }).__WORLD_SNAPSHOT;
+    }
+  } else {
+    // Request NxN grid of chunks around origin
+    const negRadius = Math.floor(Math.sqrt(totalChunks) / 2);
+    const posRadius = Math.sqrt(totalChunks) - 1 - negRadius;
+    for (let cx = -negRadius; cx <= posRadius; cx++) {
+      for (let cz = -negRadius; cz <= posRadius; cz++) {
+        world.ensureChunk(cx, 0, cz);
+      }
     }
   }
   
@@ -762,6 +867,9 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
 (window as Window & {
   getGraphicsSettings?: () => GraphicsSettings;
 }).getGraphicsSettings = getGraphicsSettings;
+
+// Expose save function for UI
+(window as Window & { __saveWorld?: () => void }).__saveWorld = () => { void saveWorldToFile(); };
 
 console.log('[Engine] Global functions exposed to window:', {
   updatePostProcessingSettings: !!(window as Window & { updatePostProcessingSettings?: unknown }).updatePostProcessingSettings,

@@ -65,6 +65,65 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
   }
   
   /**
+   * Ingest provided chunk data directly (bypass generator), then mesh and emit events.
+   * Used when loading a saved world snapshot.
+   */
+  ingestChunkData(key: ChunkKey, chunkData: ChunkData): void {
+    // Cache chunk data for neighbor-aware meshing
+    this.chunkDataMap.set(key, chunkData);
+
+    if (!this.atlasConfig) {
+      throw new Error('[ChunkPipeline] Atlas config must be set before ingesting chunks');
+    }
+
+    // Mesh this chunk with neighbors if available
+    const neighbors = this.buildNeighborsForKey(key);
+    const meshRequest: MeshChunkRequest = {
+      type: 'MESH_CHUNK',
+      payload: {
+        key,
+        chunkData,
+        atlasConfig: this.atlasConfig,
+        blockRegistry: this.blockRegistry,
+        neighbors,
+      },
+    };
+    this.mesherWorker.postMessage(meshRequest);
+
+    // Inform world about chunk data
+    this.emit('CHUNK_READY', { key, chunkData });
+
+    // Also request re-mesh for already-present neighbors to update shared faces
+    const [cx, cy, cz] = key.split(',').map((s) => parseInt(s, 10));
+    const neighborCoords: Array<[number, number, number]> = [
+      [cx + 1, cy, cz],
+      [cx - 1, cy, cz],
+      [cx, cy + 1, cz],
+      [cx, cy - 1, cz],
+      [cx, cy, cz + 1],
+      [cx, cy, cz - 1],
+    ];
+    for (const [nx, ny, nz] of neighborCoords) {
+      const nKey = chunkKey(nx, ny, nz);
+      const nData = this.chunkDataMap.get(nKey);
+      if (nData) {
+        const nNeighbors = this.buildNeighborsFor(nx, ny, nz);
+        const remeshReq: MeshChunkRequest = {
+          type: 'MESH_CHUNK',
+          payload: {
+            key: nKey,
+            chunkData: nData,
+            atlasConfig: this.atlasConfig,
+            blockRegistry: this.blockRegistry,
+            neighbors: nNeighbors,
+          },
+        };
+        this.mesherWorker.postMessage(remeshReq);
+      }
+    }
+  }
+  
+  /**
    * Set atlas configuration and block registry for meshing
    */
   setAtlasConfig(atlasConfig: AtlasConfig, blockRegistry: BlockDef[]): void {
