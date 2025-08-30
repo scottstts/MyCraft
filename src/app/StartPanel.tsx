@@ -4,6 +4,7 @@ import type { WorldSaveFile, WorldSavePayload, SavedInventory } from '../types/s
 import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, SAVE_ENC_ALG, verifyPayload, bytesFromBase64, base64FromBytes, decryptPayload } from '../shared/save'
 import { CHUNK_SIZE } from '../config/constants'
 import { replaceInventory } from '../state/inventory'
+import bgImage from '../assets/others/bg_img.png'
 
 // Allowed total chunk options: odd squares to ensure a single center chunk
 const CHUNK_COUNT_OPTIONS = [1, 9, 25, 49, 81, 121, 169] // 1x1, 3x3, 5x5, 7x7, 9x9, 11x11, 13x13
@@ -196,10 +197,19 @@ export function StartPanel() {
       display: 'flex', 
       alignItems: 'center', 
       justifyContent: 'center', 
-      background: 'radial-gradient(ellipse at center, #1a1f2e 0%, #0f1419 100%)',
+      backgroundImage: `url(${bgImage})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat',
       color: '#f8f9fa',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'linear-gradient(135deg, rgba(26,31,46,0.85) 0%, rgba(15,20,25,0.9) 100%)',
+        backdropFilter: 'blur(2px)'
+      }} />
       <div style={{ 
         width: 480, 
         padding: 32, 
@@ -207,7 +217,9 @@ export function StartPanel() {
         background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))', 
         border: '1px solid rgba(255,255,255,0.08)', 
         boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.4)',
-        backdropFilter: 'blur(20px)'
+        backdropFilter: 'blur(20px)',
+        position: 'relative',
+        zIndex: 1
       }}>
         <div style={{ 
           display: 'flex', 
