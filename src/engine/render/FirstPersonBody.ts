@@ -32,8 +32,8 @@ const CFG = {
   shoulderOffsetZ: -0.10, // slight back so arm sits to the side
   torsoBackOffset: 0.24, // push torso behind camera so it's not visible at neutral angles
   arm: {
-    upperLen: 0.38,  // shorter upper arm
-    lowerLen: 0.36,  // shorter lower arm  
+    upperLen: 0.36,  // shorter upper arm
+    lowerLen: 0.34,  // shorter lower arm  
     handLen: 0.14,   // shorter hand
     thickness: 0.08, // much thinner
   },
@@ -43,7 +43,7 @@ const CFG = {
     footLen: 0.20, // forward extent purely visual; foot height is small
     thickness: 0.18,
     footHeight: 0.08,
-    hipOffsetX: 0.16,
+    hipOffsetX: 0.10,
   },
   // Camera positioning relative to neck to avoid self-occlusion
   cameraForwardOffset: 0.02, // push neck slightly behind camera forward to minimize near-plane clipping
