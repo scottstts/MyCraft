@@ -11,7 +11,7 @@ import { InputSystem } from './Input';
 import { SelectionSystem } from './SelectionSystem';
  
 import { addToInventory, getSelectedPlacementBlockId, consumeOneFromSelected } from '../../state/inventory';
-import { CHUNK_SIZE, PLAYER } from '../../config/constants';
+import { CHUNK_SIZE, PLAYER, SWING_CYCLE_SECONDS } from '../../config/constants';
 import { WATER_LEVEL } from '../world/TerrainGenerator';
 import { getBlockIdByName } from '../world/blocks/BlockRegistry';
 import { worldToChunk } from '../utils/coords';
@@ -39,6 +39,8 @@ export class InteractionSystem {
   private readonly leavesId: number = getBlockIdByName('leaves') ?? 7;
   // Track current strike progress for a targeted block
   private currentHit: { x: number; y: number; z: number; id: number; count: number } | null = null;
+  // Global interaction cooldown matching arm swing pace (independent of animation)
+  private nextActionAllowedAt: number = 0; // epoch seconds
   
 
   constructor(
@@ -58,67 +60,80 @@ export class InteractionSystem {
   }
 
   update(): void {
-    // Left click → mine
-    if (this.input.consumeLeftClick()) {
-      const sel = this.selection.getSelection();
-      if (sel.hit && sel.hitCell) {
-        const { x, y, z } = sel.hitCell;
-        const blockId = this.world.getBlock(x, y, z);
-        if (blockId !== this.airId) {
-          // Increment or reset strike counter based on targeted cell and block id
-          if (
-            this.currentHit &&
-            this.currentHit.x === x &&
-            this.currentHit.y === y &&
-            this.currentHit.z === z &&
-            this.currentHit.id === blockId
-          ) {
-            this.currentHit.count += 1;
-          } else {
-            this.currentHit = { x, y, z, id: blockId, count: 1 };
-          }
+    const nowSec = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
 
-          const required = this.getRequiredStrikes(blockId);
-          if (this.currentHit.count >= required) {
-            // Only play break sound for solid blocks
-            const wasSolid = this.world.isBlockSolid(x, y, z);
-            if (wasSolid) {
-              (window as WindowWithSfxHooks).__sfxBreak?.();
+    // Left click → mine (honor cooldown)
+    if (this.input.consumeLeftClick()) {
+      if (nowSec < this.nextActionAllowedAt) {
+        // Under cooldown: ignore action, but consume the click so it isn't queued
+        // Do not advance strike counts
+      } else {
+        this.nextActionAllowedAt = nowSec + SWING_CYCLE_SECONDS;
+        const sel = this.selection.getSelection();
+        if (sel.hit && sel.hitCell) {
+          const { x, y, z } = sel.hitCell;
+          const blockId = this.world.getBlock(x, y, z);
+          if (blockId !== this.airId) {
+            // Increment or reset strike counter based on targeted cell and block id
+            if (
+              this.currentHit &&
+              this.currentHit.x === x &&
+              this.currentHit.y === y &&
+              this.currentHit.z === z &&
+              this.currentHit.id === blockId
+            ) {
+              this.currentHit.count += 1;
+            } else {
+              this.currentHit = { x, y, z, id: blockId, count: 1 };
             }
-            // Remove the block
-            this.world.setBlock(x, y, z, this.airId);
-            // Water surface edge-fill: if this cell is at water surface level, open to air above,
-            // and adjacent to water at the same level, immediately fill with water.
-            if (wasSolid && this.shouldFillWithWater(x, y, z)) {
-              this.world.setBlock(x, y, z, this.waterId);
+
+            const required = this.getRequiredStrikes(blockId);
+            if (this.currentHit.count >= required) {
+              // Only play break sound for solid blocks
+              const wasSolid = this.world.isBlockSolid(x, y, z);
+              if (wasSolid) {
+                (window as WindowWithSfxHooks).__sfxBreak?.();
+              }
+              // Remove the block
+              this.world.setBlock(x, y, z, this.airId);
+              // Water surface edge-fill: if this cell is at water surface level, open to air above,
+              // and adjacent to water at the same level, immediately fill with water.
+              if (wasSolid && this.shouldFillWithWater(x, y, z)) {
+                this.world.setBlock(x, y, z, this.waterId);
+              }
+              // Add drop to inventory
+              addToInventory(blockId, 1);
+              this.remeshAffectedChunks(x, y, z);
+              // Reset strike progress after successful break
+              this.currentHit = null;
             }
-            // Add drop to inventory
-            addToInventory(blockId, 1);
-            this.remeshAffectedChunks(x, y, z);
-            // Reset strike progress after successful break
-            this.currentHit = null;
           }
         }
       }
     }
 
-    // Right click → place
+    // Right click → place (honor cooldown)
     if (this.input.consumeRightClick()) {
-      const sel = this.selection.getSelection();
-      if (sel.hit && sel.placeCell) {
-        const { x, y, z } = sel.placeCell;
-        const permission = this.evaluatePlacement(x, y, z);
-        if (permission.canPlace) {
-          const placeId = getSelectedPlacementBlockId();
-          if (placeId !== null && consumeOneFromSelected()) {
-            if (permission.elevatePlayer) {
-              // Smooth visual step: start a short tween from old to new height
-              this.camera.position.y += 1;
-              this.playerController?.startElevationTween(1);
+      if (nowSec < this.nextActionAllowedAt) {
+        // Under cooldown: ignore action, but consume the click
+      } else {
+        this.nextActionAllowedAt = nowSec + SWING_CYCLE_SECONDS;
+        const sel = this.selection.getSelection();
+        if (sel.hit && sel.placeCell) {
+          const { x, y, z } = sel.placeCell;
+          const permission = this.evaluatePlacement(x, y, z);
+          if (permission.canPlace) {
+            const placeId = getSelectedPlacementBlockId();
+            if (placeId !== null && consumeOneFromSelected()) {
+              if (permission.elevatePlayer) {
+                // Smooth visual step: start a short tween from old to new height
+                this.camera.position.y += 1;
+                this.playerController?.startElevationTween(1);
+              }
+              this.world.setBlock(x, y, z, placeId);
+              this.remeshAffectedChunks(x, y, z);
+              (window as WindowWithSfxHooks).__sfxPlace?.();
             }
-            this.world.setBlock(x, y, z, placeId);
-            this.remeshAffectedChunks(x, y, z);
-            (window as WindowWithSfxHooks).__sfxPlace?.();
           }
         }
       }

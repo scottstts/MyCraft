@@ -17,6 +17,7 @@
  */
 
 import * as THREE from 'three'
+import { SWING_CYCLE_SECONDS } from '../../config/constants'
 
 import armTexUrl from '../../assets/textures/arm.png'
 import legTexUrl from '../../assets/textures/leg.png'
@@ -71,8 +72,9 @@ const CFG = {
     bobSpeed: 1.8,
   },
   swing: {
-    duration: 0.22, // seconds for full down/forward strike
-    returnDuration: 0.18, // return to idle
+    // Fractions of the shared cycle for down and return
+    duration: SWING_CYCLE_SECONDS * 0.55, // seconds for down/forward strike
+    returnDuration: SWING_CYCLE_SECONDS * 0.45, // return to idle
     amplitudePitch: THREE.MathUtils.degToRad(78),
     amplitudeYawAlt: THREE.MathUtils.degToRad(10), // additional yaw for RMB vs LMB
     easeIn: 3.0,  // cubic-ish
