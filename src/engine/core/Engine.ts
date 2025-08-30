@@ -36,7 +36,7 @@ import { useUIStore } from '../../state/ui';
 import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
 import type { WorldSaveFile, WorldSavePayload, SavedChunk } from '../../types/save';
-import { SAVE_PUBLIC_KEY_ID, base64FromBytes, buildSaveFile, signPayload } from '../../shared/save';
+import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, base64FromBytes, buildSaveFile, signPayload } from '../../shared/save';
 import { CHUNK_SIZE as CONST_CHUNK_SIZE } from '../../config/constants';
 import FirstPersonBody from '../render/FirstPersonBody';
 
@@ -607,9 +607,14 @@ async function start(canvas: HTMLCanvasElement) {
   });
   
   // If a saved snapshot is provided via global, ingest it directly and skip generation
-  const pendingSave = (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile }).__WORLD_SNAPSHOT;
+  const pendingSave = (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
+  const wasVerified = (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED;
   if (pendingSave && pendingSave.kind === 'MyCraftWorld') {
     try {
+      // Require Start Panel to have verified the snapshot and the expected key id/alg
+      if (!wasVerified || pendingSave.publicKeyId !== SAVE_PUBLIC_KEY_ID || pendingSave.signatureAlg !== SAVE_SIGNATURE_ALG) {
+        throw new Error('Save not verified by loader');
+      }
       // Validate chunk size compatibility
       const s = pendingSave.settings.chunkSize;
       if (s.x !== CHUNK_SIZE.x || s.y !== CHUNK_SIZE.y || s.z !== CHUNK_SIZE.z) {
@@ -619,22 +624,23 @@ async function start(canvas: HTMLCanvasElement) {
       world.setSeed(pendingSave.settings.seed);
       // Ingest chunks
       for (const ch of pendingSave.chunks) {
-        const key = ch.key;
         const vox = new Uint8Array(atob(ch.voxelsB64).split('').map((c) => c.charCodeAt(0)));
         const chunkData = { size: ch.size, voxels: vox };
-        world.chunkPipeline.ingestChunkData(key, chunkData);
+        world.chunkPipeline.ingestChunkData(ch.key, chunkData);
       }
     } catch (e) {
-      console.error('Failed to load snapshot; falling back to generation.', e);
-      // Fall through to normal generation
-      for (let cx = Math.floor(bounds.minX / CHUNK_SIZE.x); cx < Math.floor(bounds.maxX / CHUNK_SIZE.x); cx++) {
-        for (let cz = Math.floor(bounds.minZ / CHUNK_SIZE.z); cz < Math.floor(bounds.maxZ / CHUNK_SIZE.z); cz++) {
-          world.ensureChunk(cx, 0, cz);
-        }
-      }
+      console.error('Failed to load snapshot; returning to Start Panel.', e);
+      try { alert('Save file verification failed or is corrupted. Returning to Start Panel.'); } catch { /* ignore */ }
+      // Clean up and return control to Start Panel
+      stop();
+      const ui = useUIStore.getState();
+      ui.setGameStarted(false);
+      ui.setInGame(false);
+      return; // abort start
     } finally {
       // Clear the pending snapshot so restarts don’t reuse
-      delete (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile }).__WORLD_SNAPSHOT;
+      delete (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
+      delete (window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED;
     }
   } else {
     // Request NxN grid of chunks around origin

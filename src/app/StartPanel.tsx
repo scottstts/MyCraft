@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useUIStore } from '../state/ui'
 import type { WorldSaveFile, WorldSavePayload } from '../types/save'
-import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, verifyPayload } from '../shared/save'
+import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, verifyPayload, bytesFromBase64 } from '../shared/save'
 import { CHUNK_SIZE } from '../config/constants'
 
 // Allowed total chunk options: odd squares to ensure a single center chunk
@@ -68,9 +68,21 @@ export function StartPanel() {
           settings: save.settings as WorldSavePayload['settings'],
           chunks: save.chunks as WorldSavePayload['chunks'],
         }
-        const ok = await verifyPayload(payload, save.signatureB64 as string)
-        if (!ok) {
-          alert('Save signature verification failed (data may be corrupted).')
+        // Basic presence checks
+        if (typeof save.signatureB64 !== 'string' || !save.signatureB64) {
+          alert('Save file missing signature.')
+          return
+        }
+        // Verify signature. Any error is treated as invalid.
+        try {
+          const ok = await verifyPayload(payload, save.signatureB64)
+          if (!ok) {
+            alert('Save signature verification failed (data may be corrupted).')
+            return
+          }
+        } catch (err) {
+          console.error('Signature verification error:', err)
+          alert('Unable to verify save signature. The file may be corrupted or browser crypto is unavailable.')
           return
         }
         // Validate chunk size compatibility with current build
@@ -83,8 +95,47 @@ export function StartPanel() {
           alert(`Save chunk size ${s.x}x${s.y}x${s.z} does not match game chunk size ${CHUNK_SIZE.x}x${CHUNK_SIZE.y}x${CHUNK_SIZE.z}.`)
           return
         }
+        // Validate chunks array shape and data sanity
+        if (!Array.isArray(payload.chunks) || payload.chunks.length === 0) {
+          alert('Save has no chunks.')
+          return
+        }
+        const expectedLen = s.x * s.y * s.z
+        for (const ch of payload.chunks) {
+          if (!ch || typeof ch !== 'object') {
+            alert('Save chunk entry invalid.')
+            return
+          }
+          const { key, cx, cy, cz, size, voxelsB64 } = ch as {
+            key: string; cx: number; cy: number; cz: number; size: { x: number; y: number; z: number }; voxelsB64: string;
+          }
+          if (typeof key !== 'string' || `${cx},${cy},${cz}` !== key) {
+            alert('Save chunk key mismatch.')
+            return
+          }
+          if (!size || size.x !== s.x || size.y !== s.y || size.z !== s.z) {
+            alert('Save chunk size mismatch.')
+            return
+          }
+          if (typeof voxelsB64 !== 'string' || !voxelsB64) {
+            alert('Save chunk data missing.')
+            return
+          }
+          try {
+            const bytes = bytesFromBase64(voxelsB64)
+            if (bytes.length !== expectedLen) {
+              alert('Save chunk data corrupted (length mismatch).')
+              return
+            }
+          } catch (e) {
+            console.error('Chunk decode error:', e)
+            alert('Save chunk data is not valid base64.')
+            return
+          }
+        }
         // Push into global for engine to ingest after start
-        ;(window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile }).__WORLD_SNAPSHOT = save as WorldSaveFile
+        ;(window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT = save as WorldSaveFile
+        ;(window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED = true
         // Sync UI selections from save for consistency
         setChunkCount(payload.settings.chunkCount)
         setChunkSize(payload.settings.chunkSize)
