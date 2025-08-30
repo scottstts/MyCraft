@@ -161,7 +161,7 @@ export const DebugPanel: React.FC = () => {
     return (
       <div style={{
         position: 'fixed',
-        top: '52px',
+        top: '12px',
         left: '12px',
         zIndex: 1000,
       }}>
@@ -182,18 +182,25 @@ export const DebugPanel: React.FC = () => {
             backdropFilter: 'blur(10px)',
             boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
             transition: 'all 0.2s ease',
+            display: 'flex',
+            alignItems: 'center',
           }}
           onMouseOver={(e) => {
-            e.currentTarget.style.transform = 'translateY(-1px)'
-            e.currentTarget.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)'
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'
+            e.currentTarget.style.transform = 'translateY(-2px)'
+            e.currentTarget.style.boxShadow = '0 8px 32px rgba(79,172,254,0.4), 0 4px 16px rgba(0,0,0,0.4)'
+            e.currentTarget.style.borderColor = 'rgba(79,172,254,0.4)'
+            e.currentTarget.style.background = 'linear-gradient(145deg, rgba(42,49,59,0.98), rgba(32,37,45,0.98))'
           }}
           onMouseOut={(e) => {
             e.currentTarget.style.transform = 'translateY(0)'
             e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.3)'
             e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+            e.currentTarget.style.background = 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))'
           }}
         >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', flexShrink: 0 }}>
+            <path d="M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7l-2 3v1h8v-1l-2-3h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 12H3V4h18v10z" fill="currentColor" opacity="0.8"/>
+          </svg>
           Graphics Settings
         </button>
       </div>

@@ -67,33 +67,10 @@ export function Crosshair() {
   )
 }
 
-export function FpsOverlay() {
+export function TopRightWidget() {
   const fps = useUIStore(s => s.fps)
-  return (
-    <div style={{
-      position: 'absolute', 
-      right: 12, 
-      top: 12, 
-      padding: '8px 12px',
-      background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
-      color: '#f8f9fa',
-      border: '1px solid rgba(255,255,255,0.1)',
-      borderRadius: '8px',
-      fontSize: '12px',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      fontWeight: 600,
-      letterSpacing: 0.3,
-      pointerEvents: 'none',
-      backdropFilter: 'blur(10px)',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.3)'
-    }}>
-      {fps} fps
-    </div>
-  )
-}
-
-export function ClockOverlay() {
-  // Read time from engine globals
+  
+  // Read time from engine globals for clock
   const [t, setT] = React.useState(0);
   React.useEffect(() => {
     let raf = 0
@@ -115,57 +92,17 @@ export function ClockOverlay() {
   const hourAngle = (hoursFloat / 12) * 360 // deg
   const minuteAngle = (minutes / 60) * 360
 
-  const size = 44
-  const center = size / 2
+  const clockSize = 36
+  const center = clockSize / 2
 
-  return (
-    <div style={{ position: 'absolute', right: 12, top: 52, pointerEvents: 'none' }}>
-      <div style={{
-        width: size,
-        height: size,
-        borderRadius: '50%',
-        border: '2px solid rgba(255,255,255,0.6)',
-        background: 'rgba(0,0,0,0.35)',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
-        position: 'relative',
-      }}>
-        {/* hour hand */}
-        <div style={{
-          position: 'absolute',
-          left: center - 2,
-          top: center - 12,
-          width: 4,
-          height: 12,
-          background: '#fff',
-          transformOrigin: '50% 100%',
-          transform: `rotate(${hourAngle}deg)`,
-          borderRadius: 2,
-        }} />
-        {/* minute hand */}
-        <div style={{
-          position: 'absolute',
-          left: center - 1,
-          top: center - 18,
-          width: 2,
-          height: 18,
-          background: '#dde6ff',
-          transformOrigin: '50% 100%',
-          transform: `rotate(${minuteAngle}deg)`,
-          borderRadius: 2,
-        }} />
-        {/* center dot */}
-        <div style={{ position: 'absolute', left: center - 2, top: center - 2, width: 4, height: 4, background: '#fff', borderRadius: '50%' }} />
-      </div>
-    </div>
-  )
-}
-
-export function PauseHint() {
   return (
     <div style={{
-      position: 'absolute', 
-      left: 12, 
-      top: 12, 
+      position: 'absolute',
+      right: 12,
+      top: 12,
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
       padding: '8px 12px',
       background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
       color: '#f8f9fa',
@@ -179,9 +116,70 @@ export function PauseHint() {
       backdropFilter: 'blur(10px)',
       boxShadow: '0 4px 16px rgba(0,0,0,0.3)'
     }}>
-      Press P to pause
+      {/* Pause hint */}
+      <span style={{ opacity: 0.8 }}>Press P to pause</span>
+      
+      {/* Separator */}
+      <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.2)' }} />
+      
+      {/* FPS display */}
+      <span style={{ color: '#4ade80', fontWeight: 700 }}>{fps} fps</span>
+      
+      {/* Separator */}
+      <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.2)' }} />
+      
+      {/* Clock */}
+      <div style={{
+        width: clockSize,
+        height: clockSize,
+        borderRadius: '50%',
+        border: '2px solid rgba(255,255,255,0.4)',
+        background: 'rgba(0,0,0,0.2)',
+        position: 'relative',
+        flexShrink: 0
+      }}>
+        {/* hour hand */}
+        <div style={{
+          position: 'absolute',
+          left: center - 1.5,
+          top: center - 8,
+          width: 3,
+          height: 8,
+          background: '#fff',
+          transformOrigin: '50% 100%',
+          transform: `rotate(${hourAngle}deg)`,
+          borderRadius: 2,
+        }} />
+        {/* minute hand */}
+        <div style={{
+          position: 'absolute',
+          left: center - 0.5,
+          top: center - 12,
+          width: 1,
+          height: 12,
+          background: '#dde6ff',
+          transformOrigin: '50% 100%',
+          transform: `rotate(${minuteAngle}deg)`,
+          borderRadius: 1,
+        }} />
+        {/* center dot */}
+        <div style={{ position: 'absolute', left: center - 1.5, top: center - 1.5, width: 3, height: 3, background: '#fff', borderRadius: '50%' }} />
+      </div>
     </div>
   )
+}
+
+// Legacy components for backward compatibility (now empty)
+export function FpsOverlay() {
+  return null
+}
+
+export function ClockOverlay() {
+  return null
+}
+
+export function PauseHint() {
+  return null
 }
 
 export function PauseMenu() {
