@@ -32,6 +32,7 @@ import { InputSystem } from '../systems/Input';
 import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
+import waterTexture from '../../assets/textures/water.png';
 import { useUIStore } from '../../state/ui';
 import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
@@ -390,7 +391,7 @@ async function start(canvas: HTMLCanvasElement) {
   try {
     waterTex = await new Promise<THREE.Texture>((resolve, reject) => {
       new THREE.TextureLoader().load(
-        '/src/assets/textures/water.png',
+        waterTexture,
         (tex) => resolve(tex),
         undefined,
         reject

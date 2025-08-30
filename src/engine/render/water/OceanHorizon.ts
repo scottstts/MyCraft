@@ -3,6 +3,7 @@ import { WaterSurfaceMaterial } from './WaterSurfaceMaterial'
 import { BlockMaterial } from '../BlockMaterial'
 import { CHUNK_SIZE } from '../../../config/constants'
 import { getHeightAtPosition } from '../../world/TerrainGenerator'
+import sandTexture from '../../../assets/textures/sand.png'
 
 export interface OceanHorizonOptions {
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number }
@@ -375,7 +376,7 @@ export class OceanHorizon {
 
   private loadSandTexture(): Promise<THREE.Texture> {
     return new Promise((resolve, reject) => {
-      new THREE.TextureLoader().load('/src/assets/textures/sand.png', (tex) => resolve(tex), undefined, reject)
+      new THREE.TextureLoader().load(sandTexture, (tex) => resolve(tex), undefined, reject)
     })
   }
 

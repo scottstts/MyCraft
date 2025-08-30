@@ -6,6 +6,17 @@
 
 import * as THREE from 'three';
 
+// Import texture files as modules so Vite can process them
+import grassTopTexture from '../../assets/textures/grass_top.png';
+import dirtTexture from '../../assets/textures/dirt.png';
+import grassSideTexture from '../../assets/textures/grass_side.png';
+import cobblestoneTexture from '../../assets/textures/cobblestone.png';
+import sandTexture from '../../assets/textures/sand.png';
+import waterTexture from '../../assets/textures/water.png';
+import woodTopTexture from '../../assets/textures/wood_top.png';
+import woodSideTexture from '../../assets/textures/wood_side.png';
+import treeLeavesTexture from '../../assets/textures/tree_leaves.png';
+
 export interface AtlasConfig {
   tileSize: number;
   atlasSize: number;
@@ -113,24 +124,22 @@ async function loadTextureAtlas(): Promise<THREE.Texture> {
   // Clear to transparent (for unused areas)
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Define texture positions in the atlas - only the textures we actually use
-  const texturePositions = {
-    'grass_top': [0, 0],
-    'dirt': [1, 0],
-    'grass_side': [2, 0],
-    'cobblestone': [3, 0],
-    'sand': [4, 0],
-    'water': [5, 0],
-    'wood_top': [6, 0],
-    'wood_side': [7, 0],
-    'tree_leaves': [8, 0]
+  // Define texture positions in the atlas with their imported paths
+  const textureData = {
+    'grass_top': { path: grassTopTexture, position: [0, 0] },
+    'dirt': { path: dirtTexture, position: [1, 0] },
+    'grass_side': { path: grassSideTexture, position: [2, 0] },
+    'cobblestone': { path: cobblestoneTexture, position: [3, 0] },
+    'sand': { path: sandTexture, position: [4, 0] },
+    'water': { path: waterTexture, position: [5, 0] },
+    'wood_top': { path: woodTopTexture, position: [6, 0] },
+    'wood_side': { path: woodSideTexture, position: [7, 0] },
+    'tree_leaves': { path: treeLeavesTexture, position: [8, 0] }
   } as const;
 
-  // Load and draw each texture - grass_top and grass_side from textures directory, others from material_icons
-  const loadPromises = Object.entries(texturePositions).map(async ([textureName, [x, y]]) => {
+  // Load and draw each texture using imported paths
+  const loadPromises = Object.entries(textureData).map(async ([textureName, { path: texturePath, position: [x, y] }]) => {
     try {
-      let texturePath = '';
-      texturePath = `/src/assets/textures/${textureName}.png`;
 
       const texture = await new Promise<THREE.Texture>((resolve, reject) => {
         textureLoader.load(
