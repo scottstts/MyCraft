@@ -11,7 +11,9 @@
  * Notes:
  *  - Renders inside the main scene; no physics; fully occludable by world geometry.
  *  - Camera is treated as the eyes; Neck is synced to camera pose (no head mesh). 
- *  - Swings are queued FIFO; one swing per click; each plays swing.mp3 once.
+ *  - Swings are NOT queued; a click only triggers a swing if idle.
+ *    Rapid clicks do not speed up or queue animations or audio. When clicks stop,
+ *    the current swing finishes returning to idle and then stops.
  */
 
 import * as THREE from 'three'
@@ -75,7 +77,6 @@ const CFG = {
     amplitudeYawAlt: THREE.MathUtils.degToRad(10), // additional yaw for RMB vs LMB
     easeIn: 3.0,  // cubic-ish
     easeOut: 3.0,
-    queueMax: 8,
   },
   legVisibilityPitchDeg: 35, // legs visible when looking down beyond this pitch
   // Optional obstacle damping
@@ -127,14 +128,12 @@ export class FirstPersonBody {
   // Arm idle jiggle
   private idleTime = 0
 
-  // Swing queue
-  private swingQueue: SwingKind[] = []
+  // Swing state (no queueing)
   private swingActive: boolean = false
   private swingTime: number = 0
   private swingReturning: boolean = false
   private swingKind: SwingKind = 'LMB'
-  private swingAudioQueue: HTMLAudioElement[] = []
-  private swingAudioPlaying: boolean = false
+  private swingAudio: HTMLAudioElement | null = null
 
   // Scratch objects (avoid per-frame allocs)
   private _v3a = new THREE.Vector3()
@@ -349,14 +348,13 @@ export class FirstPersonBody {
     // Update cached camera position
     this.lastCamX = cam.position.x
     this.lastCamZ = cam.position.z
-    // Drive swing audio queue
-    this.pumpSwingAudio()
+    // No audio queue to drive; audio plays only at swing start
   }
 
-  /** Enqueue a primary-click swing */
-  onPrimaryClick(): void { this.enqueueSwing('LMB') }
-  /** Enqueue a secondary-click swing */
-  onSecondaryClick(): void { this.enqueueSwing('RMB') }
+  /** Try to start a primary-click swing (if idle) */
+  onPrimaryClick(): void { this.tryStartSwing('LMB') }
+  /** Try to start a secondary-click swing (if idle) */
+  onSecondaryClick(): void { this.tryStartSwing('RMB') }
 
   /** Movement input edge notifications; optional since update() derives motion from camera speed. */
   onMovementInputStart(): void { this.movingFlag = true }
@@ -364,10 +362,9 @@ export class FirstPersonBody {
 
   /** Cleanup */
   dispose(): void {
-    // Stop any playing swing audios
-    for (const a of this.swingAudioQueue) { try { a.pause() } catch { /* ignore */ } }
-    this.swingAudioQueue.length = 0
-    this.swingAudioPlaying = false
+    // Stop any playing swing audio
+    try { this.swingAudio?.pause() } catch { /* ignore */ }
+    this.swingAudio = null
     // Remove rig from root
     try { this.playerRoot?.remove(this.root) } catch { /* ignore */ }
   }
@@ -410,37 +407,28 @@ export class FirstPersonBody {
     return { shoulderPitch, shoulderYaw, shoulderRoll, forearmPitch }
   }
 
-  private enqueueSwing(kind: SwingKind): void {
-    if (this.swingQueue.length >= CFG.swing.queueMax) return
-    this.swingQueue.push(kind)
-    // Queue audio as well
+  private tryStartSwing(kind: SwingKind): void {
+    // Do not queue; only start if currently idle
+    if (this.swingActive) return
+    this.swingKind = kind
+    this.swingActive = true
+    this.swingReturning = false
+    this.swingTime = 0
+    // Play one swing sound, no queue/overlap
     try {
-      const a = new Audio(swingSfxUrl)
-      a.loop = false
-      a.preload = 'auto'
-      // Let multiple instances overlap slightly; we will also try to queue playback orderly
-      this.swingAudioQueue.push(a)
-      this.pumpSwingAudio()
+      if (!this.swingAudio) {
+        this.swingAudio = new Audio(swingSfxUrl)
+        this.swingAudio.loop = false
+        this.swingAudio.preload = 'auto'
+      }
+      // Restart sound from start for each swing
+      try { this.swingAudio.pause() } catch { /* ignore */ }
+      try { this.swingAudio.currentTime = 0 } catch { /* ignore */ }
+      void this.swingAudio.play().catch(() => { /* ignore autoplay errors */ })
     } catch { /* ignore */ }
   }
 
-  private pumpSwingAudio(): void {
-    if (this.swingAudioPlaying) return
-    const next = this.swingAudioQueue.shift()
-    if (!next) return
-    this.swingAudioPlaying = true
-    next.onended = () => { this.swingAudioPlaying = false; this.pumpSwingAudio() }
-    void next.play().catch(() => { this.swingAudioPlaying = false })
-  }
-
   private updateSwing(dt: number): void {
-    if (!this.swingActive && this.swingQueue.length > 0) {
-      const next = this.swingQueue.shift()!
-      this.swingKind = next
-      this.swingActive = true
-      this.swingReturning = false
-      this.swingTime = 0
-    }
     if (!this.swingActive) return
 
     const dur = this.swingReturning ? CFG.swing.returnDuration : CFG.swing.duration
