@@ -63,7 +63,7 @@ const CFG = {
   idle: {
     // Base raised pose like Minecraft
     baseShoulderPitch: THREE.MathUtils.degToRad(-65), // forward/upward at 15 degrees (reduced by 20)
-    baseShoulderYaw: THREE.MathUtils.degToRad(8),     // slight outward
+    baseShoulderYaw: THREE.MathUtils.degToRad(-25),   // tilt inward toward center by 25 degrees
     baseShoulderRoll: THREE.MathUtils.degToRad(12),   // tilt up to the right
     forearmLag: THREE.MathUtils.degToRad(8),
     bobSpeed: 1.8,
