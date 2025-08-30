@@ -44,7 +44,21 @@ export function StartPanel() {
       const input = document.createElement('input')
       input.type = 'file'
       input.accept = 'application/json'
+      input.oncancel = () => {
+        setLoading(false)
+      }
+      // Fallback: detect when user focuses back on window without selecting a file
+      const handleFocus = () => {
+        setTimeout(() => {
+          if (!input.files || input.files.length === 0) {
+            setLoading(false)
+          }
+          window.removeEventListener('focus', handleFocus)
+        }, 100)
+      }
+      window.addEventListener('focus', handleFocus)
       input.onchange = async () => {
+        window.removeEventListener('focus', handleFocus)
         const file = input.files?.[0]
         if (!file) {
           setLoading(false)
