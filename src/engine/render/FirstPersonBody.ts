@@ -329,14 +329,14 @@ export class FirstPersonBody {
       const bob = Math.sin(this.idleTime * CFG.idle.bobSpeed * (1 + 0.5 * moveScale))
       const swingAmp = THREE.MathUtils.degToRad(22) * this.locomotionBlend
       // Oppose left leg for natural gait (arms/legs counter-phase)
-      const swing = Math.sin(legPhase + Math.PI) * swingAmp
-      const swayYaw = Math.sin(legPhase) * THREE.MathUtils.degToRad(3) * this.locomotionBlend
+      const swing = Math.sin(legPhase) * swingAmp
+      const swayYaw = -Math.sin(legPhase) * THREE.MathUtils.degToRad(3) * this.locomotionBlend
       const jitterPitch = bob * 0.035 * this.locomotionBlend
       const jitterRoll = bob * 0.025 * this.locomotionBlend
-      const baseYaw = THREE.MathUtils.degToRad(22) * this.locomotionBlend // slight inward when moving; none when idle
+      const baseYaw = THREE.MathUtils.degToRad(35) * this.locomotionBlend // slight inward when moving; none when idle
       this.lArm.rotation.set(
         -(THREE.MathUtils.degToRad(165) + swing + jitterPitch), // Point straight down when idle
-        -(baseYaw + swayYaw),       // Opposite-day yaw
+        (baseYaw + swayYaw),       // Opposite-day yaw
         -(0 + jitterRoll)          // Opposite-day roll
       )
     }
