@@ -211,26 +211,31 @@ export function StartPanel() {
         backdropFilter: 'blur(2px)'
       }} />
       <div style={{ 
-        width: 480, 
-        padding: 32, 
+        width: '100%',
+        maxWidth: 480,
+        margin: '0 16px',
+        padding: 'clamp(20px, 5vw, 32px)', 
         borderRadius: 16, 
         background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))', 
         border: '1px solid rgba(255,255,255,0.08)', 
         boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.4)',
         backdropFilter: 'blur(20px)',
         position: 'relative',
-        zIndex: 1
+        zIndex: 1,
+        boxSizing: 'border-box'
       }}>
         <div style={{ 
           display: 'flex', 
           alignItems: 'center', 
           justifyContent: 'space-between', 
-          marginBottom: 24,
+          marginBottom: 'clamp(16px, 4vw, 24px)',
           paddingBottom: 16,
-          borderBottom: '1px solid rgba(255,255,255,0.06)'
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          flexWrap: 'wrap',
+          gap: 8
         }}>
           <div style={{ 
-            fontSize: 28, 
+            fontSize: 'clamp(24px, 6vw, 28px)', 
             fontWeight: 800, 
             letterSpacing: -0.5,
             background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
@@ -249,7 +254,7 @@ export function StartPanel() {
             Configure World
           </div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 'clamp(16px, 4vw, 24px)' }}>
           <label style={{ display: 'grid', gap: 12 }}>
             <span style={{ 
               fontSize: 14, 
@@ -266,16 +271,17 @@ export function StartPanel() {
                 onChange={(e) => setLocalCount(Number(e.target.value))}
                 style={{ 
                   flex: 1, 
-                  padding: '14px 16px', 
+                  padding: 'clamp(12px, 3vw, 14px) 16px', 
                   background: 'linear-gradient(145deg, #1e2532, #151b26)', 
                   color: '#f1f5f9', 
                   border: '1px solid rgba(148,163,184,0.2)', 
                   borderRadius: 12,
-                  fontSize: 14,
+                  fontSize: 'clamp(13px, 3vw, 14px)',
                   fontWeight: 500,
                   outline: 'none',
                   transition: 'all 0.2s ease',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  minHeight: 44
                 }}
                 onMouseOver={(e) => {
                   e.currentTarget.style.borderColor = 'rgba(148,163,184,0.4)'
@@ -319,16 +325,17 @@ export function StartPanel() {
                 onChange={(e) => setLocalSize(JSON.parse(e.target.value))}
                 style={{ 
                   flex: 1, 
-                  padding: '14px 16px', 
+                  padding: 'clamp(12px, 3vw, 14px) 16px', 
                   background: 'linear-gradient(145deg, #1e2532, #151b26)', 
                   color: '#f1f5f9', 
                   border: '1px solid rgba(148,163,184,0.2)', 
                   borderRadius: 12,
-                  fontSize: 14,
+                  fontSize: 'clamp(13px, 3vw, 14px)',
                   fontWeight: 500,
                   outline: 'none',
                   transition: 'all 0.2s ease',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  minHeight: 44
                 }}
                 onMouseOver={(e) => {
                   e.currentTarget.style.borderColor = 'rgba(148,163,184,0.4)'
@@ -363,21 +370,22 @@ export function StartPanel() {
               setGameStarted(true); 
             }}
             style={{ 
-              padding: '16px 24px', 
+              padding: 'clamp(12px, 3vw, 16px) clamp(20px, 5vw, 24px)', 
               background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 
               color: '#fff', 
               border: 'none', 
               borderRadius: 12, 
               cursor: 'pointer', 
               fontWeight: 700,
-              fontSize: 16,
+              fontSize: 'clamp(14px, 3.5vw, 16px)',
               letterSpacing: 0.5,
               textTransform: 'uppercase',
               boxShadow: '0 8px 24px rgba(102,126,234,0.4), 0 4px 12px rgba(118,75,162,0.3)',
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
               outline: 'none',
               position: 'relative',
-              overflow: 'hidden'
+              overflow: 'hidden',
+              minHeight: 48
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
@@ -398,8 +406,8 @@ export function StartPanel() {
           </button>
 
           <div style={{
-            marginTop: 24,
-            padding: 20,
+            marginTop: 'clamp(16px, 4vw, 24px)',
+            padding: 'clamp(16px, 4vw, 20px)',
             background: 'rgba(255,255,255,0.02)',
             border: '1px solid rgba(255,255,255,0.06)',
             borderRadius: 12,
@@ -418,21 +426,22 @@ export function StartPanel() {
             <button
             onClick={handleLoadWorld}
             style={{ 
-              padding: '16px 24px', 
+              padding: 'clamp(12px, 3vw, 16px) clamp(20px, 5vw, 24px)', 
               background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', 
               color: '#fff', 
               border: 'none', 
               borderRadius: 12, 
               cursor: 'pointer', 
               fontWeight: 700,
-              fontSize: 16,
+              fontSize: 'clamp(14px, 3.5vw, 16px)',
               letterSpacing: 0.5,
               textTransform: 'uppercase',
               boxShadow: '0 8px 24px rgba(240,147,251,0.4), 0 4px 12px rgba(245,87,108,0.3)',
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
               outline: 'none',
               position: 'relative',
-              overflow: 'hidden'
+              overflow: 'hidden',
+              minHeight: 48
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
