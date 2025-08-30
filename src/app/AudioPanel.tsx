@@ -108,8 +108,7 @@ export const AudioPanel: React.FC = () => {
             transition: 'all 0.2s ease',
             display: 'flex',
             alignItems: 'center',
-            minWidth: '140px',
-            justifyContent: 'flex-start',
+            width: 'fit-content',
           }}
           onMouseOver={(e) => {
             e.currentTarget.style.transform = 'translateY(-2px)'
