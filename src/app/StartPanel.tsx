@@ -42,7 +42,7 @@ export function StartPanel() {
   const handleLoadWorld = async () => {
     // Block launch on mobile devices or Safari desktop
     if (isMobileDevice() || (isSafari() && !isMobileDevice())) {
-      alert('Please visit in Chrome or other Chromium browsers!')
+      alert('Please visit it on desktop, and in Chrome or other Chromium browsers.')
       return
     }
     try {
@@ -415,7 +415,7 @@ export function StartPanel() {
           <button
             onClick={() => {
               if (blocked) {
-                alert('Please visit in Chrome or other Chromium browsers!')
+                alert('Please visit it on desktop, and in Chrome or other Chromium browsers.')
                 return
               }
               setChunkCount(localCount)
