@@ -443,7 +443,7 @@ export function StartPanel() {
               e.currentTarget.style.transform = 'translateY(-2px) scale(1)'
             }}
           >
-            Launch World
+            Launch New World
           </button>
 
           <div style={{
@@ -453,15 +453,31 @@ export function StartPanel() {
             border: '1px solid rgba(255,255,255,0.06)',
             borderRadius: 12,
             display: 'grid',
-            gap: 16
+            gap: 16,
+            position: 'relative'
           }}>
+            <div style={{
+              position: 'absolute',
+              top: -8,
+              left: 16,
+              background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+              padding: '4px 12px',
+              borderRadius: 8,
+              fontSize: 11,
+              fontWeight: 600,
+              color: '#f5576c',
+              letterSpacing: 0.5,
+              border: '1px solid rgba(255,255,255,0.06)'
+            }}>
+              Alternatively
+            </div>
             <div style={{ 
               fontSize: 12, 
               color: '#64748b',
               fontStyle: 'italic',
               lineHeight: 1.4
             }}>
-              You can also load a world saved by yourself or others. Click "Load World", and select the saved JSON file.
+              You can also load a world saved by yourself or others. Click "Load Saved World", and select the saved JSON file.
             </div>
 
             <button
@@ -499,7 +515,7 @@ export function StartPanel() {
               e.currentTarget.style.transform = 'translateY(-2px) scale(1)'
             }}
           >
-            Load World
+            Load Saved World
           </button>
           </div>
         </div>
