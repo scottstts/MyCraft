@@ -101,6 +101,10 @@ export class InteractionSystem {
               if (wasSolid && this.shouldFillWithWater(x, y, z)) {
                 this.world.setBlock(x, y, z, this.waterId);
               }
+              // Propagate water surface into newly connected cavities (mine shafts/tunnels)
+              // When breaking a block at or below water level near a water body, flood the WATER_LEVEL plane
+              // from nearby water into reachable air cells, forming a single-block-thin surface inside the shaft.
+              this.propagateSurfaceWaterFromConnection(x, y, z);
               // Add drop to inventory
               addToInventory(blockId, 1);
               this.remeshAffectedChunks(x, y, z);
@@ -168,6 +172,147 @@ export class InteractionSystem {
       if (nb === this.waterId) return true;
     }
     return false;
+  }
+
+  /**
+   * Flood-fill water surface blocks at y=WATER_LEVEL from nearby existing water into reachable air cells.
+   * This simulates water entering a newly opened mine shaft: the interior becomes underwater up to the surface,
+   * and a single-block-thin sheet of water appears at the shaft entrance at WATER_LEVEL.
+   */
+  private propagateSurfaceWaterFromConnection(bx: number, by: number, bz: number): void {
+    // Only relevant when the break is near or below the water surface
+    if (by > WATER_LEVEL + 1) return;
+
+    const WL = WATER_LEVEL;
+    const AIR = this.airId;
+    const WATER = this.waterId;
+
+    // Search radius for seeds and fill bounds around the break location
+    const SEED_RADIUS = 24;  // look for existing water within ~24 blocks
+    const FILL_RADIUS = 64;  // confine flood fill to a reasonable area
+    const minX = bx - FILL_RADIUS;
+    const maxX = bx + FILL_RADIUS;
+    const minZ = bz - FILL_RADIUS;
+    const maxZ = bz + FILL_RADIUS;
+
+    // Collect seed positions: nearby existing water surface cells
+    const seeds: Array<{x: number; z: number}> = [];
+    for (let dz = -SEED_RADIUS; dz <= SEED_RADIUS; dz++) {
+      for (let dx = -SEED_RADIUS; dx <= SEED_RADIUS; dx++) {
+        const sx = bx + dx;
+        const sz = bz + dz;
+        if (sx < minX || sx > maxX || sz < minZ || sz > maxZ) continue;
+        if (this.world.getBlock(sx, WL, sz) === WATER) {
+          seeds.push({ x: sx, z: sz });
+        }
+      }
+    }
+    if (seeds.length === 0) return; // No nearby water to propagate from
+
+    // Flood conditions: pass through cells at WL that are water already or air with air above (surface)
+    const canSurfaceExist = (x: number, z: number): boolean => {
+      const id = this.world.getBlock(x, WL, z);
+      // Allow traversal over existing water and empty cells at the surface plane
+      return (id === WATER) || (id === AIR);
+    };
+
+    // BFS
+    const key = (x: number, z: number) => (x << 16) ^ (z & 0xffff);
+    const visited = new Set<number>();
+    const q: Array<{x: number; z: number}> = [];
+    for (const s of seeds) {
+      const k = key(s.x, s.z);
+      if (!visited.has(k)) { visited.add(k); q.push(s); }
+    }
+
+    const changed: Array<{x: number; y: number; z: number}> = [];
+    const visitedSurface: Array<{x: number; z: number}> = [];
+    let iterations = 0;
+    const MAX_CHANGED = 4096; // safety cap on new placements
+    while (q.length > 0) {
+      const cur = q.shift()!;
+      iterations++;
+      if (iterations > 50000) break; // hard safety to avoid runaway
+
+      // If this location can have a surface and isn't water yet, place water
+      const curId = this.world.getBlock(cur.x, WL, cur.z);
+      if (curId !== WATER) {
+        if (curId === AIR) {
+          this.world.setBlock(cur.x, WL, cur.z, WATER);
+          changed.push({ x: cur.x, y: WL, z: cur.z });
+          if (changed.length >= MAX_CHANGED) break;
+        }
+      }
+      visitedSurface.push({ x: cur.x, z: cur.z });
+
+      // Explore 4-neighbors
+      const neighbors = [
+        { x: cur.x + 1, z: cur.z },
+        { x: cur.x - 1, z: cur.z },
+        { x: cur.x, z: cur.z + 1 },
+        { x: cur.x, z: cur.z - 1 },
+      ];
+      for (const nb of neighbors) {
+        if (nb.x < minX || nb.x > maxX || nb.z < minZ || nb.z > maxZ) continue;
+        const k = key(nb.x, nb.z);
+        if (visited.has(k)) continue;
+        if (!canSurfaceExist(nb.x, nb.z)) continue;
+        visited.add(k);
+        q.push(nb);
+      }
+    }
+
+    // Request remesh for affected chunks (dedup by chunk key)
+    if (changed.length > 0) {
+      const touched = new Set<string>();
+      for (const c of changed) {
+        const { cx, cy, cz } = worldToChunk(c.x, c.y, c.z);
+        touched.add(`${cx},${cy},${cz}`);
+      }
+      for (const k of touched) {
+        const [cx, cy, cz] = k.split(',').map(n => parseInt(n, 10));
+        const chunk = this.world.getChunk(cx, cy, cz);
+        if (chunk) this.pipeline.requestRemesh(cx, cy, cz, chunk.getData());
+      }
+    }
+
+    // Now flood the connected air volume below the surface within bounds so the entire shaft becomes underwater
+    // Seed BFS from cells just below each visited surface cell
+    const volVisited = new Set<string>();
+    const volQueue: Array<{x: number; y: number; z: number}> = [];
+    const pushVol = (x: number, y: number, z: number) => {
+      if (y < 0 || y > WL) return;
+      if (x < minX || x > maxX || z < minZ || z > maxZ) return;
+      const k = `${x},${y},${z}`;
+      if (volVisited.has(k)) return;
+      const id = this.world.getBlock(x, y, z);
+      if (id !== AIR) return;
+      volVisited.add(k);
+      volQueue.push({ x, y, z });
+    };
+
+    for (const s of visitedSurface) {
+      pushVol(s.x, WL - 1, s.z);
+    }
+
+    const floodedAdds: Array<{x: number; y: number; z: number}> = [];
+    const MAX_VOL = 50000; // hard cap for safety
+    while (volQueue.length > 0) {
+      const cur = volQueue.shift()!;
+      floodedAdds.push(cur);
+      if (floodedAdds.length >= MAX_VOL) break;
+      // 6-neighbors, staying at or below WL
+      pushVol(cur.x + 1, cur.y, cur.z);
+      pushVol(cur.x - 1, cur.y, cur.z);
+      pushVol(cur.x, cur.y, cur.z + 1);
+      pushVol(cur.x, cur.y, cur.z - 1);
+      pushVol(cur.x, cur.y + 1, cur.z); // upward, but will stop at WL because pushVol enforces y<=WL
+      pushVol(cur.x, cur.y - 1, cur.z);
+    }
+
+    if (floodedAdds.length > 0) {
+      this.world.addFloodedAir(floodedAdds);
+    }
   }
 
   private remeshAffectedChunks(worldX: number, worldY: number, worldZ: number): void {

@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { PLAYER } from '../../config/constants';
 import { WATER_LEVEL } from '../world/TerrainGenerator';
+import { getBlockIdByName } from '../world/blocks/BlockRegistry';
 import type { World } from '../world/World';
 import { InputSystem } from './Input';
 
@@ -42,6 +43,7 @@ export class PlayerController {
   private readonly height: number = PLAYER.height;
   private readonly halfWidth: number = this.width / 2;
   private readonly eyeHeight: number = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1);
+  private readonly waterId: number = getBlockIdByName('water') ?? 5;
 
   // Movement
   private readonly walkSpeed: number = PLAYER.speed.walk; // blocks/sec
@@ -75,16 +77,11 @@ export class PlayerController {
     // Decay step cooldown
     if (this.stepCooldown > 0) this.stepCooldown = Math.max(0, this.stepCooldown - deltaSeconds);
 
-    // Determine underwater state with hysteresis using HEAD vs true water surface (top of water block)
+    // Determine underwater state: inside a water block OR inside flooded air volume connected to a water body
     const prevUnder = this.underwater;
-    const surfaceY = WATER_LEVEL + 1.0 - 0.001; // match render alignment
-    const headY = this.camera.position.y + (this.height - this.eyeHeight);
-    const hys = 0.3; // meters of hysteresis to avoid flicker and allow emerge assist
-    if (this.underwater) {
-      if (headY > surfaceY + hys) this.underwater = false;
-    } else {
-      if (headY < surfaceY - hys) this.underwater = true;
-    }
+    const headInWater = this.isHeadInsideWater();
+    const headInFlood = this.isHeadInFloodedAir();
+    this.underwater = headInWater || headInFlood;
     const isUnderWater = this.underwater;
 
     if (isUnderWater) {
@@ -527,6 +524,51 @@ export class PlayerController {
       this.elevationTween.active = false;
       this.renderYOffsetY = 0;
     }
+  }
+
+  /** True if any sample point at player's head lies inside a water block */
+  private isHeadInsideWater(): boolean {
+    const pos = this.camera.position;
+    // Head Y: top of AABB (camera base + (height - eyeHeight)). Nudge slightly down to avoid ceiling precision edge
+    const headY = pos.y + (this.height - this.eyeHeight) - 1e-3;
+    const y = Math.floor(headY);
+    // Quick reject: if above global water surface by >1, we are definitely not inside water
+    if (headY > WATER_LEVEL + 1.0 + 0.5) return false;
+
+    // Sample a small cross around the head within the player's horizontal footprint
+    const r = Math.min(0.18, this.halfWidth * 0.9);
+    const samples: Array<[number, number]> = [
+      [0, 0],
+      [ r,  0],
+      [-r,  0],
+      [ 0,  r],
+      [ 0, -r],
+    ];
+    for (const [ox, oz] of samples) {
+      const sx = Math.floor(pos.x + ox);
+      const sz = Math.floor(pos.z + oz);
+      if (this.world.getBlock(sx, y, sz) === this.waterId) return true;
+    }
+    return false;
+  }
+
+  /** True if any sample point at head is inside a flooded-air cell */
+  private isHeadInFloodedAir(): boolean {
+    const pos = this.camera.position;
+    const headY = pos.y + (this.height - this.eyeHeight) - 1e-3;
+    const y = Math.floor(headY);
+    // Only consider at/below water level
+    if (y > WATER_LEVEL) return false;
+    const r = Math.min(0.18, this.halfWidth * 0.9);
+    const samples: Array<[number, number]> = [
+      [0, 0], [ r, 0], [-r, 0], [0, r], [0, -r]
+    ];
+    for (const [ox, oz] of samples) {
+      const sx = Math.floor(pos.x + ox);
+      const sz = Math.floor(pos.z + oz);
+      if (this.world.isAirFlooded(sx, y, sz)) return true;
+    }
+    return false;
   }
 
   /**

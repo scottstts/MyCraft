@@ -1,6 +1,7 @@
 import type * as THREE from 'three'
 import { PLAYER } from '../../config/constants'
 import { WATER_LEVEL } from '../world/TerrainGenerator'
+import { getBlockIdByName } from '../world/blocks/BlockRegistry'
 import type { World } from '../world/World'
 import type { InputSystem } from '../systems/Input'
 import type { PlayerController } from '../systems/PlayerController'
@@ -96,6 +97,7 @@ export class SoundEffects {
   private oceanSampleTimer = 0
   private oceanProximity = 0 // 0..1 (1=loudest at shore/open sea)
   private oceanVolCurrent = 0 // smoothed volume
+  private readonly waterId: number = getBlockIdByName('water') ?? 5
 
   constructor(world: World, camera: THREE.PerspectiveCamera, input: InputSystem, player: PlayerController) {
     this.world = world
@@ -191,8 +193,8 @@ export class SoundEffects {
     // Determine if touching water surface blocks
     const touchingWater = this.isTouchingWaterSurface()
 
-    // Determine underwater state: camera (eyes) below the top of the water block
-    const isUnderWater = (this.camera.position.y < (WATER_LEVEL + 1.0 - 0.001))
+    // Determine underwater: inside a water block OR inside flooded-air volume
+    const isUnderWater = this.isEyesInWater() || this.isEyesInFloodedAir()
 
     // Footstep loop when grounded and moving on solid, not touching water and not underwater
     const inputVec = this.input.getMoveInput?.() || { x: 0, z: 0 }
@@ -334,13 +336,52 @@ export class SoundEffects {
     const iz0 = Math.floor(minZ)
     const iz1 = Math.floor(maxZ)
 
-    // Water block id is 5 in default registry; but check by name if needed
-    const WATER_ID = 5
     for (let z = iz0; z <= iz1; z++) {
       for (let x = ix0; x <= ix1; x++) {
         const id = this.world.getBlock(x, WATER_LEVEL, z)
-        if (id === WATER_ID) return true
+        if (id === this.waterId) return true
       }
+    }
+    return false
+  }
+
+  // Eyes/head inside water block check to drive underwater audio
+  private isEyesInWater(): boolean {
+    const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1)
+    const headY = this.camera.position.y + (PLAYER.height - eyeHeight) - 1e-3
+    const y = Math.floor(headY)
+    // Quick reject if significantly above surface
+    if (headY > WATER_LEVEL + 1.0 + 0.5) return false
+    const half = PLAYER.width / 2
+    const r = Math.min(0.18, half * 0.9)
+    const cx = this.camera.position.x
+    const cz = this.camera.position.z
+    const samples: Array<[number, number]> = [
+      [0, 0], [ r, 0], [-r, 0], [0, r], [0, -r]
+    ]
+    for (const [ox, oz] of samples) {
+      const x = Math.floor(cx + ox)
+      const z = Math.floor(cz + oz)
+      if (this.world.getBlock(x, y, z) === this.waterId) return true
+    }
+    return false
+  }
+
+  // Eyes/head inside flooded air check (underwater volume) for audio
+  private isEyesInFloodedAir(): boolean {
+    const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1)
+    const headY = this.camera.position.y + (PLAYER.height - eyeHeight) - 1e-3
+    const y = Math.floor(headY)
+    if (y > WATER_LEVEL) return false
+    const half = PLAYER.width / 2
+    const r = Math.min(0.18, half * 0.9)
+    const cx = this.camera.position.x
+    const cz = this.camera.position.z
+    const samples: Array<[number, number]> = [[0,0],[ r,0],[-r,0],[0,r],[0,-r]]
+    for (const [ox, oz] of samples) {
+      const x = Math.floor(cx + ox)
+      const z = Math.floor(cz + oz)
+      if (this.world.isAirFlooded(x, y, z)) return true
     }
     return false
   }

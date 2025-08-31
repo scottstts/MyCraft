@@ -50,6 +50,8 @@ export class World extends EventEmitter<WorldEvents> {
   public chunkPipeline: ChunkPipeline;
   private seed: number = 12345; // Default seed
   private overrideProvider: ChunkOverrideProvider | null = null;
+  // Track dynamic flooded-air volumes (air cells that are considered underwater due to connectivity to a water body)
+  private floodedAir: Set<string> = new Set();
 
   constructor() {
     super();
@@ -306,6 +308,28 @@ export class World extends EventEmitter<WorldEvents> {
   getLoadedChunkCount(): number {
     return this.chunks.size;
   }
+
+  /** Mark a collection of air cells as flooded (underwater) */
+  addFloodedAir(cells: Array<{ x: number; y: number; z: number }>): void {
+    for (const c of cells) {
+      this.floodedAir.add(`${c.x},${c.y},${c.z}`);
+    }
+  }
+
+  /** Remove a collection of flooded air marks (no-op if not present) */
+  removeFloodedAir(cells: Array<{ x: number; y: number; z: number }>): void {
+    for (const c of cells) {
+      this.floodedAir.delete(`${c.x},${c.y},${c.z}`);
+    }
+  }
+
+  /** Check if a cell is currently marked as flooded (underwater in air) */
+  isAirFlooded(x: number, y: number, z: number): boolean {
+    return this.floodedAir.has(`${x},${y},${z}`);
+  }
+
+  /** Clear all flooded-air marks (e.g., on world reset) */
+  clearFloodedAir(): void { this.floodedAir.clear(); }
 
   /**
    * Check if a chunk is loaded
