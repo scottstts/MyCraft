@@ -193,8 +193,8 @@ export class SoundEffects {
     // Determine if touching water surface blocks
     const touchingWater = this.isTouchingWaterSurface()
 
-    // Determine underwater: inside a water block OR inside flooded-air volume
-    const isUnderWater = this.isEyesInWater() || this.isEyesInFloodedAir()
+    // Determine underwater: inside a water block OR inside flooded-air volume OR feet submerged
+    const isUnderWater = this.isEyesInWater() || this.isEyesInFloodedAir() || this.areFeetSubmerged()
 
     // Footstep loop when grounded and moving on solid, not touching water and not underwater
     const inputVec = this.input.getMoveInput?.() || { x: 0, z: 0 }
@@ -381,6 +381,27 @@ export class SoundEffects {
     for (const [ox, oz] of samples) {
       const x = Math.floor(cx + ox)
       const z = Math.floor(cz + oz)
+      if (this.world.isAirFlooded(x, y, z)) return true
+    }
+    return false
+  }
+
+  private areFeetSubmerged(): boolean {
+    const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1)
+    const baseY = this.camera.position.y - eyeHeight + 1e-3
+    const y = Math.floor(baseY)
+    if (y > WATER_LEVEL) return false
+    const half = PLAYER.width / 2
+    const r = Math.min(0.18, half * 0.9)
+    const cx = this.camera.position.x
+    const cz = this.camera.position.z
+    const samples: Array<[number, number]> = [[0,0],[ r,0],[-r,0],[0,r],[0,-r]]
+    for (const [ox, oz] of samples) {
+      const x = Math.floor(cx + ox)
+      const z = Math.floor(cz + oz)
+      // water block
+      if (this.world.getBlock(x, y, z) === this.waterId) return true
+      // flooded air volume
       if (this.world.isAirFlooded(x, y, z)) return true
     }
     return false

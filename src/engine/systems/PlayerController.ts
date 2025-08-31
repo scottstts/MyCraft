@@ -81,7 +81,18 @@ export class PlayerController {
     const prevUnder = this.underwater;
     const headInWater = this.isHeadInsideWater();
     const headInFlood = this.isHeadInFloodedAir();
-    this.underwater = headInWater || headInFlood;
+    const baseSubmerged = this.isBaseSubmerged();
+    const surfaceY = WATER_LEVEL + 1.0 - 0.001;
+    const headY = this.camera.position.y + (this.height - this.eyeHeight);
+    const hys = 0.3; // meters of hysteresis to avoid flicker and allow emerge assist
+    if (this.underwater) {
+      // Original exit rule: head clearly above surface -> leave swim mode
+      if (headY > surfaceY + hys) this.underwater = false;
+    } else {
+      // Only enter swim mode if connected to water (block or flooded-air) AND head below surface band
+      const connected = headInWater || headInFlood || baseSubmerged;
+      if (connected && headY < surfaceY - hys) this.underwater = true;
+    }
     const isUnderWater = this.underwater;
 
     if (isUnderWater) {
@@ -330,7 +341,7 @@ export class PlayerController {
     const hasInput = desiredDir.lengthSq() > 1e-6;
     // Enhanced conditions: also trigger when close to surface regardless of other factors to prevent getting stuck
     const veryNearSurface = Math.abs(surfaceY3 - this.camera.position.y) < 0.5;
-    if (this.emergeLiftRemaining <= 0 && this.stepCooldown <= 0 && hasInput && (hitX || hitZ || hasSupport || veryNearSurface) && (nearSurface || this.input.isJumpHeld())) {
+    if (this.emergeLiftRemaining <= 0 && this.stepCooldown <= 0 && (hasInput || this.input.isJumpHeld()) && (hitX || hitZ || hasSupport || veryNearSurface) && (nearSurface || this.input.isJumpHeld())) {
       // Plan a smooth emerge lift if clearance exists
       // Prefer to bring the feet to just above the water surface + 1 block to guarantee > 1 block clearance
       const toSurface = Math.max(0, surfaceY3 - baseYNow);
@@ -342,7 +353,7 @@ export class PlayerController {
       const candidates = [primary, toSurfaceClamped, 1.25, 1.0, 0.75, 0.5, 0.25];
       let chosen = 0;
       for (const h of candidates) {
-        if (this.canStepUp(h, desiredDir)) { chosen = h; break; }
+        if (this.canStepUpEmerge(h, desiredDir)) { chosen = h; break; }
       }
       if (chosen > 0) {
         this.emergeLiftRemaining = chosen;
@@ -529,11 +540,11 @@ export class PlayerController {
   /** True if any sample point at player's head lies inside a water block */
   private isHeadInsideWater(): boolean {
     const pos = this.camera.position;
-    // Head Y: top of AABB (camera base + (height - eyeHeight)). Nudge slightly down to avoid ceiling precision edge
-    const headY = pos.y + (this.height - this.eyeHeight) - 1e-3;
+    // Head Y: top of AABB (camera base + (height - eyeHeight)).
+    const headY = pos.y + (this.height - this.eyeHeight);
+    // If head is at or above the top of water plane, cannot be inside water block
+    if (headY >= WATER_LEVEL + 1.0) return false;
     const y = Math.floor(headY);
-    // Quick reject: if above global water surface by >1, we are definitely not inside water
-    if (headY > WATER_LEVEL + 1.0 + 0.5) return false;
 
     // Sample a small cross around the head within the player's horizontal footprint
     const r = Math.min(0.18, this.halfWidth * 0.9);
@@ -555,9 +566,27 @@ export class PlayerController {
   /** True if any sample point at head is inside a flooded-air cell */
   private isHeadInFloodedAir(): boolean {
     const pos = this.camera.position;
-    const headY = pos.y + (this.height - this.eyeHeight) - 1e-3;
+    const headY = pos.y + (this.height - this.eyeHeight);
+    // Only consider when head is strictly below the top of the water plane
+    if (headY >= WATER_LEVEL + 1.0) return false;
     const y = Math.floor(headY);
-    // Only consider at/below water level
+    const r = Math.min(0.18, this.halfWidth * 0.9);
+    const samples: Array<[number, number]> = [
+      [0, 0], [ r, 0], [-r, 0], [0, r], [0, -r]
+    ];
+    for (const [ox, oz] of samples) {
+      const sx = Math.floor(pos.x + ox);
+      const sz = Math.floor(pos.z + oz);
+      if (this.world.isAirFlooded(sx, y, sz)) return true;
+    }
+    return false;
+  }
+
+  /** Feet/base submerged in water block or flooded-air volume */
+  private isBaseSubmerged(): boolean {
+    const pos = this.camera.position;
+    const baseY = this.getBaseY(pos.y) + 1e-3; // nudge up to avoid floor precision
+    const y = Math.floor(baseY);
     if (y > WATER_LEVEL) return false;
     const r = Math.min(0.18, this.halfWidth * 0.9);
     const samples: Array<[number, number]> = [
@@ -567,6 +596,7 @@ export class PlayerController {
       const sx = Math.floor(pos.x + ox);
       const sz = Math.floor(pos.z + oz);
       if (this.world.isAirFlooded(sx, y, sz)) return true;
+      if (this.world.getBlock(sx, y, sz) === this.waterId) return true;
     }
     return false;
   }
@@ -670,6 +700,72 @@ export class PlayerController {
         if (this.world.isBlockSolid(x, supportY, z)) return true;
       }
     }
+    return false;
+  }
+
+  /**
+   * Like canStepUp, but when emerging from water we allow "support" to be either:
+   * - A solid block directly below new base (normal), OR
+   * - A solid block just ahead in the intended direction at/below the new base (shoreline lip),
+   *   which lets us climb out even if the cell directly under our base is a water-surface block.
+   */
+  private canStepUpEmerge(stepHeight: number, forwardDir?: THREE.Vector3): boolean {
+    if (stepHeight <= 0) return false;
+    const pos = this.camera.position;
+    const nextY = pos.y + stepHeight;
+    const preNudge = 0.08;
+    const hasForward = !!forwardDir && forwardDir.lengthSq() > 1e-6;
+    const nx = hasForward ? pos.x + (forwardDir as THREE.Vector3).x * preNudge : pos.x;
+    const nz = hasForward ? pos.z + (forwardDir as THREE.Vector3).z * preNudge : pos.z;
+    const eps = PlayerController.EPS * 4;
+    const minX = nx - this.halfWidth + eps;
+    const maxX = nx + this.halfWidth - eps;
+    const minZ = nz - this.halfWidth + eps;
+    const maxZ = nz + this.halfWidth - eps;
+    const minY = this.getBaseY(nextY) + eps;
+    const maxY = minY + this.height - eps;
+    // Clearance at target height must be empty of solids
+    if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) return false;
+
+    // Primary support check (normal land): any solid under new base footprint
+    const supportY = Math.floor(minY - 0.01);
+    let hasSolidSupport = false;
+    for (let z = Math.floor(minZ); z <= Math.floor(maxZ); z++) {
+      for (let x = Math.floor(minX); x <= Math.floor(maxX); x++) {
+        if (this.world.isBlockSolid(x, supportY, z)) { hasSolidSupport = true; break; }
+      }
+      if (hasSolidSupport) break;
+    }
+    if (hasSolidSupport) return true;
+
+    // Shoreline support: accept if there is solid slightly ahead at/below new base.
+    // If no forward input, probe in 4 cardinal directions to find the nearest lip.
+    const aheadDirs: THREE.Vector3[] = [];
+    if (hasForward) {
+      aheadDirs.push(forwardDir!.clone().setY(0).normalize());
+    } else {
+      aheadDirs.push(
+        new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+        new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+      );
+    }
+    const aheadDist = 0.5; // sample half a block ahead
+    for (const dir of aheadDirs) {
+      const ax = nx + dir.x * aheadDist;
+      const az = nz + dir.z * aheadDist;
+      const ax0 = Math.floor(ax - this.halfWidth + eps);
+      const ax1 = Math.floor(ax + this.halfWidth - eps);
+      const az0 = Math.floor(az - this.halfWidth + eps);
+      const az1 = Math.floor(az + this.halfWidth - eps);
+      for (let y = supportY; y >= supportY - 1; y--) {
+        for (let z = az0; z <= az1; z++) {
+          for (let x = ax0; x <= ax1; x++) {
+            if (this.world.isBlockSolid(x, y, z)) return true;
+          }
+        }
+      }
+    }
+
     return false;
   }
 
