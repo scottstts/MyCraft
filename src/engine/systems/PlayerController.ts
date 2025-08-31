@@ -678,30 +678,7 @@ export class PlayerController {
     return true;
   }
 
-  /** Check if a step up of given height is possible (clearance + support) without applying it */
-  private canStepUp(stepHeight: number, forwardDir?: THREE.Vector3): boolean {
-    if (stepHeight <= 0) return false;
-    const pos = this.camera.position;
-    const nextY = pos.y + stepHeight;
-    const preNudge = 0.08;
-    const nx = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.x + forwardDir.x * preNudge : pos.x;
-    const nz = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.z + forwardDir.z * preNudge : pos.z;
-    const eps = PlayerController.EPS * 4;
-    const minX = nx - this.halfWidth + eps;
-    const maxX = nx + this.halfWidth - eps;
-    const minZ = nz - this.halfWidth + eps;
-    const maxZ = nz + this.halfWidth - eps;
-    const minY = this.getBaseY(nextY) + eps;
-    const maxY = minY + this.height - eps;
-    if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) return false;
-    const supportY = Math.floor(minY - 0.01);
-    for (let z = Math.floor(minZ); z <= Math.floor(maxZ); z++) {
-      for (let x = Math.floor(minX); x <= Math.floor(maxX); x++) {
-        if (this.world.isBlockSolid(x, supportY, z)) return true;
-      }
-    }
-    return false;
-  }
+  // (legacy canStepUp removed; use canStepUpEmerge or tryStepUp as appropriate)
 
   /**
    * Like canStepUp, but when emerging from water we allow "support" to be either:
