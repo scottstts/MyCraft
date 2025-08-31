@@ -187,160 +187,93 @@ export class InteractionSystem {
     const AIR = this.airId;
     const WATER = this.waterId;
 
-    // Search radius for seeds and fill bounds around the break location
-    const SEED_RADIUS = 24;  // look for existing water within ~24 blocks
-    const FILL_RADIUS = 64;  // confine flood fill to a reasonable area
+    // Bounds around the break to constrain search
+    const FILL_RADIUS = 64;
     const minX = bx - FILL_RADIUS;
     const maxX = bx + FILL_RADIUS;
     const minZ = bz - FILL_RADIUS;
     const maxZ = bz + FILL_RADIUS;
 
-    // Collect seed positions: nearby existing water surface cells
-    const seeds: Array<{x: number; z: number}> = [];
-    for (let dz = -SEED_RADIUS; dz <= SEED_RADIUS; dz++) {
-      for (let dx = -SEED_RADIUS; dx <= SEED_RADIUS; dx++) {
-        const sx = bx + dx;
-        const sz = bz + dz;
-        if (sx < minX || sx > maxX || sz < minZ || sz > maxZ) continue;
-        if (this.world.getBlock(sx, WL, sz) === WATER) {
-          seeds.push({ x: sx, z: sz });
-        }
-      }
-    }
-    if (seeds.length === 0) return; // No nearby water to propagate from
+    // Step 1: 3D connectivity check from the break through passable cells (AIR or WATER) at/below WL.
+    const key3 = (x: number, y: number, z: number) => `${x},${y},${z}`;
+    const q3: Array<{x: number; y: number; z: number}> = [];
+    const vis3 = new Set<string>();
+    const visitedAir: Array<{x: number; y: number; z: number}> = [];
+    const seenCols = new Set<string>();
+    let connectedToWater = false;
 
-    // Flood conditions: pass through cells at WL that are water already or air with air above (surface)
-    const canSurfaceExist = (x: number, z: number): boolean => {
-      const id = this.world.getBlock(x, WL, z);
-      // Allow traversal over existing water and empty cells at the surface plane
-      return (id === WATER) || (id === AIR);
+    const tryPush = (x: number, y: number, z: number) => {
+      if (y < 0 || y > WL) return;
+      if (x < minX || x > maxX || z < minZ || z > maxZ) return;
+      const k = key3(x, y, z);
+      if (vis3.has(k)) return;
+      // Passable if not solid (AIR or WATER)
+      if (this.world.isBlockSolid(x, y, z)) return;
+      vis3.add(k);
+      q3.push({ x, y, z });
     };
 
-    // BFS
-    const key = (x: number, z: number) => (x << 16) ^ (z & 0xffff);
-    const visited = new Set<number>();
-    const q: Array<{x: number; z: number}> = [];
-    for (const s of seeds) {
-      const k = key(s.x, s.z);
-      if (!visited.has(k)) { visited.add(k); q.push(s); }
+    // Start from the broken cell (now AIR) and its neighbors
+    tryPush(bx, Math.min(by, WL), bz);
+    tryPush(bx + 1, Math.min(by, WL), bz);
+    tryPush(bx - 1, Math.min(by, WL), bz);
+    tryPush(bx, Math.min(by, WL), bz + 1);
+    tryPush(bx, Math.min(by, WL), bz - 1);
+    tryPush(bx, Math.min(by + 1, WL), bz);
+    tryPush(bx, Math.max(by - 1, 0), bz);
+
+    const MAX_3D = 120000; // safety cap
+    while (q3.length > 0 && vis3.size <= MAX_3D) {
+      const cur = q3.shift()!;
+      const id = this.world.getBlock(cur.x, cur.y, cur.z);
+      if (id === WATER) connectedToWater = true;
+      else if (id === AIR) {
+        visitedAir.push(cur);
+        seenCols.add(`${cur.x},${cur.z}`);
+      }
+      // 6-neighbors
+      tryPush(cur.x + 1, cur.y, cur.z);
+      tryPush(cur.x - 1, cur.y, cur.z);
+      tryPush(cur.x, cur.y, cur.z + 1);
+      tryPush(cur.x, cur.y, cur.z - 1);
+      tryPush(cur.x, cur.y + 1, cur.z);
+      tryPush(cur.x, cur.y - 1, cur.z);
     }
 
-    const changed: Array<{x: number; y: number; z: number}> = [];
-    const visitedSurface: Array<{x: number; z: number}> = [];
-    let iterations = 0;
-    const MAX_CHANGED = 4096; // safety cap on new placements
-    while (q.length > 0) {
-      const cur = q.shift()!;
-      iterations++;
-      if (iterations > 50000) break; // hard safety to avoid runaway
+    if (!connectedToWater) {
+      // No connectivity discovered under WL within bounds; nothing to do
+      return;
+    }
 
-      // If this location can have a surface and isn't water yet, place water
-      const curId = this.world.getBlock(cur.x, WL, cur.z);
-      if (curId !== WATER) {
-        if (curId === AIR) {
-          this.world.setBlock(cur.x, WL, cur.z, WATER);
-          changed.push({ x: cur.x, y: WL, z: cur.z });
-          if (changed.length >= MAX_CHANGED) break;
-        }
-      }
-      visitedSurface.push({ x: cur.x, z: cur.z });
+    // Step 2: Mark the entire connected air volume as flooded-air
+    if (visitedAir.length > 0) {
+      this.world.addFloodedAir(visitedAir);
+    }
 
-      // Explore 4-neighbors
-      const neighbors = [
-        { x: cur.x + 1, z: cur.z },
-        { x: cur.x - 1, z: cur.z },
-        { x: cur.x, z: cur.z + 1 },
-        { x: cur.x, z: cur.z - 1 },
-      ];
-      for (const nb of neighbors) {
-        if (nb.x < minX || nb.x > maxX || nb.z < minZ || nb.z > maxZ) continue;
-        const k = key(nb.x, nb.z);
-        if (visited.has(k)) continue;
-        if (!canSurfaceExist(nb.x, nb.z)) continue;
-        visited.add(k);
-        q.push(nb);
+    // Step 3: Ensure a one-block-thin water surface exists at WL for every visited column
+    const surfacePlaced: Array<{x: number; y: number; z: number}> = [];
+    for (const col of seenCols) {
+      const [xs, zs] = col.split(',');
+      const x = parseInt(xs, 10); const z = parseInt(zs, 10);
+      if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+      const idWL = this.world.getBlock(x, WL, z);
+      if (idWL === AIR) {
+        this.world.setBlock(x, WL, z, WATER);
+        surfacePlaced.push({ x, y: WL, z });
       }
     }
 
-    // Request remesh for affected chunks (dedup by chunk key)
-    if (changed.length > 0) {
-      const touched = new Set<string>();
-      for (const c of changed) {
-        const { cx, cy, cz } = worldToChunk(c.x, c.y, c.z);
-        touched.add(`${cx},${cy},${cz}`);
+    // Request remesh for newly placed surface water blocks
+    if (surfacePlaced.length > 0) {
+      const touched2 = new Set<string>();
+      for (const s of surfacePlaced) {
+        const { cx, cy, cz } = worldToChunk(s.x, s.y, s.z);
+        touched2.add(`${cx},${cy},${cz}`);
       }
-      for (const k of touched) {
+      for (const k of touched2) {
         const [cx, cy, cz] = k.split(',').map(n => parseInt(n, 10));
         const chunk = this.world.getChunk(cx, cy, cz);
         if (chunk) this.pipeline.requestRemesh(cx, cy, cz, chunk.getData());
-      }
-    }
-
-    // Now flood the connected air volume below the surface within bounds so the entire shaft becomes underwater
-    // Seed BFS from cells just below each visited surface cell
-    const volVisited = new Set<string>();
-    const volQueue: Array<{x: number; y: number; z: number}> = [];
-    const pushVol = (x: number, y: number, z: number) => {
-      if (y < 0 || y > WL) return;
-      if (x < minX || x > maxX || z < minZ || z > maxZ) return;
-      const k = `${x},${y},${z}`;
-      if (volVisited.has(k)) return;
-      const id = this.world.getBlock(x, y, z);
-      if (id !== AIR) return;
-      volVisited.add(k);
-      volQueue.push({ x, y, z });
-    };
-
-    for (const s of visitedSurface) {
-      pushVol(s.x, WL - 1, s.z);
-    }
-
-    const floodedAdds: Array<{x: number; y: number; z: number}> = [];
-    const MAX_VOL = 50000; // hard cap for safety
-    while (volQueue.length > 0) {
-      const cur = volQueue.shift()!;
-      floodedAdds.push(cur);
-      if (floodedAdds.length >= MAX_VOL) break;
-      // 6-neighbors, staying at or below WL
-      pushVol(cur.x + 1, cur.y, cur.z);
-      pushVol(cur.x - 1, cur.y, cur.z);
-      pushVol(cur.x, cur.y, cur.z + 1);
-      pushVol(cur.x, cur.y, cur.z - 1);
-      pushVol(cur.x, cur.y + 1, cur.z); // upward, but will stop at WL because pushVol enforces y<=WL
-      pushVol(cur.x, cur.y - 1, cur.z);
-    }
-
-    if (floodedAdds.length > 0) {
-      this.world.addFloodedAir(floodedAdds);
-
-      // Ensure a one-block-thin water surface exists at WL for every flooded column (x,z)
-      const surfacePlaced: Array<{x: number; y: number; z: number}> = [];
-      const seenCols = new Set<string>();
-      for (const c of floodedAdds) {
-        const keyCol = `${c.x},${c.z}`;
-        if (seenCols.has(keyCol)) continue;
-        seenCols.add(keyCol);
-        // Only within bounds
-        if (c.x < minX || c.x > maxX || c.z < minZ || c.z > maxZ) continue;
-        const idWL = this.world.getBlock(c.x, WL, c.z);
-        if (idWL === AIR) {
-          this.world.setBlock(c.x, WL, c.z, WATER);
-          surfacePlaced.push({ x: c.x, y: WL, z: c.z });
-        }
-      }
-
-      // Request remesh for these new surface placements too
-      if (surfacePlaced.length > 0) {
-        const touched2 = new Set<string>();
-        for (const s of surfacePlaced) {
-          const { cx, cy, cz } = worldToChunk(s.x, s.y, s.z);
-          touched2.add(`${cx},${cy},${cz}`);
-        }
-        for (const k of touched2) {
-          const [cx, cy, cz] = k.split(',').map(n => parseInt(n, 10));
-          const chunk = this.world.getChunk(cx, cy, cz);
-          if (chunk) this.pipeline.requestRemesh(cx, cy, cz, chunk.getData());
-        }
       }
     }
   }
