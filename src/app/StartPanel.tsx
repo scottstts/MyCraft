@@ -461,7 +461,7 @@ export function StartPanel() {
               fontStyle: 'italic',
               lineHeight: 1.4
             }}>
-              You can also load a saved world and enter that world by clicking "Load World", and select the saved JSON file".
+              You can also load a world saved by yourself or others. Click "Load World", and select the saved JSON file.
             </div>
 
             <button
