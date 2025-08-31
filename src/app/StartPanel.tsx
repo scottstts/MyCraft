@@ -4,6 +4,7 @@ import type { WorldSaveFile, WorldSavePayload, SavedInventory } from '../types/s
 import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, SAVE_ENC_ALG, verifyPayload, bytesFromBase64, base64FromBytes, decryptPayload } from '../shared/save'
 import { CHUNK_SIZE } from '../config/constants'
 import { replaceInventory } from '../state/inventory'
+import { isMobileDevice, isSafari } from '../shared/browser'
 import bgImage from '../assets/others/bg_img.png'
 
 // Allowed total chunk options: odd squares to ensure a single center chunk
@@ -39,6 +40,11 @@ export function StartPanel() {
   if (gameStarted) return null
 
   const handleLoadWorld = async () => {
+    // Block launch on mobile devices or Safari desktop
+    if (isMobileDevice() || (isSafari() && !isMobileDevice())) {
+      alert('Please visit in Chrome or other Chromium browsers!')
+      return
+    }
     try {
       setLoading(true)
       const input = document.createElement('input')
@@ -231,6 +237,8 @@ export function StartPanel() {
     }
   }
 
+  const blocked = isMobileDevice() || (isSafari() && !isMobileDevice())
+
   return (
     <div style={{ 
       position: 'absolute', 
@@ -405,10 +413,14 @@ export function StartPanel() {
           </label>
 
           <button
-            onClick={() => { 
-              setChunkCount(localCount); 
-              setChunkSize(localSize); 
-              setGameStarted(true); 
+            onClick={() => {
+              if (blocked) {
+                alert('Please visit in Chrome or other Chromium browsers!')
+                return
+              }
+              setChunkCount(localCount)
+              setChunkSize(localSize)
+              setGameStarted(true)
             }}
             style={{ 
               padding: 'clamp(12px, 3vw, 16px) clamp(20px, 5vw, 24px)', 
