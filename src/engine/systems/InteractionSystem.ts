@@ -312,6 +312,36 @@ export class InteractionSystem {
 
     if (floodedAdds.length > 0) {
       this.world.addFloodedAir(floodedAdds);
+
+      // Ensure a one-block-thin water surface exists at WL for every flooded column (x,z)
+      const surfacePlaced: Array<{x: number; y: number; z: number}> = [];
+      const seenCols = new Set<string>();
+      for (const c of floodedAdds) {
+        const keyCol = `${c.x},${c.z}`;
+        if (seenCols.has(keyCol)) continue;
+        seenCols.add(keyCol);
+        // Only within bounds
+        if (c.x < minX || c.x > maxX || c.z < minZ || c.z > maxZ) continue;
+        const idWL = this.world.getBlock(c.x, WL, c.z);
+        if (idWL === AIR) {
+          this.world.setBlock(c.x, WL, c.z, WATER);
+          surfacePlaced.push({ x: c.x, y: WL, z: c.z });
+        }
+      }
+
+      // Request remesh for these new surface placements too
+      if (surfacePlaced.length > 0) {
+        const touched2 = new Set<string>();
+        for (const s of surfacePlaced) {
+          const { cx, cy, cz } = worldToChunk(s.x, s.y, s.z);
+          touched2.add(`${cx},${cy},${cz}`);
+        }
+        for (const k of touched2) {
+          const [cx, cy, cz] = k.split(',').map(n => parseInt(n, 10));
+          const chunk = this.world.getChunk(cx, cy, cz);
+          if (chunk) this.pipeline.requestRemesh(cx, cy, cz, chunk.getData());
+        }
+      }
     }
   }
 
