@@ -10,6 +10,7 @@ import { Renderer } from '../render/Renderer';
 import { createScene, createCamera } from '../render/SceneBuilder';
 import { World } from '../world/World';
 import type { ChunkPipelineEvents } from '../world/ChunkPipeline';
+import type { ChunkMeshResponse, ChunkKey } from '../../types/workers';
 import { ChunkRenderer } from '../render/ChunkRenderer';
 import { loadFullAtlas } from '../render/Atlas';
 import { Environment } from '../render/Environment';
@@ -75,6 +76,10 @@ let dynamicFogDistance = 600; // default, updated based on world size
 let playerRigRoot: THREE.Group | null = null;
 let playerBody: FirstPersonBody | null = null;
 let lastMoveActive = false;
+// Frame counter for coordinating mesh swaps
+let frameCounter = 0;
+// Queue incoming chunk meshes; apply in small batches to avoid border flicker
+const pendingChunkMeshes: Map<ChunkKey, { response: ChunkMeshResponse; receivedAt: number }> = new Map();
 // Snapshot pending from StartPanel (global handoff)
 declare global {
   interface Window {
@@ -170,6 +175,49 @@ async function saveWorldToFile(): Promise<void> {
 }
 
 function update(dtSeconds: number) {
+  // Apply any pending mesh swaps before rendering starts this frame.
+  // Try to co-apply neighboring chunks arriving together to prevent a 1-frame "hole" at borders.
+  if (chunkRenderer && pendingChunkMeshes.size) {
+    const keys = Array.from(pendingChunkMeshes.keys());
+    const toApply = new Set<ChunkKey>();
+
+    // Helper to add a key safely
+    const select = (k: ChunkKey) => { if (pendingChunkMeshes.has(k)) toApply.add(k); };
+
+    // First pass: if a chunk and any of its neighbors are both pending, apply them together
+    for (const key of keys) {
+      if (toApply.has(key)) continue;
+      const [cx, cy, cz] = key.split(',').map((s) => parseInt(s, 10));
+      const neighbors: ChunkKey[] = [
+        `${cx+1},${cy},${cz}`, `${cx-1},${cy},${cz}`,
+        `${cx},${cy+1},${cz}`, `${cx},${cy-1},${cz}`,
+        `${cx},${cy},${cz+1}`, `${cx},${cy},${cz-1}`,
+      ];
+      const hasNeighborPending = neighbors.some(nk => pendingChunkMeshes.has(nk));
+      if (hasNeighborPending) {
+        select(key);
+        neighbors.forEach(nk => { if (pendingChunkMeshes.has(nk)) select(nk); });
+      }
+    }
+
+    // Second pass: apply any items that have been waiting for >= 2 frames to avoid starvation
+    for (const [key, entry] of pendingChunkMeshes) {
+      if (toApply.has(key)) continue;
+      if (frameCounter - entry.receivedAt >= 2) {
+        toApply.add(key);
+      }
+    }
+
+    // Apply selected set
+    if (toApply.size) {
+      for (const key of toApply) {
+        const entry = pendingChunkMeshes.get(key);
+        if (!entry) continue;
+        try { chunkRenderer.handleChunkMesh(entry.response); } catch (e) { console.error('Apply chunk mesh failed', e); }
+        pendingChunkMeshes.delete(key);
+      }
+    }
+  }
   // Always allow pause toggle to be consumed
   if (inputSystem && inputSystem.consumePauseToggle?.()) {
     const ui = useUIStore.getState();
@@ -335,6 +383,7 @@ function tick(now: number) {
   // Compute clamped delta time
   const dtSeconds = Math.min(0.1, Math.max(0, (now - lastFrameNow) / 1000));
   lastFrameNow = now;
+  frameCounter++;
 
   update(dtSeconds);
   // FPS reporting every ~0.5s
@@ -610,12 +659,12 @@ async function start(canvas: HTMLCanvasElement) {
     // console.log(`[Engine] Chunk ready: ${data.key}`);
   });
   
-  // Connect chunk pipeline to chunk renderer
+  // Connect chunk pipeline to chunk renderer via a queue to avoid mid-frame mutations
   world.chunkPipeline.on('CHUNK_MESH', (data: ChunkPipelineEvents['CHUNK_MESH']) => {
     const { response } = data;
-    if (chunkRenderer) {
-      chunkRenderer.handleChunkMesh(response);
-    }
+    // Defer application to the top of update() to keep depth and color passes in sync
+    // Also allow brief batching with neighbors to avoid 1-frame border holes
+    pendingChunkMeshes.set(response.key, { response, receivedAt: frameCounter });
   });
   
   // If a saved snapshot is provided via global, ingest it directly and skip generation
