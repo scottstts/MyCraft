@@ -345,24 +345,30 @@ export class SoundEffects {
     return false
   }
 
-  // Eyes/head inside water block check to drive underwater audio
+  // Eyes/head below water surface: treat as underwater if the column at WATER_LEVEL has water.
+  // This matches world generation where only the surface layer at y=WATER_LEVEL is WATER blocks,
+  // and open ocean volume below is AIR (not water blocks). We also keep a fallback check for
+  // actual water blocks at head (e.g., placed water in a shaft).
   private isEyesInWater(): boolean {
     const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1)
     const headY = this.camera.position.y + (PLAYER.height - eyeHeight)
-    // If head is at or above water top, not underwater for audio
+    // Above or at the surface → not underwater for audio
     if (headY >= WATER_LEVEL + 1.0) return false
+
     const y = Math.floor(headY)
     const half = PLAYER.width / 2
     const r = Math.min(0.18, half * 0.9)
     const cx = this.camera.position.x
     const cz = this.camera.position.z
-    const samples: Array<[number, number]> = [
-      [0, 0], [ r, 0], [-r, 0], [0, r], [0, -r]
-    ]
+    const samples: Array<[number, number]> = [[0,0],[ r,0],[-r,0],[0,r],[0,-r]]
+
     for (const [ox, oz] of samples) {
-      const x = Math.floor(cx + ox)
-      const z = Math.floor(cz + oz)
-      if (this.world.getBlock(x, y, z) === this.waterId) return true
+      const sx = Math.floor(cx + ox)
+      const sz = Math.floor(cz + oz)
+      // Primary: if this column has a water surface at WATER_LEVEL, head below that is underwater.
+      if (this.world.getBlock(sx, WATER_LEVEL, sz) === this.waterId) return true;
+      // Fallback: literal water block at head (e.g., enclosed water placed by player)
+      if (this.world.getBlock(sx, y, sz) === this.waterId) return true;
     }
     return false
   }
