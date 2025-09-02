@@ -65,6 +65,7 @@ export const INTERACTION = {
 
 // Shared pacing for left/right click actions and arm swing animation.
 // Single source of truth so interaction rate and animation sound feel synced.
-export const SWING_CYCLE_SECONDS = 0.22 + 0.18; // = 0.40s (down + return)
+// Shortened by 1/3 from 0.40s → ~0.2667s
+export const SWING_CYCLE_SECONDS = (0.22 + 0.18) * (2 / 3); // ≈ 0.2667s (down + return)
 
 export type ChunkSize = typeof CHUNK_SIZE;
