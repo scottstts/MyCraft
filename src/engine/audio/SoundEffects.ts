@@ -345,10 +345,8 @@ export class SoundEffects {
     return false
   }
 
-  // Eyes/head below water surface: treat as underwater if the column at WATER_LEVEL has water.
-  // This matches world generation where only the surface layer at y=WATER_LEVEL is WATER blocks,
-  // and open ocean volume below is AIR (not water blocks). We also keep a fallback check for
-  // actual water blocks at head (e.g., placed water in a shaft).
+  // Eyes/head below water surface: underwater if there's unobstructed water above OR literal water at head,
+  // otherwise rely on flooded-air connectivity. This avoids triggering underwater in sealed tunnels under water.
   private isEyesInWater(): boolean {
     const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1)
     const headY = this.camera.position.y + (PLAYER.height - eyeHeight)
@@ -365,8 +363,15 @@ export class SoundEffects {
     for (const [ox, oz] of samples) {
       const sx = Math.floor(cx + ox)
       const sz = Math.floor(cz + oz)
-      // Primary: if this column has a water surface at WATER_LEVEL, head below that is underwater.
-      if (this.world.getBlock(sx, WATER_LEVEL, sz) === this.waterId) return true;
+      // Primary: if this column has water at WATER_LEVEL and there is no solid between head and surface,
+      // treat as underwater. This prevents false positives in sealed tunnels.
+      if (this.world.getBlock(sx, WATER_LEVEL, sz) === this.waterId) {
+        let occluded = false
+        for (let yy = Math.floor(headY); yy < WATER_LEVEL; yy++) {
+          if (this.world.isBlockSolid(sx, yy, sz)) { occluded = true; break }
+        }
+        if (!occluded) return true
+      }
       // Fallback: literal water block at head (e.g., enclosed water placed by player)
       if (this.world.getBlock(sx, y, sz) === this.waterId) return true;
     }
