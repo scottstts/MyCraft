@@ -246,9 +246,8 @@ function update(dtSeconds: number) {
     if (inputSystem) {
       inputSystem.update();
     }
-    // Feed click peeks to body animator so block interactions remain independent
+    // Feed right-click peeks to body animator; left clicks are driven by InteractionSystem to stay in sync
     if (playerBody && inputSystem) {
-      if (inputSystem.peekLeftClick?.()) playerBody.onPrimaryClick();
       if (inputSystem.peekRightClick?.()) playerBody.onSecondaryClick();
     }
     // Handle number key slot selection (UI side-effect is fine here)
@@ -953,6 +952,12 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
 // Interaction one-shot hooks
 (window as Window & { __sfxBreak?: () => void; __sfxPlace?: () => void }).__sfxBreak = () => { sfx?.playBreak(); };
 (window as Window & { __sfxBreak?: () => void; __sfxPlace?: () => void }).__sfxPlace = () => { sfx?.playPlace(); };
+
+// Body swing hooks used by InteractionSystem to trigger arm swings in sync with actions
+(window as Window & { __bodyPrimary?: () => void; __bodySecondary?: () => void }).__bodyPrimary = () => { playerBody?.onPrimaryClick?.(); };
+(window as Window & { __bodyPrimary?: () => void; __bodySecondary?: () => void }).__bodySecondary = () => { playerBody?.onSecondaryClick?.(); };
+// Query hook for InteractionSystem to check swing state
+(window as Window & { __isBodySwingActive?: () => boolean }).__isBodySwingActive = () => !!playerBody?.isSwingActive?.();
 
 export const engine = { start, stop };
 export type Engine = typeof engine;

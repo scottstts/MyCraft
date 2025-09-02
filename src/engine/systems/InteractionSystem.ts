@@ -19,6 +19,7 @@ import type { ChunkPipeline } from '../world/ChunkPipeline';
 import { PlayerController } from './PlayerController';
 
 type WindowWithSfxHooks = Window & { __sfxBreak?: () => void; __sfxPlace?: () => void }
+type WindowWithBodyHooks = Window & { __bodyPrimary?: () => void; __bodySecondary?: () => void; __isBodySwingActive?: () => boolean }
 
 export class InteractionSystem {
   private camera: THREE.PerspectiveCamera;
@@ -40,7 +41,9 @@ export class InteractionSystem {
   // Track current strike progress for a targeted block
   private currentHit: { x: number; y: number; z: number; id: number; count: number } | null = null;
   // Global interaction cooldown matching arm swing pace (independent of animation)
-  private nextActionAllowedAt: number = 0; // epoch seconds
+  private nextActionAllowedAt: number = 0; // epoch seconds (used for RMB only)
+  // Last time we actually started a swing (epoch seconds) for LMB cadence
+  private lastSwingStartAt: number = 0;
   
 
   constructor(
@@ -62,61 +65,72 @@ export class InteractionSystem {
   update(): void {
     const nowSec = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
 
-    // Left click → mine (honor cooldown)
-    if (this.input.consumeLeftClick()) {
-      if (nowSec < this.nextActionAllowedAt) {
-        // Under cooldown: ignore action, but consume the click so it isn't queued
-        // Do not advance strike counts
-      } else {
-        this.nextActionAllowedAt = nowSec + SWING_CYCLE_SECONDS;
-        const sel = this.selection.getSelection();
-        if (sel.hit && sel.hitCell) {
-          const { x, y, z } = sel.hitCell;
-          const blockId = this.world.getBlock(x, y, z);
-          if (blockId !== this.airId) {
-            // Increment or reset strike counter based on targeted cell and block id
-            if (
-              this.currentHit &&
-              this.currentHit.x === x &&
-              this.currentHit.y === y &&
-              this.currentHit.z === z &&
-              this.currentHit.id === blockId
-            ) {
-              this.currentHit.count += 1;
-            } else {
-              this.currentHit = { x, y, z, id: blockId, count: 1 };
-            }
+    // Left mouse: mine while held or on click (cadence synced to swing start; no queuing)
+    {
+      const clicked = this.input.consumeLeftClick();
+      const held = this.input.isLeftHeld?.() ?? false;
+      if (clicked || held) {
+        const bodyBusy = (window as WindowWithBodyHooks).__isBodySwingActive?.() ?? false;
+        const canStart = !bodyBusy && (this.lastSwingStartAt === 0 || (nowSec - this.lastSwingStartAt) >= SWING_CYCLE_SECONDS);
+        if (canStart) {
+          // Start swing and record cadence timestamp
+          (window as WindowWithBodyHooks).__bodyPrimary?.();
+          this.lastSwingStartAt = nowSec;
 
-            const required = this.getRequiredStrikes(blockId);
-            if (this.currentHit.count >= required) {
-              // Only play break sound for solid blocks
-              const wasSolid = this.world.isBlockSolid(x, y, z);
-              if (wasSolid) {
-                (window as WindowWithSfxHooks).__sfxBreak?.();
+          const sel = this.selection.getSelection();
+          if (sel.hit && sel.hitCell) {
+            const { x, y, z } = sel.hitCell;
+            const blockId = this.world.getBlock(x, y, z);
+            if (blockId !== this.airId) {
+              // Increment or reset strike counter based on targeted cell and block id
+              if (
+                this.currentHit &&
+                this.currentHit.x === x &&
+                this.currentHit.y === y &&
+                this.currentHit.z === z &&
+                this.currentHit.id === blockId
+              ) {
+                this.currentHit.count += 1;
+              } else {
+                this.currentHit = { x, y, z, id: blockId, count: 1 };
               }
-              // Remove the block
-              this.world.setBlock(x, y, z, this.airId);
-              // Water surface edge-fill: if this cell is at water surface level, open to air above,
-              // and adjacent to water at the same level, immediately fill with water.
-              if (wasSolid && this.shouldFillWithWater(x, y, z)) {
-                this.world.setBlock(x, y, z, this.waterId);
+
+              const required = this.getRequiredStrikes(blockId);
+              if (this.currentHit.count >= required) {
+                // Only play break sound for solid blocks
+                const wasSolid = this.world.isBlockSolid(x, y, z);
+                if (wasSolid) {
+                  (window as WindowWithSfxHooks).__sfxBreak?.();
+                }
+                // Remove the block
+                this.world.setBlock(x, y, z, this.airId);
+                // Water surface edge-fill: if this cell is at water surface level, open to air above,
+                // and adjacent to water at the same level, immediately fill with water.
+                if (wasSolid && this.shouldFillWithWater(x, y, z)) {
+                  this.world.setBlock(x, y, z, this.waterId);
+                }
+                // Propagate water surface into newly connected cavities (mine shafts/tunnels)
+                // When breaking a block at or below water level near a water body, flood the WATER_LEVEL plane
+                // from nearby water into reachable air cells, forming a single-block-thin surface inside the shaft.
+                this.propagateSurfaceWaterFromConnection(x, y, z);
+                // Add drop to inventory
+                addToInventory(blockId, 1);
+                this.remeshAffectedChunks(x, y, z);
+                // Reset strike progress after successful break
+                this.currentHit = null;
               }
-              // Propagate water surface into newly connected cavities (mine shafts/tunnels)
-              // When breaking a block at or below water level near a water body, flood the WATER_LEVEL plane
-              // from nearby water into reachable air cells, forming a single-block-thin surface inside the shaft.
-              this.propagateSurfaceWaterFromConnection(x, y, z);
-              // Add drop to inventory
-              addToInventory(blockId, 1);
-              this.remeshAffectedChunks(x, y, z);
-              // Reset strike progress after successful break
-              this.currentHit = null;
             }
           }
+        } else {
+          // Either on cooldown or body is still in the middle of a swing; do nothing
         }
+      } else {
+        // Not held: reset schedule so next press swings immediately
+        this.lastSwingStartAt = 0;
       }
     }
 
-    // Right click → place (honor cooldown)
+    // Right click → place (honor cooldown; independent of LMB cadence)
     if (this.input.consumeRightClick()) {
       if (nowSec < this.nextActionAllowedAt) {
         // Under cooldown: ignore action, but consume the click

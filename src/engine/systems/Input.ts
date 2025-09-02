@@ -24,6 +24,7 @@ export class InputSystem {
   private onKeyDownRef: (e: KeyboardEvent) => void;
   private onKeyUpRef: (e: KeyboardEvent) => void;
   private onMouseDownRef: (e: MouseEvent) => void;
+  private onMouseUpRef: (e: MouseEvent) => void;
 
   // Keyboard state
   private moveForward: boolean = false;
@@ -35,6 +36,7 @@ export class InputSystem {
   private jumpHeld: boolean = false;
   private leftClickQueued: boolean = false;
   private rightClickQueued: boolean = false;
+  private leftMouseHeld: boolean = false;
   private numSlotQueued: number | null = null;
   private pauseToggleQueued: boolean = false;
 
@@ -51,6 +53,7 @@ export class InputSystem {
     this.onKeyDownRef = this.onKeyDown.bind(this);
     this.onKeyUpRef = this.onKeyUp.bind(this);
     this.onMouseDownRef = this.onMouseDown.bind(this);
+    this.onMouseUpRef = this.onMouseUp.bind(this);
 
     // Register listeners
     document.addEventListener('pointerlockchange', this.onPointerLockChangeRef);
@@ -58,6 +61,7 @@ export class InputSystem {
     window.addEventListener('keydown', this.onKeyDownRef);
     window.addEventListener('keyup', this.onKeyUpRef);
     window.addEventListener('mousedown', this.onMouseDownRef);
+    window.addEventListener('mouseup', this.onMouseUpRef);
   }
 
   /**
@@ -92,10 +96,15 @@ export class InputSystem {
     window.removeEventListener('keydown', this.onKeyDownRef);
     window.removeEventListener('keyup', this.onKeyUpRef);
     window.removeEventListener('mousedown', this.onMouseDownRef);
+    window.removeEventListener('mouseup', this.onMouseUpRef);
   }
 
   private onPointerLockChange(): void {
     this.isPointerLocked = document.pointerLockElement === this.canvas;
+    if (!this.isPointerLocked) {
+      // Ensure held state is cleared when pointer lock is lost
+      this.leftMouseHeld = false;
+    }
     if (this.onPointerLockChangedCallback) this.onPointerLockChangedCallback(this.isPointerLocked);
   }
 
@@ -131,9 +140,17 @@ export class InputSystem {
   private onMouseDown(e: MouseEvent): void {
     if (!this.isPointerLocked) return;
     if (e.button === 0) {
+      this.leftMouseHeld = true;
       this.leftClickQueued = true;
     } else if (e.button === 2) {
       this.rightClickQueued = true;
+    }
+  }
+
+  private onMouseUp(e: MouseEvent): void {
+    // Clear held state regardless of pointer lock to be safe
+    if (e.button === 0) {
+      this.leftMouseHeld = false;
     }
   }
 
@@ -242,6 +259,9 @@ export class InputSystem {
   }
   /** Non-consuming peek for left click (for animation triggers) */
   peekLeftClick(): boolean { return this.leftClickQueued; }
+
+  /** Continuous left mouse held state */
+  isLeftHeld(): boolean { return this.leftMouseHeld; }
 
   /** Edge-triggered right click */
   consumeRightClick(): boolean {

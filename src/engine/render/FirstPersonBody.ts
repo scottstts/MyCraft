@@ -358,6 +358,9 @@ export class FirstPersonBody {
   /** Try to start a secondary-click swing (if idle) */
   onSecondaryClick(): void { this.tryStartSwing('RMB') }
 
+  /** Query: is the swing currently active (down or returning)? */
+  isSwingActive(): boolean { return this.swingActive }
+
   /** Movement input edge notifications; optional since update() derives motion from camera speed. */
   onMovementInputStart(): void { this.movingFlag = true }
   onMovementInputEnd(): void { this.movingFlag = false }
