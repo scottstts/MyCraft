@@ -85,6 +85,9 @@ declare global {
   interface Window {
     __WORLD_SNAPSHOT?: WorldSavePayload;
     __saveWorld?: () => void;
+    // UI can set this before triggering save to make the browser show a native save dialog.
+    // We avoid tight typing here to keep DOM lib compatibility across environments.
+    __nextSaveFileHandle?: unknown;
   }
 }
 
@@ -167,7 +170,27 @@ async function saveWorldToFile(): Promise<void> {
       signatureB64,
       publicKeyId: SAVE_PUBLIC_KEY_ID,
     };
-    downloadJson(`mycraft-world-${new Date().toISOString().replace(/[:.]/g,'-').replace('T','_').replace('Z','')}.json`, save);
+    // If UI provided a FileSystemFileHandle via showSaveFilePicker, write directly to it.
+    try {
+      // minimal structural type to avoid relying on lib.dom's File System Access types
+      type WritableStreamLike = { write(data: Blob | BufferSource | string): Promise<void>; close(): Promise<void> };
+      type FileHandleLike = { createWritable: () => Promise<WritableStreamLike> };
+      const h: unknown = (window as Window & { __nextSaveFileHandle?: unknown }).__nextSaveFileHandle as unknown;
+      // Clear the handle immediately; only valid for one save
+      (window as Window & { __nextSaveFileHandle?: unknown }).__nextSaveFileHandle = undefined;
+      if (h && typeof (h as { createWritable?: unknown }).createWritable === 'function') {
+        const handle = h as FileHandleLike;
+        const writable = await handle.createWritable();
+        const json = JSON.stringify(save, null, 2);
+        await writable.write(new Blob([json], { type: 'application/json' }));
+        await writable.close();
+        return;
+      }
+    } catch (err) {
+      console.warn('Saving via chosen file handle failed. Falling back to download.', err);
+    }
+    const filename = `mycraft-world-${new Date().toISOString().replace(/[:.]/g,'-').replace('T','_').replace('Z','')}.json`;
+    downloadJson(filename, save);
   } catch (e) {
     console.error('Save world failed:', e);
     alert('Failed to save world. See console for details.');

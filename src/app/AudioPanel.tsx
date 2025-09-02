@@ -98,6 +98,36 @@ export const AudioPanel: React.FC = () => {
           onClick={async () => { 
             setLoading(true)
             try {
+              // Minimal structural types to avoid explicit any
+              type SaveFilePickerOptions = {
+                suggestedName?: string
+                types?: Array<{ description?: string; accept: Record<string, string[]> }>
+                excludeAcceptAllOption?: boolean
+              }
+              type FileSystemFileHandleLike = {
+                createWritable: () => Promise<{ write(data: Blob | BufferSource | string): Promise<void>; close(): Promise<void> }>
+              }
+              // Step 1: Ask the user where to save (when supported)
+              const w = window as unknown as { showSaveFilePicker?: (opts?: SaveFilePickerOptions) => Promise<FileSystemFileHandleLike> } & { __nextSaveFileHandle?: unknown };
+              if (typeof w.showSaveFilePicker === 'function') {
+                try {
+                  const suggestedName = `mycraft-world-${new Date().toISOString().replace(/[:.]/g,'-').replace('T','_').replace('Z','')}.json`
+                  const handle = await w.showSaveFilePicker({
+                    suggestedName,
+                    types: [{ description: 'MyCraft World (JSON)', accept: { 'application/json': ['.json'] } }],
+                  })
+                  w.__nextSaveFileHandle = handle
+                } catch (err: unknown) {
+                  const name = (err as { name?: string } | undefined)?.name
+                  if (name === 'AbortError' || name === 'NotAllowedError') {
+                    setLoading(false)
+                    return
+                  }
+                  console.warn('Save picker failed; falling back to default download.', err)
+                }
+              }
+
+              // Step 2: Trigger the actual save (engine will use handle if provided)
               ;(window as Window & { __saveWorld?: () => void }).__saveWorld?.()
               // Add a small delay to show the loader
               await new Promise(resolve => setTimeout(resolve, 500))
