@@ -18,6 +18,8 @@ export interface ShadowSettings {
   stableExtents?: boolean;
   // Scale applied to the computed stable extent to ensure coverage (1.0 - 1.2 typical)
   extentScale?: number;
+  // Fraction of cascade segment length used for blending width (0..N)
+  shadowBlendFraction?: number;
 }
 
 export class ShadowSystem {
@@ -40,6 +42,7 @@ export class ShadowSystem {
     intensity: 0.6,
     stableExtents: false,
     extentScale: 1.05,
+    shadowBlendFraction: 0.3,
   };
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene) {
@@ -359,6 +362,7 @@ export class ShadowSystem {
     uniforms.shadowNormalBias = { value: this.settings.normalBias };
     uniforms.shadowIntensity = { value: this.settings.enabled ? this.settings.intensity : 0.0 };
     uniforms.shadowResolution = { value: this.settings.resolution };
+    uniforms.shadowBlendFraction = { value: this.settings.shadowBlendFraction ?? 0.3 };
 
     return uniforms;
   }

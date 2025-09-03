@@ -597,6 +597,7 @@ async function start(canvas: HTMLCanvasElement) {
     intensity: 1.0,
     stableExtents: true,
     extentScale: 1.1,
+    shadowBlendFraction: 0.6,
   });
   
   // Set atlas config and block registry in chunk pipeline

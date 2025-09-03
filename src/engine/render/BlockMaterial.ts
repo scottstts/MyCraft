@@ -168,30 +168,52 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           // Normal-bias adjustment
           float nb = shadowNormalBias * (1.0 - max(dot(normal, sunDir), 0.0));
 
-          // Determine cascade by view depth
-          // Use camera-space depth (consistent with cascade splits)
-          float viewDepth = -vViewPosition.z;
+          // Use radial camera distance to decouple from camera pitch
+          float viewDepth = -vViewPosition.z; // legacy (kept for reference)
+          float camDist = length(vWorldPosition - cameraPosition);
+
+          // Determine base cascade index
           int ci = 0;
-          if (shadowCascades > 1 && viewDepth > shadowDistances[0]) ci = 1;
-          if (shadowCascades > 2 && viewDepth > shadowDistances[1]) ci = 2;
-          if (shadowCascades > 3 && viewDepth > shadowDistances[2]) ci = 3;
+          if (shadowCascades > 1 && camDist > shadowDistances[0]) ci = 1;
+          if (shadowCascades > 2 && camDist > shadowDistances[1]) ci = 2;
+          if (shadowCascades > 3 && camDist > shadowDistances[2]) ci = 3;
 
           float bias = shadowBias + nb;
+          float sBase = sampleShadowCascade(ci, worldPos + normal * nb, normal, bias);
 
-          // Cross-fade at boundaries to hide seams
-          float sCur = sampleShadowCascade(ci, worldPos + normal * nb, normal, bias);
-          if (ci > 0) {
-            float nearBound = shadowDistances[ci-1];
-            float farBound = shadowDistances[ci];
-            float width = max(1.0, (farBound - nearBound) * shadowBlendFraction);
-            float t = clamp((viewDepth - nearBound) / width, 0.0, 1.0);
-            if (t < 1.0) {
-              int pi = ci - 1;
-              float sPrev = sampleShadowCascade(pi, worldPos + normal * nb, normal, bias);
-              sCur = mix(sPrev, sCur, t);
+          // Symmetric blending near the closest cascade boundary to avoid seams
+          // Find nearest boundary index b (0..shadowCascades-2)
+          float d0 = (shadowCascades > 1) ? abs(camDist - shadowDistances[0]) : 1e9;
+          float d1 = (shadowCascades > 2) ? abs(camDist - shadowDistances[1]) : 1e9;
+          float d2 = (shadowCascades > 3) ? abs(camDist - shadowDistances[2]) : 1e9;
+          float minD = d0;
+          int b = 0;
+          if (d1 < minD) { minD = d1; b = 1; }
+          if (d2 < minD) { minD = d2; b = 2; }
+
+          // Only blend if a boundary exists (i.e., at least 2 cascades)
+          if (shadowCascades > 1) {
+            // Determine half-width of the blend zone around boundary b
+            float segPrev = (b == 0) ? shadowDistances[0] : (shadowDistances[b] - shadowDistances[b - 1]);
+            float segNext = (shadowCascades > b + 1) ? (shadowDistances[b + 1] - shadowDistances[b]) : segPrev;
+            float halfWidth = 0.5 * shadowBlendFraction * min(segPrev, segNext);
+            halfWidth = max(0.5, halfWidth); // minimum size to avoid precision issues
+
+            float boundary = shadowDistances[b];
+            if (abs(camDist - boundary) < halfWidth) {
+              int leftCascade = b;
+              int rightCascade = min(b + 1, shadowCascades - 1);
+
+              float sL = sampleShadowCascade(leftCascade, worldPos + normal * nb, normal, bias);
+              float sR = sampleShadowCascade(rightCascade, worldPos + normal * nb, normal, bias);
+              float t = clamp(0.5 + 0.5 * ((camDist - boundary) / halfWidth), 0.0, 1.0);
+              float sBlend = mix(sL, sR, t);
+              return mix(1.0 - shadowIntensity, 1.0, sBlend);
             }
           }
-          return mix(1.0 - shadowIntensity, 1.0, sCur);
+
+          // Not near a boundary: use base cascade only
+          return mix(1.0 - shadowIntensity, 1.0, sBase);
       }
 
       // Enhanced lighting calculation with shadows
