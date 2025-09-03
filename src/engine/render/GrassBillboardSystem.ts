@@ -111,7 +111,8 @@ export class GrassBillboardSystem {
     const mesh = new THREE.InstancedMesh(this.geometry, this.material, instances.length)
     mesh.castShadow = false
     mesh.receiveShadow = false
-    mesh.renderOrder = 3
+    // Draw after opaque blocks but before transparent water
+    mesh.renderOrder = 1
 
     const tmp = new THREE.Matrix4()
     for (let i = 0; i < instances.length; i++) {
@@ -173,6 +174,8 @@ export class GrassBillboardSystem {
   // Lighting/Shadow sync API (called from Engine)
   setSunUniforms(dir: THREE.Vector3, color: THREE.Color): void { this.material.setSun(dir, color) }
   setDayNight(day: number, star: number): void { this.material.setDayNight(day, star) }
-  updateShadowUniforms(_uniforms: Record<string, { value: unknown }>): void { /* not used in grass shader (no cast/receive) */ }
-  setCloudShadowUniforms(_params: { enabled?: boolean; intensity?: number; altitude?: number; scale?: number; coverage?: number; density?: number; wind?: THREE.Vector2; }): void { /* not used in grass shader */ }
+  updateShadowUniforms(_uniforms: Record<string, { value: unknown }>): void { /* grass tufts don't receive cast/receive shadows */ }
+  setCloudShadowUniforms(params: { enabled?: boolean; intensity?: number; altitude?: number; scale?: number; coverage?: number; density?: number; wind?: THREE.Vector2; }): void {
+    this.material.setCloudShadowUniforms(params)
+  }
 }
