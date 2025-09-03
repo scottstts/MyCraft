@@ -28,34 +28,13 @@ export class GrassBillboardSystem {
 
     this.material = new GrassMaterial(placeholder)
 
-    // Try to load the provided grass leaves texture with alpha.
-    const loader = new THREE.TextureLoader()
-    const tryPaths = ['/assets/textures/grass_leaves.png', '/assets/textures/grass_billboard.png']
-    const loadPath = (i: number) => {
-      if (i >= tryPaths.length) {
-        const fb = new THREE.TextureLoader().load(grassLeavesTexture as unknown as string)
-        fb.flipY = false
-        fb.colorSpace = THREE.SRGBColorSpace
-        fb.magFilter = THREE.NearestFilter
-        fb.minFilter = THREE.NearestFilter
-        this.material.setMap(fb)
-        return
-      }
-      loader.load(
-        tryPaths[i],
-        (tex) => {
-          tex.flipY = false
-          tex.colorSpace = THREE.SRGBColorSpace
-          tex.magFilter = THREE.NearestFilter
-          tex.minFilter = THREE.NearestFilter
-          tex.premultiplyAlpha = false
-          this.material.setMap(tex)
-        },
-        undefined,
-        () => loadPath(i + 1)
-      )
-    }
-    loadPath(0)
+    // Load the grass leaves texture with alpha.
+    const fb = new THREE.TextureLoader().load(grassLeavesTexture as unknown as string)
+    fb.flipY = false
+    fb.colorSpace = THREE.SRGBColorSpace
+    fb.magFilter = THREE.NearestFilter
+    fb.minFilter = THREE.NearestFilter
+    this.material.setMap(fb)
 
     this.geometry = this.buildXBillboardGeometry(0.92, 0.90)
 
