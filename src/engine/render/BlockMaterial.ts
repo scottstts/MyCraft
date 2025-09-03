@@ -376,7 +376,6 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowBlendFraction: { value: 0.3 },
         shadowBlendMin: { value: 10.0 },
         shadowCascadeSize: { value: [100, 200, 400, 800] },
-        shadowBlendMin: { value: 10.0 },
         
         // Cloud shadows (enabled by engine when clouds are present)
         cloudShadowEnabled: { value: true },

@@ -413,13 +413,8 @@ export class ShadowSystem {
     
     // Recalculate cascade distances if shadowDistance changed
     else if (oldSettings.shadowDistance !== this.settings.shadowDistance) {
-      // console.log('[ShadowSystem] Recalculating cascade distances due to shadowDistance change');
-      this.cascadeDistances = [];
-      for (let i = 0; i < this.settings.cascades; i++) {
-        const ratio = (i + 1) / this.settings.cascades;
-        const distance = this.settings.shadowDistance * Math.pow(ratio, 1.5);
-        this.cascadeDistances.push(distance);
-      }
+      // Recompute using the same practical split scheme used at initialization
+      this.recomputeCascadeSplits();
     }
 
     // Update shadow light properties
