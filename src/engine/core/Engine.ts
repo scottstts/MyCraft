@@ -517,10 +517,11 @@ async function start(canvas: HTMLCanvasElement) {
     // Configure composer defaults
     // console.log('[Engine] Configuring composer post-processing settings');
     composer.setSSAO(true, 0.3, 0.01);
-    composer.setBloom(true, 0.15, 0.3);
+    composer.setBloom(true, 0.25, 0.3);
     composer.setLens(true, 0.6);
     composer.setFog(true, 0.002, dynamicFogDistance);
-    composer.setVolumetrics(true, 0.1, 32);
+    // Default volumetrics off
+    composer.setVolumetrics(false, 0.1, 32);
   } else {
     postProcessor = new SimplePostProcessor(
       renderer.getRenderer(),
@@ -535,7 +536,7 @@ async function start(canvas: HTMLCanvasElement) {
       ssaoIntensity: 0.3,
       ssaoRadius: 0.01,
       bloomEnabled: true,
-      bloomStrength: 0.15,
+      bloomStrength: 0.25,
       bloomThreshold: 0.3,
       exposure: 0.9,
       contrast: 1.05,
@@ -543,7 +544,8 @@ async function start(canvas: HTMLCanvasElement) {
       fogEnabled: true,
       fogBaseDensity: 0.002,
       fogMaxDistance: dynamicFogDistance,
-      volumetricsEnabled: true,
+      // Default volumetrics off
+      volumetricsEnabled: false,
       volumetricsIntensity: 0.1,
       volumetricsSteps: 32,
     });
@@ -559,11 +561,14 @@ async function start(canvas: HTMLCanvasElement) {
   skyDome = new SkyDome(scene, { turbidity: 2.0, rayleigh: 1.5, mieCoefficient: 0.005, mieDirectionalG: 0.8 });
   starDome = new StarDome(scene, { intensity: 1.2 });
   clouds = new CloudsLayer(scene, { altitude: 200, coverage: 0.45, density: 0.65, windDirection: Math.PI * 0.25, windSpeed: 5 });
+  // Default clouds off
+  clouds.setEnabled(false);
   // Initialize block material cloud shadow params to match clouds
   if (blockMaterial && clouds) {
     const w = clouds.getWind();
     blockMaterial.setCloudShadowUniforms({
-      enabled: true,
+      // Match clouds default state
+      enabled: false,
       intensity: 0.35,
       altitude: clouds.getAltitude(),
       scale: 100,

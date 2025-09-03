@@ -46,7 +46,7 @@ export const DebugPanel: React.FC = () => {
     ssaoIntensity: 0.35,
     ssaoRadius: 0.02,
     bloomEnabled: true,
-    bloomStrength: 0.15,
+    bloomStrength: 0.25,
     bloomThreshold: 0.3,
     exposure: 0.9,
     contrast: 1.05,
@@ -59,11 +59,11 @@ export const DebugPanel: React.FC = () => {
     fogEnabled: true,
     fogBaseDensity: 0.002,
     fogMaxDistance: 600,
-    volumetricsEnabled: true,
+    volumetricsEnabled: false,
     volumetricsIntensity: 0.1,
     volumetricsSteps: 32,
   });
-  const [cloudsEnabled, setCloudsEnabled] = useState(true);
+  const [cloudsEnabled, setCloudsEnabled] = useState(false);
   const [cloudsCoverage, setCloudsCoverage] = useState(0.45);
   const [cloudsDensity, setCloudsDensity] = useState(0.65);
 

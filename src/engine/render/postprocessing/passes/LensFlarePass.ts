@@ -49,12 +49,12 @@ export class LensFlarePass extends ShaderPass {
           if (!enabled || sunVisible <= 0.0) { gl_FragColor = vec4(col,1.0); return; }
 
           vec2 sunSS = sunNdc * 0.5 + 0.5; // NDC->UV
-          // Occlusion probe: if geometry present at sun pixel, reduce flare
+          // Occlusion probe: if geometry present at sun pixel, disable flare
           float occ = 1.0;
           if (sunSS.x >= 0.0 && sunSS.x <= 1.0 && sunSS.y >= 0.0 && sunSS.y <= 1.0) {
             float sd = readDepth(sunSS);
-            // If depth is finite near cameraFar, assume sky -> no occluder; else reduce significantly
-            occ = sd > cameraFar * 0.99 ? 1.0 : 0.15;
+            // If depth is finite near cameraFar, assume sky -> no occluder; else fully occluded
+            occ = sd > cameraFar * 0.99 ? 1.0 : 0.0;
           }
 
           // Distance from center scales amount
@@ -100,8 +100,8 @@ export class LensFlarePass extends ShaderPass {
     if (v4.w !== 0){ ndc.set(v4.x / v4.w, v4.y / v4.w); }
     // Disable when sun is below the horizon
     if (dirWorld.y > 0) {
-      // Visible if in front of camera and inside some margin of the screen
-      if (v4.w > 0 && Math.abs(ndc.x) <= 1.2 && Math.abs(ndc.y) <= 1.2) visible = 1
+      // Visible if in front of camera and inside the screen
+      if (v4.w > 0 && Math.abs(ndc.x) <= 1.0 && Math.abs(ndc.y) <= 1.0) visible = 1
     } else {
       visible = 0
     }

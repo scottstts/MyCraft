@@ -188,7 +188,7 @@ export class ShadowSystem {
       const forward = new THREE.Vector3(); cam.getWorldDirection(forward);
       const sliceMid = 0.5 * (prevSplitDist + splitDist);
       // For stability, decouple from pitch: project forward to XZ when using stable extents
-      let forwardStable = forward.clone();
+      const forwardStable = forward.clone();
       if (this.settings.stableExtents) {
         forwardStable.y = 0;
         if (forwardStable.lengthSq() > 1e-6) forwardStable.normalize(); else forwardStable.copy(forward);
@@ -210,7 +210,7 @@ export class ShadowSystem {
 
       // Compute orthographic XY region
       let half: number;
-      let centerLS = centerWorld.clone().applyMatrix4(lightView);
+      const centerLS = centerWorld.clone().applyMatrix4(lightView);
       if (this.settings.stableExtents) {
         // Stable extent from far plane circumscribed radius (world units)
         const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(cam.fov) * 0.5);
