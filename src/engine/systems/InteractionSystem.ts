@@ -13,7 +13,7 @@ import { SelectionSystem } from './SelectionSystem';
 import { addToInventory, getSelectedPlacementBlockId, consumeOneFromSelected } from '../../state/inventory';
 import { CHUNK_SIZE, PLAYER, SWING_CYCLE_SECONDS } from '../../config/constants';
 import { WATER_LEVEL } from '../world/TerrainGenerator';
-import { getBlockIdByName } from '../world/blocks/BlockRegistry';
+import { getBlockIdByName, getBlock } from '../world/blocks/BlockRegistry';
 import { worldToChunk } from '../utils/coords';
 import type { ChunkPipeline } from '../world/ChunkPipeline';
 import { PlayerController } from './PlayerController';
@@ -338,6 +338,20 @@ export class InteractionSystem {
       if (belowId !== this.grassId) return { canPlace: false, elevatePlayer: false };
       // Decorative and non-solid → ignore player intersection tests
       return { canPlace: true, elevatePlayer: false };
+    }
+
+    // New rule: disallow placing a solid block or a grass block directly on top of a grass tuft
+    // i.e., if the cell immediately below the placement cell contains a decorative grass tuft
+    if (placeId !== undefined) {
+      const belowId = this.world.getBlock(x, y - 1, z);
+      if (belowId === this.grassTuftId) {
+        const def = getBlock(placeId);
+        const isSolid = !!def?.solid;
+        const isGrassBlock = placeId === this.grassId;
+        if (isSolid || isGrassBlock) {
+          return { canPlace: false, elevatePlayer: false };
+        }
+      }
     }
 
     // Compute player AABB from camera position and PLAYER dimensions
