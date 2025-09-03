@@ -359,11 +359,13 @@ function update(dtSeconds: number) {
   if (blockMaterial && sunController) {
     const sdir = sunController.getSunDirection();
     blockMaterial.setSunUniforms(sdir, sunController.getSunColor());
-    // Day/night factor for ambient modulation
-    const dayLight = Math.max(0, sdir.y);
+    // Day/night factor for ambient modulation with a small night floor to avoid total darkness
+    const rawDayLight = Math.max(0, sdir.y);
+    const NIGHT_MIN_LIGHT = 0.10; // keep nights faintly lit
+    const dayLight = Math.max(NIGHT_MIN_LIGHT, rawDayLight);
     blockMaterial.setDayLight(dayLight);
-    // Star light provides a tiny ambient boost at night
-    const starVis = 1 - THREE.MathUtils.clamp((dayLight - 0.0) / 0.2, 0, 1);
+    // Star light provides a tiny ambient boost at night (based on raw elevation)
+    const starVis = 1 - THREE.MathUtils.clamp((rawDayLight - 0.0) / 0.2, 0, 1);
     blockMaterial.setStarLight(starVis * 0.35);
     if (grassSystem) grassSystem.setSunUniforms(sdir, sunController.getSunColor());
     if (grassSystem) grassSystem.setDayNight(dayLight, starVis * 0.35);
@@ -381,7 +383,9 @@ function update(dtSeconds: number) {
     const scol = sunController.getSunColor();
     composer.update(camera, sdir, scol);
     // Darken fog color at night for proper night appearance
-    const dayLight = Math.max(0, sdir.y);
+    const rawDayLight = Math.max(0, sdir.y);
+    const NIGHT_MIN_LIGHT = 0.10;
+    const dayLight = Math.max(NIGHT_MIN_LIGHT, rawDayLight);
     const dayFog = new THREE.Color(0.72, 0.82, 0.92);
     const nightFog = new THREE.Color(0.03, 0.05, 0.08);
     const fogColor = nightFog.clone().lerp(dayFog, dayLight);
