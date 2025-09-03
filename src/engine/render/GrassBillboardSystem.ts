@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { World } from '../world/World'
 import type { ChunkKey } from '../../types/index'
 import { CHUNK_SIZE } from '../../config/constants'
-import treeLeavesTexture from '../../assets/textures/tree_leaves.png'
+import grassLeavesTexture from '../../assets/textures/grass_leaves.png'
 
 /**
  * GrassBillboardSystem
@@ -11,7 +11,7 @@ import treeLeavesTexture from '../../assets/textures/tree_leaves.png'
  */
 export class GrassBillboardSystem {
   private scene: THREE.Scene
-  private material: THREE.MeshLambertMaterial
+  private material: THREE.MeshBasicMaterial
   private geometry: THREE.BufferGeometry
   private groups = new Map<ChunkKey, THREE.Group>()
 
@@ -21,34 +21,44 @@ export class GrassBillboardSystem {
     this.scene = scene
     this.grassTuftId = grassTuftId
 
-    this.material = new THREE.MeshLambertMaterial({
+    this.material = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       side: THREE.DoubleSide,
       transparent: true,
-      alphaTest: 0.5,
+      alphaTest: 0.3,
+      depthWrite: false,
+      fog: true,
     })
-    // Try to load a sprite texture; fall back to tree leaves if missing
+    // Try to load the provided grass leaves texture with alpha.
     const loader = new THREE.TextureLoader()
-    loader.load(
-      '/assets/textures/grass_billboard.png',
-      (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace
-        tex.magFilter = THREE.NearestFilter
-        tex.minFilter = THREE.NearestFilter
-        this.material.map = tex
-        this.material.needsUpdate = true
-      },
-      undefined,
-      // onError → use bundled leaf texture as fallback
-      () => {
-        const fb = new THREE.TextureLoader().load(treeLeavesTexture as unknown as string)
+    const tryPaths = ['/assets/textures/grass_leaves.png', '/assets/textures/grass_billboard.png']
+    const loadPath = (i: number) => {
+      if (i >= tryPaths.length) {
+        const fb = new THREE.TextureLoader().load(grassLeavesTexture as unknown as string)
+        fb.flipY = false
         fb.colorSpace = THREE.SRGBColorSpace
         fb.magFilter = THREE.NearestFilter
         fb.minFilter = THREE.NearestFilter
         this.material.map = fb
         this.material.needsUpdate = true
+        return
       }
-    )
+      loader.load(
+        tryPaths[i],
+        (tex) => {
+          tex.flipY = false
+          tex.colorSpace = THREE.SRGBColorSpace
+          tex.magFilter = THREE.NearestFilter
+          tex.minFilter = THREE.NearestFilter
+          tex.premultiplyAlpha = false
+          this.material.map = tex
+          this.material.needsUpdate = true
+        },
+        undefined,
+        () => loadPath(i + 1)
+      )
+    }
+    loadPath(0)
 
     this.geometry = this.buildXBillboardGeometry(0.92, 0.90)
 
@@ -104,6 +114,7 @@ export class GrassBillboardSystem {
     const mesh = new THREE.InstancedMesh(this.geometry, this.material, instances.length)
     mesh.castShadow = false
     mesh.receiveShadow = false
+    mesh.renderOrder = 3
 
     const tmp = new THREE.Matrix4()
     for (let i = 0; i < instances.length; i++) {
