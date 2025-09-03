@@ -23,6 +23,7 @@ import armTexUrl from '../../assets/textures/arm.png'
 import legTexUrl from '../../assets/textures/leg.png'
 import torsoTexUrl from '../../assets/textures/torso.png'
 import swingSfxUrl from '../../assets/sounds/sound_effects/swing.mp3'
+import { BodyMaterial } from './BodyMaterial'
 
 // Keep numeric constants local to this module for tuning.
 // These are deliberately simple and Minecraft-like in proportion.
@@ -115,9 +116,9 @@ export class FirstPersonBody {
   private torsoMesh: THREE.Mesh
 
   // Materials and textures (use lit PBR for natural shading)
-  private armMat: THREE.MeshStandardMaterial
-  private legMat: THREE.MeshStandardMaterial
-  private torsoMat: THREE.MeshStandardMaterial
+  private armMat: BodyMaterial
+  private legMat: BodyMaterial
+  private torsoMat: BodyMaterial
 
   // Animation state
   private locomotionBlend: number = 0 // 0..1 engage factor
@@ -156,16 +157,8 @@ export class FirstPersonBody {
     const legTex = mkTex(legTexUrl)
     const torsoTex = mkTex(torsoTexUrl)
 
-    // Use MeshStandardMaterial for proper scene lighting and environment
-    const mkBodyMat = (map: THREE.Texture) => new THREE.MeshStandardMaterial({
-      map,
-      transparent: true,
-      alphaTest: 0.5,     // cut out fully transparent texels cleanly
-      roughness: 0.9,     // matte, fabric-like
-      metalness: 0.0,     // non-metal
-      envMapIntensity: 0.25, // subtle ambient from scene.environment
-      dithering: true,    // reduce banding on smooth gradients
-    })
+    // Use custom BodyMaterial to match block ambient/day-night response, simplified
+    const mkBodyMat = (map: THREE.Texture) => new BodyMaterial(map)
     this.armMat = mkBodyMat(armTex)
     this.legMat = mkBodyMat(legTex)
     this.torsoMat = mkBodyMat(torsoTex)
@@ -351,6 +344,13 @@ export class FirstPersonBody {
     this.lastCamX = cam.position.x
     this.lastCamZ = cam.position.z
     // No audio queue to drive; audio plays only at swing start
+  }
+
+  /** Update simple lighting uniforms so body matches world lighting */
+  setLighting(dir: THREE.Vector3, color: THREE.Color, dayLight: number, starLight: number): void {
+    this.armMat.setLighting(dir, color, dayLight, starLight)
+    this.legMat.setLighting(dir, color, dayLight, starLight)
+    this.torsoMat.setLighting(dir, color, dayLight, starLight)
   }
 
   /** Try to start a primary-click swing (if idle) */

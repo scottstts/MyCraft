@@ -367,6 +367,7 @@ function update(dtSeconds: number) {
     blockMaterial.setStarLight(starVis * 0.35);
     if (grassSystem) grassSystem.setSunUniforms(sdir, sunController.getSunColor());
     if (grassSystem) grassSystem.setDayNight(dayLight, starVis * 0.35);
+    if (playerBody) playerBody.setLighting(sdir, sunController.getSunColor(), dayLight, starVis * 0.35);
   }
   
   // Animate far ocean illusion
