@@ -391,7 +391,7 @@ export class OceanHorizon {
         'sunDirection','sunColor','dayLight','starLight',
         'shadowMap0','shadowMap1','shadowMap2','shadowMap3',
         'shadowMatrix0','shadowMatrix1','shadowMatrix2','shadowMatrix3',
-        'shadowCascades','shadowDistances','shadowSoftness','shadowBias','shadowNormalBias','shadowIntensity','shadowResolution','shadowBlendFraction','shadowBlendMin','shadowCascadeSize',
+        'shadowCascades','shadowDistances','shadowSoftness','shadowBias','shadowNormalBias','shadowIntensity','shadowResolution','shadowBlendFraction','shadowBlendMin','shadowCascadeSize','shadowCamNear','shadowCamFar',
         'cloudShadowEnabled','cloudShadowIntensity','cloudShadowAltitude','cloudShadowScale','cloudCoverage','cloudDensity','cloudWind',
         'time','materialFogEnabled'
       ]

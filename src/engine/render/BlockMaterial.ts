@@ -77,6 +77,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float shadowBlendFraction;
       uniform float shadowBlendMin;
       uniform float shadowCascadeSize[4];
+      uniform float shadowCamNear[4];
+      uniform float shadowCamFar[4];
 
       // Cloud shadow uniforms (projected procedural clouds)
       uniform bool cloudShadowEnabled;
@@ -119,8 +121,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       }
 
       // Compute PCSS-style soft shadow with cascade selection
-      float sampleShadowCascade(int ci, vec3 worldPos, vec3 normal, float bias) {
-          vec4 sc = getShadowCoord(ci, worldPos);
+      float sampleShadowCascade(int ci, vec3 worldPos, vec3 normal, vec3 sunDir, float biasNorm) {
+          // Convert normalized bias to world-space offset along light direction
+          float zRange = max(1e-3, shadowCamFar[ci] - shadowCamNear[ci]);
+          float biasWorld = biasNorm * zRange;
+          // Apply world-space offsets: push along normal (slope) and towards light (directional)
+          vec3 receiverPos = worldPos - sunDir * biasWorld;
+          vec4 sc = getShadowCoord(ci, receiverPos);
           sc.xyz /= sc.w;
           sc = sc * 0.5 + 0.5;
           if (sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z < 0.0 || sc.z > 1.0) return 1.0;
@@ -129,7 +136,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           float uvPerWorld = 1.0 / max(shadowCascadeSize[ci], 1e-3);
           float base = shadowSoftness; // interpret softness as world units
           float texelSize = max(base * uvPerWorld, 1.0 / shadowResolution);
-          float receiver = sc.z - bias;
+          float receiver = sc.z; // bias applied in world-space above
 
           // Poisson disk
           poisson[0] = vec2(-0.613392, 0.617481);
@@ -183,7 +190,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           if (shadowCascades > 3 && viewDepth > shadowDistances[2]) ci = 3;
 
           float bias = shadowBias + nb;
-          float sBase = sampleShadowCascade(ci, worldPos + normal * nb, normal, bias);
+          vec3 sunDirN = normalize(sunDir);
+          float sBase = sampleShadowCascade(ci, worldPos + normal * nb, normal, sunDirN, shadowBias);
 
           // Symmetric blending near the closest cascade boundary to avoid seams
           // Find nearest boundary index b (0..shadowCascades-2)
@@ -209,8 +217,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
               int leftCascade = b;
               int rightCascade = min(b + 1, shadowCascades - 1);
 
-              float sL = sampleShadowCascade(leftCascade, worldPos + normal * nb, normal, bias);
-              float sR = sampleShadowCascade(rightCascade, worldPos + normal * nb, normal, bias);
+              float sL = sampleShadowCascade(leftCascade, worldPos + normal * nb, normal, sunDirN, shadowBias);
+              float sR = sampleShadowCascade(rightCascade, worldPos + normal * nb, normal, sunDirN, shadowBias);
               // Smooth symmetric blend around boundary using smoothstep
               float t = smoothstep(-halfWidth, halfWidth, viewDepth - boundary);
               float sBlend = mix(sL, sR, t);
@@ -376,6 +384,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowBlendFraction: { value: 0.3 },
         shadowBlendMin: { value: 10.0 },
         shadowCascadeSize: { value: [100, 200, 400, 800] },
+        shadowCamNear: { value: [0.1, 0.1, 0.1, 0.1] },
+        shadowCamFar: { value: [100, 200, 400, 800] },
         
         // Cloud shadows (enabled by engine when clouds are present)
         cloudShadowEnabled: { value: true },

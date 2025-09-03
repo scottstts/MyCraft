@@ -378,6 +378,11 @@ export class ShadowSystem {
     // Cascade sizes in world units for consistent world-space PCF width
     const cs = [0, 1, 2, 3].map(i => this.cascadeSizes[i] ?? (i === 0 ? 100 : (this.cascadeSizes[i-1] ?? 100)));
     uniforms.shadowCascadeSize = { value: cs };
+    // Provide per-cascade near/far (light view) for stable world-space biasing
+    const cNear = [0, 1, 2, 3].map(i => this.shadowCameras[i] ? this.shadowCameras[i].near : 0.1);
+    const cFar  = [0, 1, 2, 3].map(i => this.shadowCameras[i] ? this.shadowCameras[i].far  : this.settings.shadowDistance);
+    uniforms.shadowCamNear = { value: cNear };
+    uniforms.shadowCamFar  = { value: cFar };
 
     return uniforms;
   }
