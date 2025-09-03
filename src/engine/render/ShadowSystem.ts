@@ -20,6 +20,8 @@ export interface ShadowSettings {
   extentScale?: number;
   // Fraction of cascade segment length used for blending width (0..N)
   shadowBlendFraction?: number;
+  // Absolute minimum half-width for blending zone (world units)
+  shadowBlendMin?: number;
 }
 
 export class ShadowSystem {
@@ -28,6 +30,7 @@ export class ShadowSystem {
   private shadowCameras: THREE.OrthographicCamera[] = [];
   private shadowMaps: THREE.WebGLRenderTarget[] = [];
   private cascadeDistances: number[] = [];
+  private cascadeSizes: number[] = [];
   private dummyTexture: THREE.DataTexture;
   private sunDir: THREE.Vector3 = new THREE.Vector3(50, 120, 50).normalize();
   
@@ -43,6 +46,7 @@ export class ShadowSystem {
     stableExtents: false,
     extentScale: 1.05,
     shadowBlendFraction: 0.3,
+    shadowBlendMin: 10.0,
   };
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene) {
@@ -78,6 +82,7 @@ export class ShadowSystem {
     // Create shadow cameras and render targets for each cascade
     this.shadowCameras = [];
     this.shadowMaps = [];
+    this.cascadeSizes = [];
     
     for (let i = 0; i < this.settings.cascades; i++) {
       // Create orthographic camera for this cascade
@@ -213,6 +218,7 @@ export class ShadowSystem {
 
       // Compute orthographic XY region
       let half: number;
+      let sizeForCascade = 0.0;
       const centerLS = centerWorld.clone().applyMatrix4(lightView);
       if (this.settings.stableExtents) {
         // Stable extent from far plane circumscribed radius (world units)
@@ -222,6 +228,7 @@ export class ShadowSystem {
         const radius = Math.sqrt(farW * farW + farH * farH) * (this.settings.extentScale ?? 1.05);
         const size = 2.0 * radius;
         half = radius;
+        sizeForCascade = size;
         // Snap center to shadow texel grid
         const texelSize = size / this.settings.resolution;
         centerLS.x = Math.floor(centerLS.x / texelSize) * texelSize;
@@ -237,6 +244,7 @@ export class ShadowSystem {
         max.y = Math.floor(max.y / texelY) * texelY;
         const size = Math.max(max.x - min.x, max.y - min.y);
         half = 0.5 * size;
+        sizeForCascade = size;
         centerLS.set(0.5 * (min.x + max.x), 0.5 * (min.y + max.y), 0.0);
         const texelSize = size / this.settings.resolution;
         centerLS.x = Math.floor(centerLS.x / texelSize) * texelSize;
@@ -263,6 +271,9 @@ export class ShadowSystem {
       camera.updateMatrixWorld(true);
 
       prevSplitDist = splitDist;
+
+      // Record cascade ortho size (world units across width/height)
+      this.cascadeSizes[i] = Math.max(1e-3, sizeForCascade);
     }
   }
 
@@ -363,6 +374,10 @@ export class ShadowSystem {
     uniforms.shadowIntensity = { value: this.settings.enabled ? this.settings.intensity : 0.0 };
     uniforms.shadowResolution = { value: this.settings.resolution };
     uniforms.shadowBlendFraction = { value: this.settings.shadowBlendFraction ?? 0.3 };
+    uniforms.shadowBlendMin = { value: this.settings.shadowBlendMin ?? 10.0 };
+    // Cascade sizes in world units for consistent world-space PCF width
+    const cs = [0, 1, 2, 3].map(i => this.cascadeSizes[i] ?? (i === 0 ? 100 : (this.cascadeSizes[i-1] ?? 100)));
+    uniforms.shadowCascadeSize = { value: cs };
 
     return uniforms;
   }

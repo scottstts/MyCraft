@@ -32,6 +32,7 @@ interface PostProcessingSettings {
   shadowBias: number;
   shadowNormalBias: number;
   shadowBlendFraction: number;
+  shadowBlendMin: number;
   fogEnabled?: boolean;
   fogBaseDensity?: number;
   fogMaxDistance?: number;
@@ -62,6 +63,7 @@ export const DebugPanel: React.FC = () => {
     shadowBias: 0.0005,
     shadowNormalBias: 0.02,
     shadowBlendFraction: 0.3,
+    shadowBlendMin: 10,
     fogEnabled: true,
     fogBaseDensity: 0.002,
     fogMaxDistance: 600,
@@ -121,6 +123,7 @@ export const DebugPanel: React.FC = () => {
           normalBias: settings.shadowNormalBias,
           intensity: settings.shadowIntensity,
           shadowBlendFraction: settings.shadowBlendFraction,
+          shadowBlendMin: settings.shadowBlendMin,
         };
         updateShadowFn(shadowSettings);
         // console.log('[DebugPanel] Applied initial shadow settings');
@@ -247,6 +250,7 @@ export const DebugPanel: React.FC = () => {
         normalBias: newSettings.shadowNormalBias,
         intensity: newSettings.shadowIntensity,
         shadowBlendFraction: newSettings.shadowBlendFraction,
+        shadowBlendMin: newSettings.shadowBlendMin,
       };
       updateShadowFn(shadowSettings);
       // console.log(`[DebugPanel] Updated shadow settings:`, shadowSettings);
@@ -771,6 +775,44 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.shadowBlendFraction}
             onChange={(e) => handleSettingChange('shadowBlendFraction', parseFloat(e.target.value))}
+            disabled={!settings.shadowEnabled}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          />
+        </label>
+
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px', 
+          opacity: settings.shadowEnabled ? 1 : 0.5,
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Blend Min (units)</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.shadowBlendMin.toFixed(1)}</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="50"
+            step="1"
+            value={settings.shadowBlendMin}
+            onChange={(e) => handleSettingChange('shadowBlendMin', parseFloat(e.target.value))}
             disabled={!settings.shadowEnabled}
             style={{ 
               width: '100%', 

@@ -75,6 +75,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float shadowIntensity;
       uniform float shadowResolution;
       uniform float shadowBlendFraction;
+      uniform float shadowBlendMin;
+      uniform float shadowCascadeSize[4];
 
       // Cloud shadow uniforms (projected procedural clouds)
       uniform bool cloudShadowEnabled;
@@ -123,7 +125,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           sc = sc * 0.5 + 0.5;
           if (sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z < 0.0 || sc.z > 1.0) return 1.0;
 
-          float texelSize = max(1.0 / shadowResolution, 0.0004);
+          // Convert desired world-space kernel width to UV units using cascade size
+          float uvPerWorld = 1.0 / max(shadowCascadeSize[ci], 1e-3);
+          float base = shadowSoftness; // interpret softness as world units
+          float texelSize = max(base * uvPerWorld, 1.0 / shadowResolution);
           float receiver = sc.z - bias;
 
           // Poisson disk
@@ -137,7 +142,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           poisson[7] = vec2(-0.725000, -0.045000);
 
           // Blocker search (PCSS)
-          float searchRadius = shadowSoftness * 4.0 * texelSize;
+          float searchRadius = 4.0 * texelSize;
           float angle = hash12(sc.xy * 1024.0) * 6.2831853;
           float s = sin(angle), c = cos(angle);
           mat2 rot = mat2(c, -s, s, c);
@@ -168,24 +173,23 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           // Normal-bias adjustment
           float nb = shadowNormalBias * (1.0 - max(dot(normal, sunDir), 0.0));
 
-          // Use radial camera distance to decouple from camera pitch
-          float viewDepth = -vViewPosition.z; // legacy (kept for reference)
-          float camDist = length(vWorldPosition - cameraPosition);
+          // Frustum-based cascade selection using camera-space Z depth
+          float viewDepth = -vViewPosition.z;
 
           // Determine base cascade index
           int ci = 0;
-          if (shadowCascades > 1 && camDist > shadowDistances[0]) ci = 1;
-          if (shadowCascades > 2 && camDist > shadowDistances[1]) ci = 2;
-          if (shadowCascades > 3 && camDist > shadowDistances[2]) ci = 3;
+          if (shadowCascades > 1 && viewDepth > shadowDistances[0]) ci = 1;
+          if (shadowCascades > 2 && viewDepth > shadowDistances[1]) ci = 2;
+          if (shadowCascades > 3 && viewDepth > shadowDistances[2]) ci = 3;
 
           float bias = shadowBias + nb;
           float sBase = sampleShadowCascade(ci, worldPos + normal * nb, normal, bias);
 
           // Symmetric blending near the closest cascade boundary to avoid seams
           // Find nearest boundary index b (0..shadowCascades-2)
-          float d0 = (shadowCascades > 1) ? abs(camDist - shadowDistances[0]) : 1e9;
-          float d1 = (shadowCascades > 2) ? abs(camDist - shadowDistances[1]) : 1e9;
-          float d2 = (shadowCascades > 3) ? abs(camDist - shadowDistances[2]) : 1e9;
+          float d0 = (shadowCascades > 1) ? abs(viewDepth - shadowDistances[0]) : 1e9;
+          float d1 = (shadowCascades > 2) ? abs(viewDepth - shadowDistances[1]) : 1e9;
+          float d2 = (shadowCascades > 3) ? abs(viewDepth - shadowDistances[2]) : 1e9;
           float minD = d0;
           int b = 0;
           if (d1 < minD) { minD = d1; b = 1; }
@@ -197,16 +201,18 @@ export class BlockMaterial extends THREE.ShaderMaterial {
             float segPrev = (b == 0) ? shadowDistances[0] : (shadowDistances[b] - shadowDistances[b - 1]);
             float segNext = (shadowCascades > b + 1) ? (shadowDistances[b + 1] - shadowDistances[b]) : segPrev;
             float halfWidth = 0.5 * shadowBlendFraction * min(segPrev, segNext);
-            halfWidth = max(0.5, halfWidth); // minimum size to avoid precision issues
+            // Enforce an absolute minimum blend half-width in world units for stability
+            halfWidth = max(shadowBlendMin, halfWidth);
 
             float boundary = shadowDistances[b];
-            if (abs(camDist - boundary) < halfWidth) {
+            if (abs(viewDepth - boundary) < halfWidth) {
               int leftCascade = b;
               int rightCascade = min(b + 1, shadowCascades - 1);
 
               float sL = sampleShadowCascade(leftCascade, worldPos + normal * nb, normal, bias);
               float sR = sampleShadowCascade(rightCascade, worldPos + normal * nb, normal, bias);
-              float t = clamp(0.5 + 0.5 * ((camDist - boundary) / halfWidth), 0.0, 1.0);
+              // Smooth symmetric blend around boundary using smoothstep
+              float t = smoothstep(-halfWidth, halfWidth, viewDepth - boundary);
               float sBlend = mix(sL, sR, t);
               return mix(1.0 - shadowIntensity, 1.0, sBlend);
             }
@@ -368,6 +374,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowIntensity: { value: 0.0 }, // Start with shadows disabled
         shadowResolution: { value: 1024 }, // Default shadow resolution
         shadowBlendFraction: { value: 0.3 },
+        shadowBlendMin: { value: 10.0 },
+        shadowCascadeSize: { value: [100, 200, 400, 800] },
+        shadowBlendMin: { value: 10.0 },
         
         // Cloud shadows (enabled by engine when clouds are present)
         cloudShadowEnabled: { value: true },

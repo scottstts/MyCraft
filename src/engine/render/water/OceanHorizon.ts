@@ -387,14 +387,14 @@ export class OceanHorizon {
     const su = (src as THREE.ShaderMaterial).uniforms as Record<string, THREE.IUniform>
     const du = (dst as THREE.ShaderMaterial).uniforms as Record<string, THREE.IUniform>
     // Copy core lighting/shadow/time uniforms so appearance matches blocks exactly
-    const keys = [
-      'sunDirection','sunColor','dayLight','starLight',
-      'shadowMap0','shadowMap1','shadowMap2','shadowMap3',
-      'shadowMatrix0','shadowMatrix1','shadowMatrix2','shadowMatrix3',
-      'shadowCascades','shadowDistances','shadowSoftness','shadowBias','shadowNormalBias','shadowIntensity','shadowResolution','shadowBlendFraction',
-      'cloudShadowEnabled','cloudShadowIntensity','cloudShadowAltitude','cloudShadowScale','cloudCoverage','cloudDensity','cloudWind',
-      'time','materialFogEnabled'
-    ]
+      const keys = [
+        'sunDirection','sunColor','dayLight','starLight',
+        'shadowMap0','shadowMap1','shadowMap2','shadowMap3',
+        'shadowMatrix0','shadowMatrix1','shadowMatrix2','shadowMatrix3',
+        'shadowCascades','shadowDistances','shadowSoftness','shadowBias','shadowNormalBias','shadowIntensity','shadowResolution','shadowBlendFraction','shadowBlendMin','shadowCascadeSize',
+        'cloudShadowEnabled','cloudShadowIntensity','cloudShadowAltitude','cloudShadowScale','cloudCoverage','cloudDensity','cloudWind',
+        'time','materialFogEnabled'
+      ]
     for (const k of keys) {
       if (su[k] && du[k]) du[k].value = su[k].value
     }
