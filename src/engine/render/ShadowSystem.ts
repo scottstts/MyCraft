@@ -40,7 +40,7 @@ export class ShadowSystem {
     enabled: true,
     resolution: 1024,
     cascades: 3,
-    shadowDistance: 100,
+    shadowDistance: 300,
     softness: 2.5,
     bias: 0.0005,
     normalBias: 0.02,

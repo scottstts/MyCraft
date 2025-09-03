@@ -592,7 +592,7 @@ async function start(canvas: HTMLCanvasElement) {
     enabled: true, // Enable shadows by default
     resolution: 1024,
     cascades: 3,
-    shadowDistance: 600,
+    shadowDistance: 300,
     softness: 1.0,
     bias: 0.0005,
     normalBias: 0.02,

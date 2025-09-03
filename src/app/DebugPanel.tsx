@@ -57,7 +57,7 @@ export const DebugPanel: React.FC = () => {
     saturation: 1.1,
     shadowEnabled: true, // Enable shadows by default
     shadowResolution: 1024,
-    shadowDistance: 600,
+    shadowDistance: 300,
     shadowSoftness: 1.0,
     shadowIntensity: 1.0,
     shadowBias: 0.0005,
