@@ -517,7 +517,8 @@ async function start(canvas: HTMLCanvasElement) {
     // Configure composer defaults
     // console.log('[Engine] Configuring composer post-processing settings');
     composer.setSSAO(true, 0.3, 0.01);
-    composer.setBloom(true, 0.10, 0.3);
+    // Align defaults with DebugPanel: strength 0.30, threshold 0.05
+    composer.setBloom(true, 0.30, 0.05);
     composer.setLens(true, 0.6);
     composer.setFog(true, 0.002, dynamicFogDistance);
     // Default volumetrics off
@@ -558,7 +559,8 @@ async function start(canvas: HTMLCanvasElement) {
   sunController = new SunController(scene, { cycleSeconds: 180, initialTime: 0.0 });
 
   // Sky dome for physical sky colors
-  skyDome = new SkyDome(scene, { turbidity: 2.0, rayleigh: 1.5, mieCoefficient: 0.005, mieDirectionalG: 0.8 });
+  // Reduce solar disc brightness so bloom doesn't blow out the sky
+  skyDome = new SkyDome(scene, { turbidity: 2.0, rayleigh: 1.5, mieCoefficient: 0.005, mieDirectionalG: 0.8, sunIntensityScale: 0.5, sunDiscScale: 0.1 });
   starDome = new StarDome(scene, { intensity: 1.2 });
   clouds = new CloudsLayer(scene, { altitude: 200, coverage: 0.45, density: 0.65, windDirection: Math.PI * 0.25, windSpeed: 5 });
   // Default clouds off
@@ -639,10 +641,10 @@ async function start(canvas: HTMLCanvasElement) {
     composer.setFog(true, 0.002, dynamicFogDistance);
     // Add horizon haze above water level only, at far distance, leaving seabed alone
     const hazeStart = Math.max(0, worldRadius - CHUNK_SIZE.x * 1.5);
-    const hazeDensity = 0.006;     // stronger extra fog at far distances
-    const hazeMaxMix = 0.85;       // allow near-obliteration of the horizon line
-    const hazeAngleBoost = 1.2;    // boost when looking near-horizon
-    const hazePlaneBoost = 0.7;    // extra boost within a small band over the water plane
+    const hazeDensity = 0.0045;    // slightly lower extra fog at far distances
+    const hazeMaxMix = 0.05;       // reduce horizon washout to avoid white ring
+    const hazeAngleBoost = 0.4;    // smaller boost when looking near-horizon
+    const hazePlaneBoost = 0.2;    // modest extra boost within a small band over the water plane
     const hazePlaneBand = 6.0;     // meters above water level for extra boost
     composer.setHorizonHaze({ enabled: true, waterLevel: WATER_LEVEL + 1.0, hazeStart, hazeDensity, hazeMaxMix, hazeAngleBoost, hazePlaneBoost, hazePlaneBand });
   } else if (postProcessor) {

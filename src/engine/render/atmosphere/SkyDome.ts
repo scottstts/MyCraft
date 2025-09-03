@@ -12,6 +12,9 @@ export interface SkyParams {
   rayleigh: number;
   mieCoefficient: number;
   mieDirectionalG: number;
+  // Optional controls to tame sky luminance without affecting terrain lighting
+  sunIntensityScale?: number; // scales vSunE (default 1.0)
+  sunDiscScale?: number;      // scales only the solar disc term (default 1.0)
 }
 
 type UniformRecord = Record<string, { value: unknown }>;
@@ -31,6 +34,43 @@ export class SkyDome {
     const mat = sky.material as THREE.ShaderMaterial;
     this.uniforms = mat.uniforms as unknown as UniformRecord;
 
+    // Inject additional uniforms and shader tweaks to control sun brightness
+    // Add uniforms with safe defaults
+    (this.uniforms as Record<string, { value: unknown }>)["sunIntensityScale"] = { value: params?.sunIntensityScale ?? 1.0 };
+    (this.uniforms as Record<string, { value: unknown }>)["sunDiscScale"] = { value: params?.sunDiscScale ?? 1.0 };
+
+    // Patch shader to apply the uniforms
+    try {
+      // Apply intensity scale to vSunE in vertex shader
+      if (typeof mat.vertexShader === 'string') {
+        const vs = mat.vertexShader;
+        const withUniform = vs.includes('sunIntensityScale')
+          ? vs
+          : vs.replace('uniform vec3 up;', 'uniform vec3 up;\n\t\tuniform float sunIntensityScale;');
+        const withScale = withUniform.replace(
+          'vSunE = sunIntensity( dot( vSunDirection, up ) );',
+          'vSunE = sunIntensity( dot( vSunDirection, up ) ) * sunIntensityScale;'
+        );
+        mat.vertexShader = withScale;
+      }
+
+      // Apply disc scale in fragment shader on the solar disc term
+      if (typeof mat.fragmentShader === 'string') {
+        const fs = mat.fragmentShader;
+        const withUniform = fs.includes('sunDiscScale')
+          ? fs
+          : fs.replace('uniform vec3 up;', 'uniform vec3 up;\n\t\tuniform float sunDiscScale;');
+        const withDiscScale = withUniform.replace(
+          'L0 += ( vSunE * 19000.0 * Fex ) * sundisk;',
+          'L0 += ( vSunE * 19000.0 * Fex ) * sundisk * sunDiscScale;'
+        );
+        mat.fragmentShader = withDiscScale;
+      }
+      mat.needsUpdate = true;
+    } catch (err) {
+      console.warn('[SkyDome] Failed to patch Sky shader for sun scaling:', err);
+    }
+
     const p: SkyParams = {
       turbidity: params?.turbidity ?? 2.0,
       rayleigh: params?.rayleigh ?? 1.5,
@@ -48,6 +88,8 @@ export class SkyDome {
     this.uniforms['rayleigh'].value = p.rayleigh;
     this.uniforms['mieCoefficient'].value = p.mieCoefficient;
     this.uniforms['mieDirectionalG'].value = p.mieDirectionalG;
+    if (p.sunIntensityScale !== undefined) (this.uniforms['sunIntensityScale'] as { value: number }).value = p.sunIntensityScale;
+    if (p.sunDiscScale !== undefined) (this.uniforms['sunDiscScale'] as { value: number }).value = p.sunDiscScale;
   }
 
   setSunDirection(dir: THREE.Vector3): void {
@@ -56,5 +98,11 @@ export class SkyDome {
     // Sky expects sun position in world space
     this.sun.copy(d).multiplyScalar(400000);
     (this.uniforms['sunPosition'].value as THREE.Vector3).copy(this.sun);
+  }
+
+  // Optional runtime tweak controls
+  setSunLuminance(params: { intensityScale?: number; discScale?: number }): void {
+    if (params.intensityScale !== undefined) (this.uniforms['sunIntensityScale'] as { value: number }).value = params.intensityScale;
+    if (params.discScale !== undefined) (this.uniforms['sunDiscScale'] as { value: number }).value = params.discScale;
   }
 }

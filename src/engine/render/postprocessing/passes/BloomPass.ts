@@ -5,7 +5,8 @@ import * as THREE from 'three'
 
 export class BloomWrapperPass extends UnrealBloomPass {
   constructor(width: number, height: number){
-    super(new THREE.Vector2(width, height), 0.10, 0.5, 0.3)
+    // Default to the app's desired bloom: strength 0.30, threshold 0.05
+    super(new THREE.Vector2(width, height), 0.30, 0.5, 0.05)
   }
   setSize(width: number, height: number){ super.setSize(width, height) }
   setSettings({ enabled, strength, threshold }: { enabled?: boolean; strength?: number; threshold?: number }){
