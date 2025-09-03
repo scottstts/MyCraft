@@ -44,8 +44,10 @@ const OCEAN_FLOOR_SCALE = 0.012;        // Ocean floor variation frequency
 // Tree generation parameters
 const TREE_BASE_DENSITY = 0.01;         // ~1% of surface grass blocks
 const TREE_CLUSTER_SCALE = 0.006;       // Larger clusters (more natural patches)
-const TREE_MIN_HEIGHT = 3;              // Minimum trunk height (smaller trees)
-const TREE_MAX_HEIGHT = 5;              // Maximum trunk height (smaller trees)
+// Make trunks a bit taller overall (+1..+2 blocks)
+const TREE_MIN_HEIGHT = 4;              // Minimum trunk height
+const TREE_MAX_HEIGHT = 7;              // Maximum trunk height
+const TREE_MIN_SPACING = 5;             // Enforce safe horizontal spacing between trunks (in blocks)
 
 // Seeded RNG for simplex-noise
 function mulberry32(seed: number): () => number {
@@ -236,6 +238,7 @@ function generateTerrain(
   const WATER = 5;
   const WOOD = 6;
   const LEAVES = 7;
+  const LEAVES_ALT = 8; // maple/autumn variant
   
   // Process each column in the chunk
   for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
@@ -339,11 +342,52 @@ function generateTerrain(
       const spawnProb = TREE_BASE_DENSITY * (0.05 + 6.0 * clusterMask) * inlandFactor;
 
       const r = hash2d(ax, az, 1337 ^ seed);
-      if (r >= spawnProb) continue;
+      if (r >= spawnProb) continue; // not a candidate for spawning
 
-      // Tree parameters (smaller trees)
+      // Enforce minimum spacing deterministically across chunks.
+      // A candidate only spawns if it has the best (lowest) priority
+      // among other spawn-candidates within TREE_MIN_SPACING.
+      const myPriority = hash2d(ax, az, (0xd00df00d ^ seed) | 0);
+      const r2 = TREE_MIN_SPACING * TREE_MIN_SPACING;
+      let blocked = false;
+      for (let bx = ax - TREE_MIN_SPACING; !blocked && bx <= ax + TREE_MIN_SPACING; bx++) {
+        for (let bz = az - TREE_MIN_SPACING; bz <= az + TREE_MIN_SPACING; bz++) {
+          if (bx === ax && bz === az) continue;
+          const ddx = bx - ax; const ddz = bz - az;
+          if ((ddx * ddx + ddz * ddz) > r2) continue;
+
+          // Neighbor must also qualify as a spawn-candidate on similar terrain
+          const nData = heightAt(bx, bz);
+          if (!nData.isLand) continue;
+          const nSlope = Math.max(
+            Math.abs(heightAt(bx + 1, bz).height - nData.height),
+            Math.abs(heightAt(bx, bz + 1).height - nData.height)
+          );
+          const nDistWater = nData.height - WATER_LEVEL;
+          if (nDistWater <= 3 || nSlope >= 3) continue;
+
+          const nClusterNoise = (nTreeCluster(bx * TREE_CLUSTER_SCALE, bz * TREE_CLUSTER_SCALE) + 1) * 0.5;
+          const nClusterMask = smoothstep(0.6, 0.86, nClusterNoise);
+          const nInlandFactor = smoothstep(2, 14, nDistWater);
+          const nSpawnProb = TREE_BASE_DENSITY * (0.05 + 6.0 * nClusterMask) * nInlandFactor;
+          const nR = hash2d(bx, bz, 1337 ^ seed);
+          if (nR >= nSpawnProb) continue; // neighbor wouldn't spawn anyway
+
+          const nPriority = hash2d(bx, bz, (0xd00df00d ^ seed) | 0);
+          if (nPriority < myPriority || (nPriority === myPriority && (bx < ax || (bx === ax && bz < az)))) {
+            blocked = true; break;
+          }
+        }
+      }
+      if (blocked) continue; // too close to a better candidate
+
+      // Tree parameters (slightly taller trees)
       const trunkHeight = TREE_MIN_HEIGHT + Math.floor(hash2d(ax, az, 4242 ^ seed) * (TREE_MAX_HEIGHT - TREE_MIN_HEIGHT + 1));
       const maxRadius = Math.max(1, Math.min(3, Math.floor(trunkHeight * 0.5)));
+
+      // Choose leaf texture per-tree (80% default green, 20% maple/orange)
+      const leafTypeRand = hash2d(ax, az, (0x1efc0ffe ^ seed) | 0);
+      const LEAF_BLOCK = leafTypeRand < 0.8 ? LEAVES : LEAVES_ALT;
 
       // Place trunk (only within this chunk)
       const lxTrunk = ax - wx0;
@@ -358,34 +402,70 @@ function generateTerrain(
         }
       }
 
-      // Place leaves (clipped to this chunk), start above trunk top
+      // Place leaves (clipped to this chunk) with a rounded canopy
+      // resembling the reference oak-like shape.
       const topY = baseY + trunkHeight;
-      const layers = maxRadius + 1;
-      for (let layer = 0; layer < layers; layer++) {
-        const radius = maxRadius - layer;
-        const wy = topY + 1 + layer;
+      // Start slightly below trunk top to create a fuller canopy.
+      type LayerDef = { dy: number; r: number };
+      const layersDef: LayerDef[] = [];
+      if (maxRadius <= 1) {
+        // Compact canopy
+        layersDef.push({ dy: -1, r: 1 }, { dy: 0, r: 1 }, { dy: 1, r: 0 });
+      } else if (maxRadius === 2) {
+        // Classic small oak silhouette: 5x5, 5x5, 3x3, 1
+        layersDef.push(
+          { dy: -1, r: 2 },
+          { dy: 0, r: 2 },
+          { dy: 1, r: 1 },
+          { dy: 2, r: 0 }
+        );
+      } else {
+        // Slightly larger rounded blob
+        layersDef.push(
+          { dy: -2, r: 2 },
+          { dy: -1, r: 3 },
+          { dy: 0, r: 3 },
+          { dy: 1, r: 2 },
+          { dy: 2, r: 1 }
+        );
+      }
+
+      // Ensure at least 4 blocks of exposed trunk before any leaves
+      const minDy = layersDef.reduce((m, l) => Math.min(m, l.dy), 0);
+      const canopyStartY = topY + minDy;
+      const lift = Math.max(0, (baseY + 4) - canopyStartY);
+
+      for (const ld of layersDef) {
+        const wy = topY + ld.dy + lift;
         const lyLeaves = wy - cy * CHUNK_SIZE.y;
         if (lyLeaves < 0 || lyLeaves >= CHUNK_SIZE.y) continue;
 
+        const radius = ld.r;
         for (let dx = -radius; dx <= radius; dx++) {
           for (let dz = -radius; dz <= radius; dz++) {
-            const cheb = Math.max(Math.abs(dx), Math.abs(dz));
+            const axdx = Math.abs(dx), azdz = Math.abs(dz);
+            const cheb = Math.max(axdx, azdz);
             if (cheb > radius) continue;
+            // Clip hard corners to round the cube silhouette
+            const isCorner = axdx === radius && azdz === radius && radius > 0;
+            if (isCorner) continue;
+
             const wxLeaf = ax + dx;
             const wzLeaf = az + dz;
             const lxLeaf = wxLeaf - wx0;
             const lzLeaf = wzLeaf - wz0;
             if (lxLeaf < 0 || lxLeaf >= CHUNK_SIZE.x || lzLeaf < 0 || lzLeaf >= CHUNK_SIZE.z) continue;
-            // Mild edge jitter for natural look
-            if (radius > 0 && cheb === radius) {
+
+            // Slight edge jitter for natural look
+            if (radius > 0 && cheb === radius - 0) {
               const jitterSeed = (seed ^ (wy << 1)) | 0;
               const rEdge = hash2d(wxLeaf, wzLeaf, jitterSeed);
-              const isCorner = Math.abs(dx) === radius && Math.abs(dz) === radius;
-              const skipProb = isCorner ? 0.15 : 0.06;
+              const skipProb = 0.05; // subtle
               if (rEdge < skipProb) continue;
             }
+
             const idx = localToIndex(lxLeaf, lyLeaves, lzLeaf);
-            if (voxels[idx] === AIR) voxels[idx] = LEAVES;
+            if (voxels[idx] === AIR) voxels[idx] = LEAF_BLOCK;
           }
         }
       }

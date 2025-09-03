@@ -11,6 +11,7 @@
     "wood_top": [6, 0],
     "wood_side": [7, 0],
     "tree_leaves": [8, 0],
+    "maple_leaves": [9, 0],
     "air": [10, 0]
   }
 }

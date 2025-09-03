@@ -38,6 +38,7 @@ export class InteractionSystem {
   private readonly sandId: number = getBlockIdByName('sand') ?? 4;
   private readonly woodId: number = getBlockIdByName('wood') ?? 6; // tree trunk
   private readonly leavesId: number = getBlockIdByName('leaves') ?? 7;
+  private readonly leavesMapleId: number = getBlockIdByName('leaves_maple') ?? 8;
   // Track current strike progress for a targeted block
   private currentHit: { x: number; y: number; z: number; id: number; count: number } | null = null;
   // Global interaction cooldown matching arm swing pace (independent of animation)
@@ -161,7 +162,7 @@ export class InteractionSystem {
   /** Return required strikes to break a block id per simple rules */
   private getRequiredStrikes(id: number): number {
     // Leaves and grass: 1
-    if (id === this.leavesId || id === this.grassId) return 1;
+    if (id === this.leavesId || id === this.leavesMapleId || id === this.grassId) return 1;
     // Dirt and sand: 2
     if (id === this.dirtId || id === this.sandId) return 2;
     // Cobblestone (stone id) and wood: 3

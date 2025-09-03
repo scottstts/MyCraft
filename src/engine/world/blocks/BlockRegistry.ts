@@ -84,6 +84,13 @@ export class BlockRegistry {
         opaque: true,
         solid: true,
         faces: { all: 'tree_leaves' }
+      },
+      {
+        id: 8,
+        name: 'leaves_maple',
+        opaque: true,
+        solid: true,
+        faces: { all: 'maple_leaves' }
       }
     ];
 

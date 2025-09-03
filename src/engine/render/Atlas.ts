@@ -16,6 +16,7 @@ import waterTexture from '../../assets/textures/water.png';
 import woodTopTexture from '../../assets/textures/wood_top.png';
 import woodSideTexture from '../../assets/textures/wood_side.png';
 import treeLeavesTexture from '../../assets/textures/tree_leaves.png';
+import mapleLeavesTexture from '../../assets/textures/maple_leaves.png';
 
 export interface AtlasConfig {
   tileSize: number;
@@ -134,7 +135,8 @@ async function loadTextureAtlas(): Promise<THREE.Texture> {
     'water': { path: waterTexture, position: [5, 0] },
     'wood_top': { path: woodTopTexture, position: [6, 0] },
     'wood_side': { path: woodSideTexture, position: [7, 0] },
-    'tree_leaves': { path: treeLeavesTexture, position: [8, 0] }
+    'tree_leaves': { path: treeLeavesTexture, position: [8, 0] },
+    'maple_leaves': { path: mapleLeavesTexture, position: [9, 0] }
   } as const;
 
   // Load and draw each texture using imported paths
@@ -219,6 +221,7 @@ export async function loadFullAtlas(): Promise<Atlas> {
         'wood_top': [6, 0],
         'wood_side': [7, 0],
         'tree_leaves': [8, 0],
+        'maple_leaves': [9, 0],
         'air': [10, 0]
       }
     };
