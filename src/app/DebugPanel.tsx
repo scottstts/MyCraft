@@ -29,6 +29,8 @@ interface PostProcessingSettings {
   shadowDistance: number;
   shadowSoftness: number;
   shadowIntensity: number;
+  shadowBias: number;
+  shadowNormalBias: number;
   fogEnabled?: boolean;
   fogBaseDensity?: number;
   fogMaxDistance?: number;
@@ -56,6 +58,8 @@ export const DebugPanel: React.FC = () => {
     shadowDistance: 600,
     shadowSoftness: 1.0,
     shadowIntensity: 1.0,
+    shadowBias: 0.0005,
+    shadowNormalBias: 0.02,
     fogEnabled: true,
     fogBaseDensity: 0.002,
     fogMaxDistance: 600,
@@ -111,8 +115,8 @@ export const DebugPanel: React.FC = () => {
           cascades: 3,
           shadowDistance: settings.shadowDistance,
           softness: settings.shadowSoftness,
-          bias: 0.0003,
-          normalBias: 0.005,
+          bias: settings.shadowBias,
+          normalBias: settings.shadowNormalBias,
           intensity: settings.shadowIntensity,
         };
         updateShadowFn(shadowSettings);
@@ -236,8 +240,8 @@ export const DebugPanel: React.FC = () => {
         cascades: 3, // Fixed value for now
         shadowDistance: newSettings.shadowDistance,
         softness: newSettings.shadowSoftness,
-        bias: 0.0003, // Fixed value for now
-        normalBias: 0.005, // Fixed value for now
+        bias: newSettings.shadowBias,
+        normalBias: newSettings.shadowNormalBias,
         intensity: newSettings.shadowIntensity,
       };
       updateShadowFn(shadowSettings);
@@ -725,6 +729,82 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.shadowIntensity}
             onChange={(e) => handleSettingChange('shadowIntensity', parseFloat(e.target.value))}
+            disabled={!settings.shadowEnabled}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          />
+        </label>
+
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px', 
+          opacity: settings.shadowEnabled ? 1 : 0.5,
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Bias</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.shadowBias.toFixed(5)}</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="0.002"
+            step="0.0001"
+            value={settings.shadowBias}
+            onChange={(e) => handleSettingChange('shadowBias', parseFloat(e.target.value))}
+            disabled={!settings.shadowEnabled}
+            style={{ 
+              width: '100%', 
+              height: '4px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.1)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          />
+        </label>
+
+        <label style={{ 
+          display: 'block', 
+          marginBottom: '12px', 
+          opacity: settings.shadowEnabled ? 1 : 0.5,
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(255,255,255,0.02)'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            marginBottom: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#94a3b8'
+          }}>
+            <span>Normal Bias</span>
+            <span style={{ color: '#e2e8f0' }}>{settings.shadowNormalBias.toFixed(3)}</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="0.1"
+            step="0.001"
+            value={settings.shadowNormalBias}
+            onChange={(e) => handleSettingChange('shadowNormalBias', parseFloat(e.target.value))}
             disabled={!settings.shadowEnabled}
             style={{ 
               width: '100%', 
