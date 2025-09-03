@@ -517,7 +517,7 @@ async function start(canvas: HTMLCanvasElement) {
     // Configure composer defaults
     // console.log('[Engine] Configuring composer post-processing settings');
     composer.setSSAO(true, 0.3, 0.01);
-    composer.setBloom(true, 0.15, 0.3);
+    composer.setBloom(true, 0.10, 0.3);
     composer.setLens(true, 0.6);
     composer.setFog(true, 0.002, dynamicFogDistance);
     // Default volumetrics off
@@ -536,11 +536,11 @@ async function start(canvas: HTMLCanvasElement) {
       ssaoIntensity: 0.3,
       ssaoRadius: 0.01,
       bloomEnabled: true,
-      bloomStrength: 0.15,
-      bloomThreshold: 0.3,
+      bloomStrength: 0.30,
+      bloomThreshold: 0.05,
       exposure: 0.9,
-      contrast: 1.05,
-      saturation: 1.0,
+      contrast: 1.15,
+      saturation: 1.1,
       fogEnabled: true,
       fogBaseDensity: 0.002,
       fogMaxDistance: dynamicFogDistance,

@@ -15,8 +15,8 @@ export class FogPass extends ShaderPass {
         fogColor: { value: new THREE.Color(0.72,0.82,0.92) },
         dayLight: { value: 1.0 },
         exposure: { value: 0.9 },
-        contrast: { value: 1.05 },
-        saturation: { value: 1.0 },
+        contrast: { value: 1.15 },
+        saturation: { value: 1.1 },
         // Matrices and params for horizon haze (above-water extra fog)
         invProjectionMatrix: { value: new THREE.Matrix4() },
         cameraMatrixWorld: { value: new THREE.Matrix4() },
