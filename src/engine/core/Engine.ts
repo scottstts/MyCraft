@@ -579,17 +579,19 @@ async function start(canvas: HTMLCanvasElement) {
     if (typeof dens === 'number') clouds.setDensity(dens);
   };
   
-  // Configure shadows for optimal minecraft-style visuals
+  // Configure shadows for strong, crisp sun shadows
   // console.log('[Engine] Configuring shadow settings');
   shadowSystem.updateSettings({
     enabled: true, // Enable shadows by default
     resolution: 1024,
     cascades: 3,
-    shadowDistance: 100,
-    softness: 2.5,
-    bias: 0.0005,
-    normalBias: 0.02,
-    intensity: 0.6
+    shadowDistance: 600,
+    softness: 1.0,
+    bias: 0.0003,
+    normalBias: 0.005,
+    intensity: 1.0,
+    stableExtents: true,
+    extentScale: 1.1,
   });
   
   // Set atlas config and block registry in chunk pipeline

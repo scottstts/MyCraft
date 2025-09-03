@@ -176,37 +176,40 @@ export class SimplePostProcessor {
           return dir * viewDepth;
         }
 
-        // Conservative SSAO implementation
+        // Hash for per-pixel random rotation
+        float hash12(vec2 p) {
+          vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.x + p3.y) * p3.z);
+        }
+        // Improved SSAO with rotating kernel and continuous falloff
         float ssao(vec2 uv, vec3 position, vec3 normal) {
           if (!ssaoEnabled) return 1.0;
-          
+          float current = readDepth(uv);
+          if (current >= cameraFar * 0.99) return 1.0;
+          float baseRadius = ssaoRadius * 200.0;
+          float angle0 = hash12(uv * resolution) * 6.2831853;
+          float cs = cos(angle0), sn = sin(angle0);
+          mat2 rot = mat2(cs, -sn, sn, cs);
+          int samples = 16;
           float occlusion = 0.0;
-          float radius = ssaoRadius * 200.0; // Reasonable screen space scaling
-          int samples = 8; // Fewer samples to reduce artifacts
-          float currentDepth = readDepth(uv);
-          
-          // Skip SSAO if depth is at far plane (background)
-          if (currentDepth >= cameraFar * 0.99) return 1.0;
-          
-          for (int i = 0; i < samples; i++) {
-            float angle = float(i) / float(samples) * 6.28318;
-            vec2 offset = vec2(cos(angle), sin(angle)) * radius;
-            
-            vec2 sampleUV = uv + offset / resolution;
-            // Clamp to texture bounds instead of skipping
-            sampleUV = clamp(sampleUV, vec2(0.0), vec2(1.0));
-            
-            float sampleDepth = readDepth(sampleUV);
-            float depthDiff = sampleDepth - currentDepth;
-            
-            // Only consider samples that are closer (in front)
-            if (depthDiff > 0.1 && depthDiff < 5.0) {
-              occlusion += 1.0;
+          const float maxDelta = 5.0;
+          for (int i=0; i<16; i++) {
+            float t = (float(i)+0.5) / 16.0;
+            float r = mix(0.25, 1.0, t);
+            float a = t * 6.2831853;
+            vec2 dir = vec2(cos(a), sin(a));
+            vec2 o = rot * dir * (baseRadius * r) / resolution;
+            vec2 suv = clamp(uv + o, vec2(0.0), vec2(1.0));
+            float sd = readDepth(suv);
+            float diff = current - sd; // positive when sample is closer
+            if (diff > 0.001) {
+              float w = 1.0 - clamp(diff / maxDelta, 0.0, 1.0);
+              occlusion += w;
             }
           }
-          
           occlusion = (occlusion / float(samples)) * ssaoIntensity;
-          return clamp(1.0 - occlusion * 0.5, 0.3, 1.0); // Limit darkening
+          return clamp(1.0 - occlusion * 0.75, 0.5, 1.0);
         }
 
         // Working bloom effect

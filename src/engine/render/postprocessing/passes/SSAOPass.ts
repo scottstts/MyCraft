@@ -11,8 +11,8 @@ export class SSAOPass extends ShaderPass {
         cameraNear: { value: 0.1 },
         cameraFar: { value: 1000 },
         ssaoEnabled: { value: true },
-        ssaoIntensity: { value: 0.3 },
-        ssaoRadius: { value: 0.01 },
+        ssaoIntensity: { value: 0.35 },
+        ssaoRadius: { value: 0.02 },
       },
       vertexShader: `
         varying vec2 vUv;
@@ -28,6 +28,13 @@ export class SSAOPass extends ShaderPass {
         uniform float ssaoIntensity;
         uniform float ssaoRadius;
         varying vec2 vUv;
+        
+        // Simple hash for per-pixel random rotation (avoids fixed ring banding)
+        float hash12(vec2 p) {
+          vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.x + p3.y) * p3.z);
+        }
         float readDepth(vec2 coord) {
           float z = texture2D(tDepth, coord).r;
           if (z == 1.0) return cameraFar;
@@ -36,18 +43,37 @@ export class SSAOPass extends ShaderPass {
         }
         float aoFunc(vec2 uv) {
           if (!ssaoEnabled) return 1.0;
-          float occlusion = 0.0; int samples = 8;
-          float depth = readDepth(uv); if (depth >= cameraFar*0.99) return 1.0;
-          float radius = ssaoRadius * 200.0;
-          for (int i=0;i<8;i++){
-            float a = float(i) / 8.0 * 6.2831853;
-            vec2 o = vec2(cos(a), sin(a)) * radius / resolution;
+          float current = readDepth(uv); if (current >= cameraFar*0.99) return 1.0;
+          // Screen-space radius in pixels -> convert to UV
+          float baseRadius = ssaoRadius * 200.0; // ~pixels at 1080p
+          // Per-pixel random rotation to break banding
+          float angle0 = hash12(uv * resolution) * 6.2831853;
+          float cs = cos(angle0); float sn = sin(angle0);
+          mat2 rot = mat2(cs, -sn, sn, cs);
+          
+          int samples = 16;
+          float occlusion = 0.0;
+          // Continuous falloff within a reasonable depth window
+          const float maxDelta = 5.0; // world/view units window
+          for (int i=0;i<16;i++){
+            float t = (float(i) + 0.5) / 16.0;
+            // Distribute samples from near center to radius with a slight bias to inner ring
+            float r = mix(0.25, 1.0, t);
+            float a = t * 6.2831853;
+            vec2 dir = vec2(cos(a), sin(a));
+            vec2 o = rot * dir * (baseRadius * r) / resolution;
             vec2 suv = clamp(uv + o, vec2(0.0), vec2(1.0));
-            float d = readDepth(suv);
-            float diff = d - depth; if (diff > 0.1 && diff < 5.0) occlusion += 1.0;
+            float sd = readDepth(suv);
+            float diff = current - sd; // positive when sample is closer (occluder)
+            if (diff > 0.001) {
+              float w = 1.0 - clamp(diff / maxDelta, 0.0, 1.0);
+              // Closer occluders contribute more, farther ones fade
+              occlusion += w;
+            }
           }
-          occlusion = (occlusion / 8.0) * ssaoIntensity;
-          return clamp(1.0 - occlusion * 0.5, 0.3, 1.0);
+          occlusion = (occlusion / float(samples)) * ssaoIntensity;
+          // Limit darkening to avoid conflict with dynamic shadows and baked AO
+          return clamp(1.0 - occlusion * 0.75, 0.5, 1.0);
         }
         void main(){
           vec3 color = texture2D(tDiffuse, vUv).rgb;

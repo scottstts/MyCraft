@@ -43,8 +43,8 @@ export const DebugPanel: React.FC = () => {
   const panelRef = React.useRef<HTMLDivElement | null>(null)
   const [settings, setSettings] = useState<PostProcessingSettings>({
     ssaoEnabled: true,
-    ssaoIntensity: 0.3,
-    ssaoRadius: 0.01,
+    ssaoIntensity: 0.35,
+    ssaoRadius: 0.02,
     bloomEnabled: true,
     bloomStrength: 0.15,
     bloomThreshold: 0.3,
@@ -53,9 +53,9 @@ export const DebugPanel: React.FC = () => {
     saturation: 1.0,
     shadowEnabled: true, // Enable shadows by default
     shadowResolution: 1024,
-    shadowDistance: 1000,
-    shadowSoftness: 2.5,
-    shadowIntensity: 0.6,
+    shadowDistance: 600,
+    shadowSoftness: 1.0,
+    shadowIntensity: 1.0,
     fogEnabled: true,
     fogBaseDensity: 0.002,
     fogMaxDistance: 600,
@@ -111,8 +111,8 @@ export const DebugPanel: React.FC = () => {
           cascades: 3,
           shadowDistance: settings.shadowDistance,
           softness: settings.shadowSoftness,
-          bias: 0.0005,
-          normalBias: 0.02,
+          bias: 0.0003,
+          normalBias: 0.005,
           intensity: settings.shadowIntensity,
         };
         updateShadowFn(shadowSettings);
@@ -236,8 +236,8 @@ export const DebugPanel: React.FC = () => {
         cascades: 3, // Fixed value for now
         shadowDistance: newSettings.shadowDistance,
         softness: newSettings.shadowSoftness,
-        bias: 0.0005, // Fixed value for now
-        normalBias: 0.02, // Fixed value for now
+        bias: 0.0003, // Fixed value for now
+        normalBias: 0.005, // Fixed value for now
         intensity: newSettings.shadowIntensity,
       };
       updateShadowFn(shadowSettings);

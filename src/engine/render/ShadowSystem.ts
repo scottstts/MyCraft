@@ -14,6 +14,10 @@ export interface ShadowSettings {
   bias: number; // Shadow bias to prevent acne
   normalBias: number; // Normal-based bias
   intensity: number; // Shadow intensity (0-1)
+  // Stabilization: when true, use fixed per-cascade ortho extents snapped to texels
+  stableExtents?: boolean;
+  // Scale applied to the computed stable extent to ensure coverage (1.0 - 1.2 typical)
+  extentScale?: number;
 }
 
 export class ShadowSystem {
@@ -33,7 +37,9 @@ export class ShadowSystem {
     softness: 2.5,
     bias: 0.0005,
     normalBias: 0.02,
-    intensity: 0.6
+    intensity: 0.6,
+    stableExtents: false,
+    extentScale: 1.05,
   };
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene) {
@@ -172,16 +178,28 @@ export class ShadowSystem {
     let prevSplitDist = cam.near;
     for (let i = 0; i < this.settings.cascades; i++) {
       const splitDist = this.cascadeDistances[i];
+      const camera = this.shadowCameras[i];
 
       // Compute frustum corners in world space for this slice [prevSplitDist, splitDist]
+      // We still use corners to compute robust Z near/far bounds in light space
       const corners = this.getSliceCornersWorld(cam, prevSplitDist, splitDist);
 
-      // Build light view matrix that looks from opposite sun direction
-      const centroid = corners.reduce((acc, v) => acc.add(v), new THREE.Vector3()).multiplyScalar(1 / corners.length);
-      const lightPos = centroid.clone().sub(lightDir.clone().multiplyScalar(200));
-      const lightView = new THREE.Matrix4().lookAt(lightPos, centroid, up);
+      // Compute a reference center for this slice
+      const forward = new THREE.Vector3(); cam.getWorldDirection(forward);
+      const sliceMid = 0.5 * (prevSplitDist + splitDist);
+      // For stability, decouple from pitch: project forward to XZ when using stable extents
+      let forwardStable = forward.clone();
+      if (this.settings.stableExtents) {
+        forwardStable.y = 0;
+        if (forwardStable.lengthSq() > 1e-6) forwardStable.normalize(); else forwardStable.copy(forward);
+      }
+      const centerWorld = new THREE.Vector3().copy(cam.position).addScaledVector(forwardStable, sliceMid);
 
-      // Transform corners to light space and compute bounds
+      // Build light view from sun direction, targeting the stable center
+      const lightPos = centerWorld.clone().sub(lightDir.clone().multiplyScalar(200));
+      const lightView = new THREE.Matrix4().lookAt(lightPos, centerWorld, up);
+
+      // Transform corners to light space and compute min/max for Z bounds
       const min = new THREE.Vector3(+Infinity, +Infinity, +Infinity);
       const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
       for (const c of corners) {
@@ -190,36 +208,43 @@ export class ShadowSystem {
         max.max(ls);
       }
 
-      // Stabilize to texel grid
-      const camera = this.shadowCameras[i];
-      const extents = new THREE.Vector3().subVectors(max, min);
-      const texelX = extents.x / this.settings.resolution;
-      const texelY = extents.y / this.settings.resolution;
-      min.x = Math.floor(min.x / texelX) * texelX;
-      min.y = Math.floor(min.y / texelY) * texelY;
-      max.x = Math.floor(max.x / texelX) * texelX;
-      max.y = Math.floor(max.y / texelY) * texelY;
+      // Compute orthographic XY region
+      let half: number;
+      let centerLS = centerWorld.clone().applyMatrix4(lightView);
+      if (this.settings.stableExtents) {
+        // Stable extent from far plane circumscribed radius (world units)
+        const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(cam.fov) * 0.5);
+        const farH = tanHalfFov * splitDist; // height at cascade far distance
+        const farW = farH * cam.aspect;
+        const radius = Math.sqrt(farW * farW + farH * farH) * (this.settings.extentScale ?? 1.05);
+        const size = 2.0 * radius;
+        half = radius;
+        // Snap center to shadow texel grid
+        const texelSize = size / this.settings.resolution;
+        centerLS.x = Math.floor(centerLS.x / texelSize) * texelSize;
+        centerLS.y = Math.floor(centerLS.y / texelSize) * texelSize;
+      } else {
+        // Fit to current slice bounds (legacy path)
+        const extents = new THREE.Vector3().subVectors(max, min);
+        const texelX = extents.x / this.settings.resolution;
+        const texelY = extents.y / this.settings.resolution;
+        min.x = Math.floor(min.x / texelX) * texelX;
+        min.y = Math.floor(min.y / texelY) * texelY;
+        max.x = Math.floor(max.x / texelX) * texelX;
+        max.y = Math.floor(max.y / texelY) * texelY;
+        const size = Math.max(max.x - min.x, max.y - min.y);
+        half = 0.5 * size;
+        centerLS.set(0.5 * (min.x + max.x), 0.5 * (min.y + max.y), 0.0);
+        const texelSize = size / this.settings.resolution;
+        centerLS.x = Math.floor(centerLS.x / texelSize) * texelSize;
+        centerLS.y = Math.floor(centerLS.y / texelSize) * texelSize;
+      }
 
-      // Compute a stable, square coverage region in light space to reduce swimming
-      // Center = midpoint of XY bounds; size = max extent on X/Y
-      const center = new THREE.Vector3(
-        0.5 * (min.x + max.x),
-        0.5 * (min.y + max.y),
-        0
-      );
-      const size = Math.max(max.x - min.x, max.y - min.y);
-      const half = 0.5 * size;
-
-      // Snap center to shadow texel grid for stability
-      const texelSize = size / this.settings.resolution;
-      center.x = Math.floor(center.x / texelSize) * texelSize;
-      center.y = Math.floor(center.y / texelSize) * texelSize;
-
-      // Configure ortho camera in light space (square extents around snapped center)
-      camera.left = center.x - half;
-      camera.right = center.x + half;
-      camera.bottom = center.y - half;
-      camera.top = center.y + half;
+      // Configure ortho camera in light space around the snapped center
+      camera.left = centerLS.x - half;
+      camera.right = centerLS.x + half;
+      camera.bottom = centerLS.y - half;
+      camera.top = centerLS.y + half;
 
       // Depth range in light view: objects in front have negative z
       // Use positive near/far distances; include a small margin only on far

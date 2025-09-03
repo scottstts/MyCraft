@@ -235,7 +235,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 color = vec3(0.0);
           
           // Enhanced ambient with AO, modulated by day/night
-          vec3 dayAmb = vec3(0.4, 0.5, 0.6) * 0.35;
+          vec3 dayAmb = vec3(0.4, 0.5, 0.6) * 0.20;
           vec3 nightAmb = vec3(0.01, 0.015, 0.02) * 0.12;
           vec3 ambBase = mix(nightAmb, dayAmb, clamp(dayLight, 0.0, 1.0));
           vec3 starAmb = vec3(0.02, 0.025, 0.04) * 0.35 * clamp(starLight, 0.0, 1.0);
@@ -256,7 +256,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           }
           
           // Apply shadow to diffuse lighting
-          float wrappedDiffuse = (sunDot + 0.3) / 1.3;
+          // Crisper sun diffuse for stronger, clearer shadows
+          float wrappedDiffuse = sunDot;
           vec3 diffuse = sunColor * wrappedDiffuse * shadowFactor * clamp(dayLight, 0.0, 1.0);
           
           // Fresnel rim lighting
