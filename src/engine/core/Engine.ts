@@ -352,6 +352,7 @@ function update(dtSeconds: number) {
     if (blockMaterial) {
       const shadowUniforms = shadowSystem.getShadowUniforms();
       blockMaterial.updateShadowUniforms(shadowUniforms);
+      // grass billboards don't receive shadows to keep shader simple
     }
   }
   // Update block materials with sun uniforms (water uses unlit shader)
@@ -364,6 +365,8 @@ function update(dtSeconds: number) {
     // Star light provides a tiny ambient boost at night
     const starVis = 1 - THREE.MathUtils.clamp((dayLight - 0.0) / 0.2, 0, 1);
     blockMaterial.setStarLight(starVis * 0.35);
+    if (grassSystem) grassSystem.setSunUniforms(sdir, sunController.getSunColor());
+    if (grassSystem) grassSystem.setDayNight(dayLight, starVis * 0.35);
   }
   
   // Animate far ocean illusion
@@ -688,6 +691,19 @@ async function start(canvas: HTMLCanvasElement) {
   interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);
   // Decorative grass system (instanced billboards)
   grassSystem = new GrassBillboardSystem(scene, world, getBlockIdByName('grass_tuft') ?? 9);
+  // Initialize grass cloud-shadow uniforms to match clouds defaults
+  if (grassSystem && clouds) {
+    const w = clouds.getWind();
+    grassSystem.setCloudShadowUniforms({
+      enabled: false,
+      intensity: 0.35,
+      altitude: clouds.getAltitude(),
+      scale: 100,
+      coverage: clouds.getCoverage(),
+      density: clouds.getDensity(),
+      wind: w,
+    });
+  }
   
   // Sound effects
   sfx = new SoundEffects(world, camera, inputSystem, playerController);
@@ -941,7 +957,7 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
       }
       if (p.enabled !== undefined) clouds.setEnabled(p.enabled);
 
-      // Keep block material cloud shadow params in sync
+      // Keep block and grass materials cloud shadow params in sync
       if (blockMaterial && clouds) {
         const w = clouds.getWind();
         blockMaterial.setCloudShadowUniforms({
@@ -951,6 +967,13 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
           altitude: clouds.getAltitude(),
           wind: w,
           // intensity/scale kept as current defaults unless explicitly configured later
+        });
+        if (grassSystem) grassSystem.setCloudShadowUniforms({
+          enabled: p.enabled ?? true,
+          coverage: p.coverage ?? clouds.getCoverage(),
+          density: p.density ?? clouds.getDensity(),
+          altitude: clouds.getAltitude(),
+          wind: w,
         });
       }
     }

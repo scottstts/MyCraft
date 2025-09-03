@@ -3,6 +3,7 @@ import type { World } from '../world/World'
 import type { ChunkKey } from '../../types/index'
 import { CHUNK_SIZE } from '../../config/constants'
 import grassLeavesTexture from '../../assets/textures/grass_leaves.png'
+import { GrassMaterial } from './GrassMaterial'
 
 /**
  * GrassBillboardSystem
@@ -11,7 +12,7 @@ import grassLeavesTexture from '../../assets/textures/grass_leaves.png'
  */
 export class GrassBillboardSystem {
   private scene: THREE.Scene
-  private material: THREE.MeshBasicMaterial
+  private material: GrassMaterial
   private geometry: THREE.BufferGeometry
   private groups = new Map<ChunkKey, THREE.Group>()
 
@@ -21,14 +22,12 @@ export class GrassBillboardSystem {
     this.scene = scene
     this.grassTuftId = grassTuftId
 
-    this.material = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      side: THREE.DoubleSide,
-      transparent: true,
-      alphaTest: 0.3,
-      depthWrite: false,
-      fog: true,
-    })
+    // Create placeholder texture for material init
+    const ph = document.createElement('canvas'); ph.width = 1; ph.height = 1; const phCtx = ph.getContext('2d')!; phCtx.fillStyle = '#ffffff'; phCtx.fillRect(0,0,1,1);
+    const placeholder = new THREE.CanvasTexture(ph); placeholder.colorSpace = THREE.SRGBColorSpace; placeholder.magFilter = THREE.NearestFilter; placeholder.minFilter = THREE.NearestFilter;
+
+    this.material = new GrassMaterial(placeholder)
+
     // Try to load the provided grass leaves texture with alpha.
     const loader = new THREE.TextureLoader()
     const tryPaths = ['/assets/textures/grass_leaves.png', '/assets/textures/grass_billboard.png']
@@ -39,8 +38,7 @@ export class GrassBillboardSystem {
         fb.colorSpace = THREE.SRGBColorSpace
         fb.magFilter = THREE.NearestFilter
         fb.minFilter = THREE.NearestFilter
-        this.material.map = fb
-        this.material.needsUpdate = true
+        this.material.setMap(fb)
         return
       }
       loader.load(
@@ -51,8 +49,7 @@ export class GrassBillboardSystem {
           tex.magFilter = THREE.NearestFilter
           tex.minFilter = THREE.NearestFilter
           tex.premultiplyAlpha = false
-          this.material.map = tex
-          this.material.needsUpdate = true
+          this.material.setMap(tex)
         },
         undefined,
         () => loadPath(i + 1)
@@ -77,7 +74,7 @@ export class GrassBillboardSystem {
   destroy(): void {
     for (const key of Array.from(this.groups.keys())) this.removeChunk(key)
     this.geometry.dispose()
-    this.material.map?.dispose?.()
+    try { const m = (this.material.uniforms as Record<string, { value: unknown }>).map?.value as THREE.Texture | undefined; m?.dispose?.(); } catch { /* ignore */ }
     this.material.dispose()
   }
 
@@ -165,8 +162,17 @@ export class GrassBillboardSystem {
     const geom = new THREE.BufferGeometry()
     geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
     geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+    // Provide constant color=1 for BlockMaterial's AO/tint input
+    const colors = new Float32Array(8 * 3); colors.fill(1)
+    geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
     geom.setIndex(indices)
     geom.computeVertexNormals()
     return geom
   }
+
+  // Lighting/Shadow sync API (called from Engine)
+  setSunUniforms(dir: THREE.Vector3, color: THREE.Color): void { this.material.setSun(dir, color) }
+  setDayNight(day: number, star: number): void { this.material.setDayNight(day, star) }
+  updateShadowUniforms(_uniforms: Record<string, { value: unknown }>): void { /* not used in grass shader (no cast/receive) */ }
+  setCloudShadowUniforms(_params: { enabled?: boolean; intensity?: number; altitude?: number; scale?: number; coverage?: number; density?: number; wind?: THREE.Vector2; }): void { /* not used in grass shader */ }
 }
