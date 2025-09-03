@@ -39,6 +39,7 @@ export class InteractionSystem {
   private readonly woodId: number = getBlockIdByName('wood') ?? 6; // tree trunk
   private readonly leavesId: number = getBlockIdByName('leaves') ?? 7;
   private readonly leavesMapleId: number = getBlockIdByName('leaves_maple') ?? 8;
+  private readonly grassTuftId: number = getBlockIdByName('grass_tuft') ?? 9; // decorative grass
   // Track current strike progress for a targeted block
   private currentHit: { x: number; y: number; z: number; id: number; count: number } | null = null;
   // Global interaction cooldown matching arm swing pace (independent of animation)
@@ -104,7 +105,7 @@ export class InteractionSystem {
                   (window as WindowWithSfxHooks).__sfxBreak?.();
                 }
                 // Remove the block
-                this.world.setBlock(x, y, z, this.airId);
+              this.world.setBlock(x, y, z, this.airId);
                 // Water surface edge-fill: if this cell is at water surface level, open to air above,
                 // and adjacent to water at the same level, immediately fill with water.
                 if (wasSolid && this.shouldFillWithWater(x, y, z)) {
@@ -140,7 +141,8 @@ export class InteractionSystem {
         const sel = this.selection.getSelection();
         if (sel.hit && sel.placeCell) {
           const { x, y, z } = sel.placeCell;
-          const permission = this.evaluatePlacement(x, y, z);
+          const placeId = getSelectedPlacementBlockId();
+          const permission = this.evaluatePlacement(x, y, z, placeId ?? undefined);
           if (permission.canPlace) {
             const placeId = getSelectedPlacementBlockId();
             if (placeId !== null && consumeOneFromSelected()) {
@@ -162,7 +164,7 @@ export class InteractionSystem {
   /** Return required strikes to break a block id per simple rules */
   private getRequiredStrikes(id: number): number {
     // Leaves and grass: 1
-    if (id === this.leavesId || id === this.leavesMapleId || id === this.grassId) return 1;
+    if (id === this.leavesId || id === this.leavesMapleId || id === this.grassId || id === this.grassTuftId) return 1;
     // Dirt and sand: 2
     if (id === this.dirtId || id === this.sandId) return 2;
     // Cobblestone (stone id) and wood: 3
@@ -324,10 +326,18 @@ export class InteractionSystem {
    * Exception: allow placing directly under the player if there is one-block headroom,
    * moving the player up by one block before placement.
    */
-  private evaluatePlacement(x: number, y: number, z: number): { canPlace: boolean; elevatePlayer: boolean } {
+  private evaluatePlacement(x: number, y: number, z: number, placeId?: number): { canPlace: boolean; elevatePlayer: boolean } {
     // Must be empty cell
     if (this.world.getBlock(x, y, z) !== this.airId) {
       return { canPlace: false, elevatePlayer: false };
+    }
+
+    // Special rule: placing decorative grass tufts only allowed on top of grass blocks
+    if (placeId === this.grassTuftId) {
+      const belowId = this.world.getBlock(x, y - 1, z);
+      if (belowId !== this.grassId) return { canPlace: false, elevatePlayer: false };
+      // Decorative and non-solid → ignore player intersection tests
+      return { canPlace: true, elevatePlayer: false };
     }
 
     // Compute player AABB from camera position and PLAYER dimensions

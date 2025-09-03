@@ -159,6 +159,8 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
         
         const block = blockRegistry.get(blockId);
         if (!block) continue;
+        // Skip decorative billboards (e.g., grass tufts). They are rendered by a separate system.
+        if (block.name === 'grass_tuft') continue;
         
         // Compute world coords of this voxel for per-block hashing
         const gx = cx * CHUNK_SIZE.x + lx;

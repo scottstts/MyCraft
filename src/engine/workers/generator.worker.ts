@@ -239,6 +239,7 @@ function generateTerrain(
   const WOOD = 6;
   const LEAVES = 7;
   const LEAVES_ALT = 8; // maple/autumn variant
+  const GRASS_TUFT = 9; // decorative grass billboard
   
   // Process each column in the chunk
   for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
@@ -313,6 +314,35 @@ function generateTerrain(
         }
       }
       
+    }
+  }
+
+  // Pass: spawn decorative grass tufts on grass blocks (local-only; no cross-chunk placement needed)
+  for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
+    for (let lz = 0; lz < CHUNK_SIZE.z; lz++) {
+      const worldX = cx * CHUNK_SIZE.x + lx;
+      const worldZ = cz * CHUNK_SIZE.z + lz;
+      const { height: surfaceY, isLand } = heightAt(worldX, worldZ);
+      if (!isLand) continue;
+      const lySurface = surfaceY - cy * CHUNK_SIZE.y;
+      const lyAbove = lySurface + 1;
+      if (lySurface < 0 || lySurface >= CHUNK_SIZE.y) continue; // surface not in this chunk
+      if (lyAbove < 0 || lyAbove >= CHUNK_SIZE.y) continue;     // above cell not in this chunk
+      const idxSurface = localToIndex(lx, lySurface, lz);
+      if (voxels[idxSurface] !== GRASS) continue; // only on grass blocks
+      const idxAbove = localToIndex(lx, lyAbove, lz);
+      if (voxels[idxAbove] !== AIR) continue; // must be empty above
+
+      // Clustered distribution similar to trees but denser
+      const clusterNoise = (nTreeCluster(worldX * TREE_CLUSTER_SCALE, worldZ * TREE_CLUSTER_SCALE) + 1) * 0.5; // 0..1
+      const clusterMask = smoothstep(0.55, 0.95, clusterNoise); // favor patches
+      const baseDensity = 0.40; // ~40% average coverage
+      // Keep mean ~0.4: factor ranges ~[0.3..1.3] → average ≈ 0.8 → base*0.8 ≈ 0.32; bump base a bit
+      const spawnProb = baseDensity * (0.3 + 1.4 * clusterMask);
+      const r = hash2d(worldX, worldZ, 911 ^ seed);
+      if (r < spawnProb) {
+        voxels[idxAbove] = GRASS_TUFT;
+      }
     }
   }
 

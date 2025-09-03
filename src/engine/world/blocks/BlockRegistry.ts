@@ -91,6 +91,16 @@ export class BlockRegistry {
         opaque: true,
         solid: true,
         faces: { all: 'maple_leaves' }
+      },
+      {
+        id: 9,
+        name: 'grass_tuft',
+        // Decorative plant rendered as crossed billboards (X). Not a real cube.
+        // Keep non-opaque and non-solid so it doesn't collide or occlude.
+        opaque: false,
+        solid: false,
+        // Faces unused by mesher (skipped); leave as air to avoid accidental draw
+        faces: { all: 'air' }
       }
     ];
 

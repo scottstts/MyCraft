@@ -7,6 +7,7 @@
 
 import type * as THREE from 'three';
 import type { World } from '../world/World';
+import { getBlock } from '../world/blocks/BlockRegistry';
 import { INTERACTION } from '../../config/constants';
 
 export interface VoxelRaycastHit {
@@ -121,8 +122,11 @@ export function raycastVoxels(
 
     if (t > maxDistance) break;
 
-    // Check voxel solidity at new cell
-    if (world.isBlockSolid(x, y, z)) {
+    // Check voxel solidity/selectability at new cell
+    const id = world.getBlock(x, y, z);
+    const def = getBlock(id);
+    const selectable = !!def && (world.isBlockSolid(x, y, z) || def.name === 'grass_tuft');
+    if (selectable) {
       return {
         hit: true,
         hitCell: { x, y, z },
@@ -134,5 +138,4 @@ export function raycastVoxels(
 
   return { hit: false };
 }
-
 

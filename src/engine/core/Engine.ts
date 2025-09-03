@@ -33,6 +33,8 @@ import { InputSystem } from '../systems/Input';
 import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
+import { GrassBillboardSystem } from '../render/GrassBillboardSystem';
+import { getBlockIdByName } from '../world/blocks/BlockRegistry';
 import waterTexture from '../../assets/textures/water.png';
 import { useUIStore } from '../../state/ui';
 import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
@@ -67,6 +69,7 @@ let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
 let interactionSystem: InteractionSystem | null = null;
+let grassSystem: GrassBillboardSystem | null = null;
 let lastFrameNow: number = 0;
 let fpsCounterFrames: number = 0;
 let fpsLastReportNow: number = 0;
@@ -683,6 +686,8 @@ async function start(canvas: HTMLCanvasElement) {
   
   // Interaction system (mine/place + re-mesh)
   interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);
+  // Decorative grass system (instanced billboards)
+  grassSystem = new GrassBillboardSystem(scene, world, getBlockIdByName('grass_tuft') ?? 9);
   
   // Sound effects
   sfx = new SoundEffects(world, camera, inputSystem, playerController);
@@ -825,6 +830,12 @@ function stop() {
   
   // Clean up interaction system
   interactionSystem = null;
+  
+  // Clean up grass system
+  if (grassSystem) {
+    grassSystem.destroy();
+    grassSystem = null;
+  }
   
   // Clean up sound effects
   if (sfx) {
