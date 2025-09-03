@@ -50,7 +50,7 @@ export const DebugPanel: React.FC = () => {
     ssaoIntensity: 0.35,
     ssaoRadius: 0.02,
     bloomEnabled: true,
-    bloomStrength: 0.25,
+    bloomStrength: 0.15,
     bloomThreshold: 0.3,
     exposure: 0.9,
     contrast: 1.05,
