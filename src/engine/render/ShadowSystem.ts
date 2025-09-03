@@ -33,6 +33,8 @@ export class ShadowSystem {
   private cascadeSizes: number[] = [];
   private dummyTexture: THREE.DataTexture;
   private sunDir: THREE.Vector3 = new THREE.Vector3(50, 120, 50).normalize();
+  // Track last snapped centers in light-space to throttle updates (per cascade)
+  private lastSnappedLS: { x: number; y: number }[] = [];
   
   private settings: ShadowSettings = {
     enabled: true,
@@ -83,6 +85,7 @@ export class ShadowSystem {
     this.shadowCameras = [];
     this.shadowMaps = [];
     this.cascadeSizes = [];
+    this.lastSnappedLS = [];
     
     for (let i = 0; i < this.settings.cascades; i++) {
       // Create orthographic camera for this cascade
@@ -180,8 +183,7 @@ export class ShadowSystem {
     const cam = viewCamera as THREE.PerspectiveCamera;
     const lightDir = this.sunDir.clone().normalize();
     const up = new THREE.Vector3(0, 1, 0);
-    // Recompute splits if needed
-    this.recomputeCascadeSplits();
+    // Keep splits stable; only recompute when settings change
 
     let prevSplitDist = cam.near;
     for (let i = 0; i < this.settings.cascades; i++) {
@@ -192,16 +194,8 @@ export class ShadowSystem {
       // We still use corners to compute robust Z near/far bounds in light space
       const corners = this.getSliceCornersWorld(cam, prevSplitDist, splitDist);
 
-      // Compute a reference center for this slice
-      const forward = new THREE.Vector3(); cam.getWorldDirection(forward);
-      const sliceMid = 0.5 * (prevSplitDist + splitDist);
-      // For stability, decouple from pitch: project forward to XZ when using stable extents
-      const forwardStable = forward.clone();
-      if (this.settings.stableExtents) {
-        forwardStable.y = 0;
-        if (forwardStable.lengthSq() > 1e-6) forwardStable.normalize(); else forwardStable.copy(forward);
-      }
-      const centerWorld = new THREE.Vector3().copy(cam.position).addScaledVector(forwardStable, sliceMid);
+      // Stable CSM: center all cascades on camera position (world-aligned), not view direction
+      const centerWorld = new THREE.Vector3().copy(cam.position);
 
       // Build light view from sun direction, targeting the stable center
       const lightPos = centerWorld.clone().sub(lightDir.clone().multiplyScalar(200));
@@ -219,7 +213,7 @@ export class ShadowSystem {
       // Compute orthographic XY region
       let half: number;
       let sizeForCascade = 0.0;
-      const centerLS = centerWorld.clone().applyMatrix4(lightView);
+      let centerLS = centerWorld.clone().applyMatrix4(lightView);
       if (this.settings.stableExtents) {
         // Stable extent from far plane circumscribed radius (world units)
         const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(cam.fov) * 0.5);
@@ -229,10 +223,28 @@ export class ShadowSystem {
         const size = 2.0 * radius;
         half = radius;
         sizeForCascade = size;
-        // Snap center to shadow texel grid
+        // Texel snapping with threshold: compute snapped light-space center and only update when movement exceeds half-texel
         const texelSize = size / this.settings.resolution;
-        centerLS.x = Math.floor(centerLS.x / texelSize) * texelSize;
-        centerLS.y = Math.floor(centerLS.y / texelSize) * texelSize;
+        const desiredX = Math.round(centerLS.x / texelSize) * texelSize;
+        const desiredY = Math.round(centerLS.y / texelSize) * texelSize;
+        const last = this.lastSnappedLS[i] || { x: desiredX, y: desiredY };
+        const threshold = texelSize * 0.5;
+        const nextX = (Math.abs(desiredX - last.x) >= threshold) ? desiredX : last.x;
+        const nextY = (Math.abs(desiredY - last.y) >= threshold) ? desiredY : last.y;
+        // Bake translation into lightView so ortho center stays at (0,0)
+        const offX = nextX - centerLS.x;
+        const offY = nextY - centerLS.y;
+        if (Math.abs(offX) > 1e-6 || Math.abs(offY) > 1e-6) {
+          const T = new THREE.Matrix4().makeTranslation(offX, offY, 0);
+          lightView.premultiply(T);
+          centerLS = centerWorld.clone().applyMatrix4(lightView);
+        }
+        this.lastSnappedLS[i] = { x: nextX, y: nextY };
+        // Symmetric bounds around origin ensure constant light-space size
+        camera.left = -half;
+        camera.right = half;
+        camera.bottom = -half;
+        camera.top = half;
       } else {
         // Fit to current slice bounds (legacy path)
         const extents = new THREE.Vector3().subVectors(max, min);
@@ -249,13 +261,12 @@ export class ShadowSystem {
         const texelSize = size / this.settings.resolution;
         centerLS.x = Math.floor(centerLS.x / texelSize) * texelSize;
         centerLS.y = Math.floor(centerLS.y / texelSize) * texelSize;
+        camera.left = centerLS.x - half;
+        camera.right = centerLS.x + half;
+        camera.bottom = centerLS.y - half;
+        camera.top = centerLS.y + half;
       }
-
-      // Configure ortho camera in light space around the snapped center
-      camera.left = centerLS.x - half;
-      camera.right = centerLS.x + half;
-      camera.bottom = centerLS.y - half;
-      camera.top = centerLS.y + half;
+      // For stable path, bounds already set symmetric; legacy path set above
 
       // Depth range in light view: objects in front have negative z
       // Use positive near/far distances; include a small margin only on far

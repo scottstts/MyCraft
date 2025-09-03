@@ -122,9 +122,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
 
       // Compute PCSS-style soft shadow with cascade selection
       float sampleShadowCascade(int ci, vec3 worldPos, vec3 normal, vec3 sunDir, float biasNorm) {
-          // Convert normalized bias to world-space offset along light direction
-          float zRange = max(1e-3, shadowCamFar[ci] - shadowCamNear[ci]);
-          float biasWorld = biasNorm * zRange;
+          // Stable world-space bias based on world-units-per-texel for this cascade
+          float worldTexel = shadowCascadeSize[ci] / max(1.0, shadowResolution);
+          float biasWorld = biasNorm * worldTexel;
           // Apply world-space offsets: push along normal (slope) and towards light (directional)
           vec3 receiverPos = worldPos - sunDir * biasWorld;
           vec4 sc = getShadowCoord(ci, receiverPos);
@@ -150,7 +150,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
 
           // Blocker search (PCSS)
           float searchRadius = 4.0 * texelSize;
-          float angle = hash12(sc.xy * 1024.0) * 6.2831853;
+          // Anchor rotation to shadow texel grid for temporal stability
+          vec2 scTexel = floor(sc.xy * shadowResolution);
+          float angle = hash12(scTexel) * 6.2831853;
           float s = sin(angle), c = cos(angle);
           mat2 rot = mat2(c, -s, s, c);
           float blockerSum = 0.0;
@@ -189,7 +191,6 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           if (shadowCascades > 2 && viewDepth > shadowDistances[1]) ci = 2;
           if (shadowCascades > 3 && viewDepth > shadowDistances[2]) ci = 3;
 
-          float bias = shadowBias + nb;
           vec3 sunDirN = normalize(sunDir);
           float sBase = sampleShadowCascade(ci, worldPos + normal * nb, normal, sunDirN, shadowBias);
 
@@ -381,8 +382,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         shadowNormalBias: { value: 0.02 },
         shadowIntensity: { value: 0.0 }, // Start with shadows disabled
         shadowResolution: { value: 1024 }, // Default shadow resolution
-        shadowBlendFraction: { value: 0.3 },
-        shadowBlendMin: { value: 10.0 },
+        shadowBlendFraction: { value: 0.2 },
+        shadowBlendMin: { value: 3.0 },
         shadowCascadeSize: { value: [100, 200, 400, 800] },
         shadowCamNear: { value: [0.1, 0.1, 0.1, 0.1] },
         shadowCamFar: { value: [100, 200, 400, 800] },
