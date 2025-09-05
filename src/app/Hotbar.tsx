@@ -46,6 +46,7 @@ export function Hotbar() {
             {icon && (
               <img src={icon} alt="" style={{ width: 32, height: 32, imageRendering: 'pixelated', position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }} />
             )}
+            <div style={{ position: 'absolute', left: 2, top: 1, fontSize: 10, color: '#ffd700', textShadow: '1px 1px 0 #000', fontWeight: 'bold' }}>{idx + 1}</div>
             {slot.count > 0 && (
               <div style={{ position: 'absolute', right: 2, bottom: 0, fontSize: 10, color: '#fff', textShadow: '1px 1px 0 #000' }}>{slot.count}</div>
             )}
