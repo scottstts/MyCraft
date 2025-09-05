@@ -66,6 +66,12 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uFoamThreshold: { value: 0.62 },
         uFoamNoise: { value: 1.0 },         // 0..1 added breakup amount
         uFoamDrift: { value: 0.15 },        // drift speed along wind
+        // Transmission control: make far/grazing water less transparent
+        uAlphaDistStart: { value: 25.0 },   // meters
+        uAlphaDistEnd: { value: 140.0 },    // meters
+        uAlphaMax: { value: 0.98 },
+        uAlphaNearMin: { value: 0.88 },     // enforce near-opaceness so shoreline isn't invisible
+        uAlphaNearDist: { value: 22.0 },    // meters within which to enforce near min
         // Sky gradient controls (simple analytic sky for reflections)
         uSkyTop: { value: new THREE.Color(0.32, 0.50, 0.80) },
         uSkyHorizon: { value: new THREE.Color(0.68, 0.78, 0.92) },
@@ -94,6 +100,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uWaveAmp; uniform float uChop; uniform vec2 uWind; uniform float uSpeed; uniform float uL0; uniform float uL1; uniform float uL2;
         // Foam
         uniform float uFoamIntensity; uniform float uFoamThreshold; uniform float uFoamNoise; uniform float uFoamDrift;
+        // Distance/angle transmission shaping
+        uniform float uAlphaDistStart; uniform float uAlphaDistEnd; uniform float uAlphaMax;
+        uniform float uAlphaNearMin; uniform float uAlphaNearDist;
         // Sky gradient
         uniform vec3 uSkyTop; uniform vec3 uSkyHorizon;
 
@@ -102,7 +111,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         float noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash(i); float b=hash(i+vec2(1.0,0.0)); float c=hash(i+vec2(0.0,1.0)); float d=hash(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y; }
 
         // Compute Gerstner-style normal from three spectral components
-        vec3 waveNormal(vec2 xz, float t, out float crest){
+        vec4 waveNormalCrest(vec2 xz, float t){
           // Directions
           vec2 d0 = normalize(uWind);
           vec2 d1 = normalize(vec2(-uWind.y, uWind.x));
@@ -138,8 +147,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float s1 = abs(sin(p1));
           float s2 = abs(sin(p2));
           float inter = (a0*s0 + a1*s1 + a2*s2) / max(1e-3, (a0+a1+a2));
-          crest = clamp(slope * (0.6 + 0.7*inter), 0.0, 1.0);
-          return N;
+          float crest = clamp(slope * (0.6 + 0.7*inter), 0.0, 1.0);
+          return vec4(N, crest);
         }
 
         vec3 skyColor(vec3 dir){
@@ -158,8 +167,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           // Stable world UV for waves whether using block UVs or world quads
           vec2 xz = uUseWorldUV ? vWorld.xz : (vWorld.xz * uTileScale);
           float t = uTime;
-          float crest = 0.0;
-          vec3 N = waveNormal(xz, t, crest);
+          vec4 nc = waveNormalCrest(xz, t);
+          vec3 N = nc.xyz;
+          float crest = nc.w;
 
           // Reflection from simplified sky
           vec3 R = reflect(-V, N);
@@ -208,7 +218,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           // Tonemap-ish and gamma
           col = col / (col + vec3(1.0));
           col = pow(col, vec3(1.0/2.2));
-          gl_FragColor = vec4(col, clamp(uAlpha, 0.0, 1.0));
+
+          // Robust alpha: enforce a strong minimum so shoreline is always visible.
+          // Keep it simple and stable across drivers: avoid distance/angle blending for now.
+          float a = max(uAlpha, uAlphaNearMin);
+          gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
         }
       `,
     })
