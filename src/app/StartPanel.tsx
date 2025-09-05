@@ -480,14 +480,14 @@ export function StartPanel() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Sprint</span>
                     <kbd style={{
-                      padding: 'clamp(6px, 1.5vw, 8px) clamp(16px, 4vw, 20px)',
+                      padding: 'clamp(10px, 2.5vw, 12px) clamp(16px, 4vw, 20px)',
                       background: 'linear-gradient(145deg, #4b5563, #374151)',
                       color: '#f3f4f6',
-                      borderRadius: 'clamp(4px, 1vw, 6px)',
+                      borderRadius: 'clamp(8px, 2vw, 10px)',
                       fontSize: 'clamp(10px, 2.2vw, 12px)',
                       fontWeight: 700,
                       border: '1px solid rgba(255,255,255,0.15)',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.1)'
+                      boxShadow: '0 3px 8px rgba(0,0,0,0.4), inset 0 1px 2px rgba(255,255,255,0.1)'
                     }}>
                       SHIFT
                     </kbd>
