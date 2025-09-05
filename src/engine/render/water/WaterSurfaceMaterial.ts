@@ -48,8 +48,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uEdgeWidth: { value: 2.0 },
         uAlpha: { value: 1.0 },
         // Water optics + waves
-        uFresnel: { value: 0.06 },          // Fresnel strength for rim reflection
-        uSpecular: { value: 0.9 },          // Sun glint strength
+        uFresnel: { value: 0.035 },         // Fresnel blend strength
+        uSpecular: { value: 0.65 },         // Sun glint strength
+        uRoughness: { value: 0.35 },        // Reflection blur (analytic, cheap)
         uSunDir: { value: new THREE.Vector3(0.35, 0.9, 0.2).normalize() }, // default midday
         uSunColor: { value: new THREE.Color(1.0, 0.98, 0.90) },
         // Gerstner-like wave params
@@ -60,6 +61,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uL0: { value: 12.0 },               // primary wavelength (m)
         uL1: { value: 6.0 },                // secondary
         uL2: { value: 2.5 },                // micro ripples
+        // Foam controls (procedural, crest-only)
+        uFoamIntensity: { value: 0.55 },
+        uFoamThreshold: { value: 0.62 },
+        uFoamNoise: { value: 1.0 },         // 0..1 added breakup amount
+        uFoamDrift: { value: 0.15 },        // drift speed along wind
         // Sky gradient controls (simple analytic sky for reflections)
         uSkyTop: { value: new THREE.Color(0.32, 0.50, 0.80) },
         uSkyHorizon: { value: new THREE.Color(0.68, 0.78, 0.92) },
@@ -83,9 +89,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uInnerMinX, uInnerMaxX, uInnerMinZ, uInnerMaxZ;
         uniform float uEdgeStrength; uniform float uEdgeWidth; uniform float uAlpha;
         // Optics
-        uniform float uFresnel; uniform float uSpecular; uniform vec3 uSunColor; uniform vec3 uSunDir;
+        uniform float uFresnel; uniform float uSpecular; uniform float uRoughness; uniform vec3 uSunColor; uniform vec3 uSunDir;
         // Waves
         uniform float uWaveAmp; uniform float uChop; uniform vec2 uWind; uniform float uSpeed; uniform float uL0; uniform float uL1; uniform float uL2;
+        // Foam
+        uniform float uFoamIntensity; uniform float uFoamThreshold; uniform float uFoamNoise; uniform float uFoamDrift;
         // Sky gradient
         uniform vec3 uSkyTop; uniform vec3 uSkyHorizon;
 
@@ -94,7 +102,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         float noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash(i); float b=hash(i+vec2(1.0,0.0)); float c=hash(i+vec2(0.0,1.0)); float d=hash(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y; }
 
         // Compute Gerstner-style normal from three spectral components
-        vec3 waveNormal(vec2 xz, float t){
+        vec3 waveNormal(vec2 xz, float t, out float crest){
           // Directions
           vec2 d0 = normalize(uWind);
           vec2 d1 = normalize(vec2(-uWind.y, uWind.x));
@@ -124,6 +132,13 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           grad += vec2(n*0.08, -n*0.06);
 
           vec3 N = normalize(vec3(-grad.x * ch, 1.0, -grad.y * ch));
+          // Crest metric: slope plus instantaneous constructive interference
+          float slope = clamp(1.0 - N.y, 0.0, 1.0);
+          float s0 = abs(sin(p0));
+          float s1 = abs(sin(p1));
+          float s2 = abs(sin(p2));
+          float inter = (a0*s0 + a1*s1 + a2*s2) / max(1e-3, (a0+a1+a2));
+          crest = clamp(slope * (0.6 + 0.7*inter), 0.0, 1.0);
           return N;
         }
 
@@ -143,11 +158,22 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           // Stable world UV for waves whether using block UVs or world quads
           vec2 xz = uUseWorldUV ? vWorld.xz : (vWorld.xz * uTileScale);
           float t = uTime;
-          vec3 N = waveNormal(xz, t);
+          float crest = 0.0;
+          vec3 N = waveNormal(xz, t, crest);
 
           // Reflection from simplified sky
           vec3 R = reflect(-V, N);
-          vec3 skyRef = skyColor(R);
+          // Analytic rough reflection: jitter normal in a tiny cone using noise
+          vec3 up = (abs(N.y) < 0.999) ? vec3(0.0,1.0,0.0) : vec3(1.0,0.0,0.0);
+          vec3 T = normalize(cross(up, N));
+          vec3 B = cross(N, T);
+          float r = mix(0.01, 0.08, clamp(uRoughness, 0.0, 1.0));
+          vec2 h = vec2(noise(xz*0.31 + t*0.2), noise(xz*0.37 - t*0.17));
+          vec3 N1 = normalize(N + (T * (h.x-0.5) + B * (h.y-0.5)) * r);
+          vec3 N2 = normalize(N + (T * (h.y-0.5) + B * (h.x-0.5)) * r*0.8);
+          vec3 R1 = reflect(-V, N1);
+          vec3 R2 = reflect(-V, N2);
+          vec3 skyRef = (skyColor(R) + skyColor(R1) + skyColor(R2)) / 3.0;
 
           // Base water coloration (absorption): deepen with view angle
           float NdV = max(dot(N, V), 0.0);
@@ -161,6 +187,16 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           // Very tight highlight with soft shoulder
           float glint = pow(spec, 220.0) * 0.9 + pow(spec, 32.0) * 0.2;
           vec3 sunGlint = uSunColor * glint * uSpecular;
+
+          // Forward scattering tint (cheap subsurface feel)
+          float fwd = pow(max(dot(N, -L), 0.0), 3.0) * 0.25;
+          base += deep * fwd;
+
+          // Foam on crests (instantaneous, noise-broken, wind-drifting)
+          float foamSeed = noise(xz * 0.9 + uWind * (t * uFoamDrift));
+          float foam = smoothstep(uFoamThreshold, 1.0, crest * (0.75 + uFoamNoise * (foamSeed - 0.5) * 0.8));
+          vec3 foamCol = vec3(1.0);
+          base = mix(base, foamCol, clamp(foam * uFoamIntensity, 0.0, 1.0));
 
           vec3 col = base + sunGlint;
 
