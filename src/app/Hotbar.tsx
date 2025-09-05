@@ -7,6 +7,7 @@ import stoneIcon from '../assets/material_icons/cobblestone.png'
 import sandIcon from '../assets/material_icons/sand.png'
 import woodIcon from '../assets/material_icons/wood.png'
 import branchIcon from '../assets/material_icons/branch.png'
+import mapleBranchIcon from '../assets/material_icons/maple_branch.png'
 import grassLeaveIcon from '../assets/material_icons/grass_leaves_icon.png'
 import waterIcon from '../assets/material_icons/water.png'
 
@@ -18,7 +19,7 @@ const ICONS: Record<number, string> = {
   5: waterIcon, // water
   6: woodIcon,  // wood (trunk)
   7: branchIcon, // leaves
-  8: branchIcon, // maple leaves
+  8: mapleBranchIcon, // maple leaves
   9: grassLeaveIcon // decorative grass tuft
 }
 
