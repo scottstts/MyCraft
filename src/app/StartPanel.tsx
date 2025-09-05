@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useUIStore } from '../state/ui'
 import type { WorldSaveFile, WorldSavePayload, SavedInventory } from '../types/save'
 import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, SAVE_ENC_ALG, verifyPayload, bytesFromBase64, base64FromBytes, decryptPayload } from '../shared/save'
@@ -30,12 +30,31 @@ export function StartPanel() {
   const [localSize, setLocalSize] = useState<{ x: number; y: number; z: number }>(
     chunkSize || { x: 48, y: 96, z: 48 }
   )
+  const [showControls, setShowControls] = useState<boolean>(false)
+  const controlsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // Keep in sync if store changes elsewhere
     setLocalCount(chunkCount)
     setLocalSize(chunkSize)
   }, [chunkCount, chunkSize])
+
+  useEffect(() => {
+    // Close controls when clicking outside
+    const handleClickOutside = (event: MouseEvent) => {
+      if (controlsRef.current && !controlsRef.current.contains(event.target as Node)) {
+        setShowControls(false)
+      }
+    }
+
+    if (showControls) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showControls])
 
   if (gameStarted) return null
 
@@ -294,13 +313,327 @@ export function StartPanel() {
           }}>
             MyCraft
           </div>
-          <div style={{ 
-            opacity: 0.75, 
-            fontSize: 13,
-            fontWeight: 500,
-            color: '#94a3b8'
-          }}>
-            Configure World
+          <div 
+            ref={controlsRef}
+            style={{ 
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}
+          >
+            <div 
+              onClick={() => setShowControls(!showControls)}
+              style={{ 
+                opacity: 1, 
+                fontSize: 14,
+                fontWeight: 700,
+                color: '#e2e8f0',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                borderRadius: 8,
+                transition: 'all 0.2s ease',
+                userSelect: 'none',
+                background: 'rgba(148,163,184,0.1)',
+                border: '1px solid rgba(148,163,184,0.2)'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.opacity = '1'
+                e.currentTarget.style.background = 'rgba(148,163,184,0.2)'
+                e.currentTarget.style.borderColor = 'rgba(148,163,184,0.3)'
+                e.currentTarget.style.transform = 'translateY(-1px)'
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.opacity = '1'
+                e.currentTarget.style.background = 'rgba(148,163,184,0.1)'
+                e.currentTarget.style.borderColor = 'rgba(148,163,184,0.2)'
+                e.currentTarget.style.transform = 'translateY(0)'
+              }}
+            >
+              Player Control
+              <span style={{ 
+                fontSize: 10,
+                transform: showControls ? 'rotate(180deg)' : 'rotate(0deg)',
+                transition: 'transform 0.2s ease'
+              }}>
+                ▼
+              </span>
+            </div>
+            
+            {showControls && (
+              <div style={{
+                position: 'absolute',
+                top: '100%',
+                right: 0,
+                marginTop: 8,
+                minWidth: 'clamp(240px, 70vw, 320px)',
+                maxWidth: 'min(90vw, 320px)',
+                padding: 'clamp(12px, 3vw, 16px)',
+                background: 'linear-gradient(145deg, rgba(26,31,46,0.98), rgba(15,20,25,0.98))',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 'clamp(8px, 2vw, 12px)',
+                boxShadow: '0 12px 32px rgba(0,0,0,0.6), 0 4px 16px rgba(0,0,0,0.4)',
+                backdropFilter: 'blur(20px)',
+                zIndex: 10,
+                animation: 'fadeIn 0.2s ease-out',
+                // Prevent overflow on small screens
+                transform: 'translateX(min(0px, calc(-100% + 100vw - 32px)))'
+              }}>
+                <div style={{
+                  fontSize: 'clamp(11px, 2.5vw, 12px)',
+                  fontWeight: 600,
+                  color: '#e2e8f0',
+                  marginBottom: 'clamp(8px, 2vw, 12px)',
+                  textAlign: 'center',
+                  letterSpacing: 0.5
+                }}>
+                  PLAYER CONTROLS
+                </div>
+                <div style={{ display: 'grid', gap: 'clamp(16px, 4vw, 20px)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1', marginTop: 'clamp(8px, 2vw, 12px)' }}>Movement</span>
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: 'repeat(3, 1fr)', 
+                      gridTemplateRows: 'repeat(2, 1fr)',
+                      gap: 'clamp(3px, 1vw, 4px)', 
+                      width: 'clamp(75px, 18vw, 90px)',
+                      height: 'clamp(60px, 14vw, 70px)'
+                    }}>
+                      {/* Empty cell */}
+                      <div></div>
+                      {/* W key - top center */}
+                      <kbd style={{
+                        width: '100%',
+                        height: '100%',
+                        background: 'linear-gradient(145deg, #4b5563, #374151)',
+                        color: '#f3f4f6',
+                        borderRadius: 'clamp(4px, 1vw, 6px)',
+                        fontSize: 'clamp(10px, 2.2vw, 12px)',
+                        fontWeight: 700,
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        W
+                      </kbd>
+                      {/* Empty cell */}
+                      <div></div>
+                      {/* A key - bottom left */}
+                      <kbd style={{
+                        width: '100%',
+                        height: '100%',
+                        background: 'linear-gradient(145deg, #4b5563, #374151)',
+                        color: '#f3f4f6',
+                        borderRadius: 'clamp(4px, 1vw, 6px)',
+                        fontSize: 'clamp(10px, 2.2vw, 12px)',
+                        fontWeight: 700,
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        A
+                      </kbd>
+                      {/* S key - bottom center */}
+                      <kbd style={{
+                        width: '100%',
+                        height: '100%',
+                        background: 'linear-gradient(145deg, #4b5563, #374151)',
+                        color: '#f3f4f6',
+                        borderRadius: 'clamp(4px, 1vw, 6px)',
+                        fontSize: 'clamp(10px, 2.2vw, 12px)',
+                        fontWeight: 700,
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        S
+                      </kbd>
+                      {/* D key - bottom right */}
+                      <kbd style={{
+                        width: '100%',
+                        height: '100%',
+                        background: 'linear-gradient(145deg, #4b5563, #374151)',
+                        color: '#f3f4f6',
+                        borderRadius: 'clamp(4px, 1vw, 6px)',
+                        fontSize: 'clamp(10px, 2.2vw, 12px)',
+                        fontWeight: 700,
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        D
+                      </kbd>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Sprint</span>
+                    <kbd style={{
+                      padding: 'clamp(6px, 1.5vw, 8px) clamp(16px, 4vw, 20px)',
+                      background: 'linear-gradient(145deg, #4b5563, #374151)',
+                      color: '#f3f4f6',
+                      borderRadius: 'clamp(4px, 1vw, 6px)',
+                      fontSize: 'clamp(10px, 2.2vw, 12px)',
+                      fontWeight: 700,
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.1)'
+                    }}>
+                      SHIFT
+                    </kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Jump / Surface</span>
+                    <kbd style={{
+                      padding: 'clamp(10px, 2.5vw, 12px) clamp(28px, 7vw, 36px)',
+                      background: 'linear-gradient(145deg, #4b5563, #374151)',
+                      color: '#f3f4f6',
+                      borderRadius: 'clamp(8px, 2vw, 10px)',
+                      fontSize: 'clamp(10px, 2.2vw, 12px)',
+                      fontWeight: 700,
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      boxShadow: '0 3px 8px rgba(0,0,0,0.4), inset 0 1px 2px rgba(255,255,255,0.1)',
+                      minWidth: 'clamp(90px, 22vw, 110px)',
+                      textAlign: 'center'
+                    }}>
+                      SPACE
+                    </kbd>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Break Block</span>
+                    <div style={{
+                      position: 'relative',
+                      width: 'clamp(50px, 12vw, 60px)',
+                      height: 'clamp(35px, 8vw, 42px)',
+                      background: 'linear-gradient(145deg, #52525b, #3f3f46)',
+                      borderRadius: 'clamp(15px, 4vw, 18px) clamp(15px, 4vw, 18px) clamp(8px, 2vw, 10px) clamp(8px, 2vw, 10px)',
+                      border: '1.5px solid rgba(255,255,255,0.2)',
+                      boxShadow: '0 3px 12px rgba(0,0,0,0.5), inset 0 1px 3px rgba(255,255,255,0.15)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'default'
+                    }}>
+                      {/* Left mouse button */}
+                      <div style={{
+                        position: 'absolute',
+                        left: '12%',
+                        top: '15%',
+                        width: '35%',
+                        height: '50%',
+                        background: 'linear-gradient(145deg, #6b7280, #52525b)',
+                        borderRadius: 'clamp(6px, 1.5vw, 8px) clamp(6px, 1.5vw, 8px) clamp(2px, 0.5vw, 3px) clamp(2px, 0.5vw, 3px)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(255,255,255,0.1)'
+                      }} />
+                      {/* Mouse wheel */}
+                      <div style={{
+                        position: 'absolute',
+                        left: '50%',
+                        top: '15%',
+                        width: '12%',
+                        height: '35%',
+                        background: 'linear-gradient(145deg, #71717a, #52525b)',
+                        borderRadius: 'clamp(1px, 0.3vw, 2px)',
+                        transform: 'translateX(-50%)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)'
+                      }} />
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '8%',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        width: '85%',
+                        textAlign: 'center'
+                      }}>
+                        <span style={{
+                          fontSize: 'clamp(7px, 1.6vw, 9px)',
+                          fontWeight: 700,
+                          color: '#f3f4f6',
+                          lineHeight: 1.1,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.5)',
+                          display: 'block'
+                        }}>
+                          LEFT CLICK
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Place Block</span>
+                    <div style={{
+                      position: 'relative',
+                      width: 'clamp(50px, 12vw, 60px)',
+                      height: 'clamp(35px, 8vw, 42px)',
+                      background: 'linear-gradient(145deg, #52525b, #3f3f46)',
+                      borderRadius: 'clamp(15px, 4vw, 18px) clamp(15px, 4vw, 18px) clamp(8px, 2vw, 10px) clamp(8px, 2vw, 10px)',
+                      border: '1.5px solid rgba(255,255,255,0.2)',
+                      boxShadow: '0 3px 12px rgba(0,0,0,0.5), inset 0 1px 3px rgba(255,255,255,0.15)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'default'
+                    }}>
+                      {/* Right mouse button */}
+                      <div style={{
+                        position: 'absolute',
+                        right: '12%',
+                        top: '15%',
+                        width: '35%',
+                        height: '50%',
+                        background: 'linear-gradient(145deg, #6b7280, #52525b)',
+                        borderRadius: 'clamp(6px, 1.5vw, 8px) clamp(6px, 1.5vw, 8px) clamp(2px, 0.5vw, 3px) clamp(2px, 0.5vw, 3px)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(255,255,255,0.1)'
+                      }} />
+                      {/* Mouse wheel */}
+                      <div style={{
+                        position: 'absolute',
+                        left: '50%',
+                        top: '15%',
+                        width: '12%',
+                        height: '35%',
+                        background: 'linear-gradient(145deg, #71717a, #52525b)',
+                        borderRadius: 'clamp(1px, 0.3vw, 2px)',
+                        transform: 'translateX(-50%)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)'
+                      }} />
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '8%',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        width: '85%',
+                        textAlign: 'center'
+                      }}>
+                        <span style={{
+                          fontSize: 'clamp(7px, 1.6vw, 9px)',
+                          fontWeight: 700,
+                          color: '#f3f4f6',
+                          lineHeight: 1.1,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.5)',
+                          display: 'block'
+                        }}>
+                          RIGHT CLICK
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 'clamp(16px, 4vw, 24px)' }}>
