@@ -48,11 +48,19 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uEdgeWidth: { value: 2.0 },
         uAlpha: { value: 1.0 },
         // Water optics + waves
-        uFresnel: { value: 0.035 },         // Fresnel blend strength
+        uFresnel: { value: 0.035 },         // Additional Fresnel bias (adds to physical F0)
+        uEta: { value: 1.0 / 1.333 },       // Air->Water IOR ratio (eta = n1/n2)
+        uRefractAmount: { value: 0.18 },    // Screen-space refraction strength (pixels normalized)
+        uAbsorption: { value: new THREE.Vector3(0.20, 0.06, 0.02) }, // Beer-Lambert coeffs (R,G,B) per meter
+        uDepthApprox: { value: 4.0 },       // Approx. water thickness if scene depth not available (meters)
         uSpecular: { value: 1.2 },          // Sun glint strength (boosted for dramatic effect)
         uRoughness: { value: 0.35 },        // Reflection blur (analytic, cheap)
         uSunDir: { value: new THREE.Vector3(0.35, 0.9, 0.2).normalize() }, // default midday
         uSunColor: { value: new THREE.Color(1.0, 0.98, 0.90) },
+        // Optional screen-space refraction inputs (set from engine if available)
+        tSceneColor: { value: null },
+        uHasSceneColor: { value: 0 },
+        uResolution: { value: new THREE.Vector2(1, 1) },
         // Gerstner-like wave params
         uWaveAmp: { value: 0.12 },          // base amplitude (normal tilt)
         uChop: { value: 0.8 },              // choppiness (steeper crests)
@@ -99,6 +107,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uEdgeStrength; uniform float uEdgeWidth; uniform float uAlpha;
         // Optics
         uniform float uFresnel; uniform float uSpecular; uniform float uRoughness; uniform vec3 uSunColor; uniform vec3 uSunDir;
+        uniform float uEta; uniform float uRefractAmount; uniform vec3 uAbsorption; uniform float uDepthApprox;
+        uniform sampler2D tSceneColor; uniform int uHasSceneColor; uniform vec2 uResolution;
         // Waves
         uniform float uWaveAmp; uniform float uChop; uniform vec2 uWind; uniform float uSpeed; uniform float uL0; uniform float uL1; uniform float uL2;
         // Foam
@@ -247,6 +257,43 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
         }
 
+        // Beer-Lambert transmittance for constant medium, per-channel absorption coefficients
+        vec3 beerLambert(vec3 sigmaA, float dist){
+          return exp(-sigmaA * max(0.0, dist));
+        }
+
+        // Cheap screen-space refraction sampling: distort screen UV by refracted direction and wave detail
+        vec3 sampleRefractedScene(vec2 xz, vec3 N, vec3 V, float refractStrength){
+          if (uHasSceneColor == 0) return vec3(-1.0); // sentinel to indicate unavailable
+          // Incident vector from eye toward surface
+          vec3 I = -V;
+          // Refract into water (air->water)
+          vec3 T = refract(I, N, uEta);
+          // If total internal reflection or grazing where T is near-zero, skip
+          if (length(T) < 1e-5) return vec3(-1.0);
+          // Screen UV
+          vec2 uv = gl_FragCoord.xy / uResolution;
+          // Build tangent frame to introduce micro distortion from waves
+          vec3 up = (abs(N.y) < 0.999) ? vec3(0.0,1.0,0.0) : vec3(1.0,0.0,0.0);
+          vec3 Tx = normalize(cross(up, N));
+          vec3 Bx = cross(N, Tx);
+          float t = uTime;
+          // Two noisy taps for smoother result
+          vec2 n1 = vec2(noise(xz*0.41 + t*0.13), noise(xz*0.37 - t*0.09));
+          vec2 n2 = vec2(noise(xz*0.59 - t*0.17), noise(xz*0.23 + t*0.07));
+          // Project refracted direction onto screen as a small offset
+          vec2 baseOfs = T.xz * 0.5; // world to screen scale heuristic
+          // Add wave-driven micro distortion
+          vec2 micro1 = vec2(dot(Tx, N)*0.0 + (n1.x-0.5), dot(Bx, N)*0.0 + (n1.y-0.5));
+          vec2 micro2 = vec2((n2.y-0.5), (n2.x-0.5));
+          float f = clamp(refractStrength, 0.0, 1.0);
+          vec2 o1 = (baseOfs + micro1*0.5) * (0.005 + 0.020*f);
+          vec2 o2 = (baseOfs + micro2*0.5) * (0.007 + 0.030*f);
+          vec3 c1 = texture2D(tSceneColor, clamp(uv + o1, vec2(0.0), vec2(1.0))).rgb;
+          vec3 c2 = texture2D(tSceneColor, clamp(uv + o2, vec2(0.0), vec2(1.0))).rgb;
+          return 0.5 * (c1 + c2);
+        }
+
         void main(){
           vec3 V = normalize(cameraPosition - vWorld);
           // Stable world UV for waves whether using block UVs or world quads
@@ -270,11 +317,32 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec3 R2 = reflect(-V, N2);
           vec3 skyRef = (skyColor(R) + skyColor(R1) + skyColor(R2)) / 3.0;
 
-          // Base water coloration (absorption): deepen with view angle
+          // Base water coloration (absorption + proper Fresnel for dielectrics)
           float NdV = max(dot(N, V), 0.0);
-          float F = fresnelSchlick(NdV, 0.02 + uFresnel); // small conductor-like F0
-          vec3 deep = uColor;
-          vec3 base = mix(deep, skyRef, F);
+          // Physical F0 from IOR ratio (air->water ~ 0.02)
+          float F0 = pow((1.0 - uEta) / (1.0 + uEta), 2.0);
+          F0 = clamp(F0 + uFresnel, 0.0, 1.0);
+          float F = fresnelSchlick(NdV, F0);
+
+          // Refraction direction (into water)
+          vec3 I = -V;
+          vec3 Tdir = refract(I, N, uEta);
+          bool tir = length(Tdir) < 1e-5; // total internal reflection or grazing
+
+          // Optional screen-space refraction sample if provided by engine
+          vec3 sceneRefr = sampleRefractedScene(xz, N, V, uRefractAmount * (1.0 - F));
+
+          // Physical absorption using Beer-Lambert to create depth-based tint
+          float path = uDepthApprox / max(1e-3, -Tdir.y + 1e-3); // approximate distance traveled in water
+          vec3 transmittance = beerLambert(uAbsorption, path);
+          // Approximate seabed tint under water (sandy)
+          vec3 seabedTint = vec3(0.85, 0.80, 0.65);
+          vec3 deep = uColor; // deep water base (bluish)
+          // If we have scene color, use it as refracted base; otherwise approximate with seabed tint
+          vec3 refrBase = (sceneRefr.x >= 0.0) ? sceneRefr : seabedTint;
+          vec3 refrCol = mix(deep, refrBase, 0.65) * transmittance;
+          // Mix reflection and refraction by Fresnel; handle TIR
+          vec3 base = mix(refrCol, skyRef, tir ? 1.0 : F);
 
           // Enhanced sun specular glint for dramatic ocean reflections
           vec3 L = normalize(uSunDir);
@@ -347,9 +415,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           col = col / (col + vec3(1.0));
           col = pow(col, vec3(1.0/2.2));
 
-          // Robust alpha: enforce a strong minimum so shoreline is always visible.
-          // Keep it simple and stable across drivers: avoid distance/angle blending for now.
+          // Robust alpha: bias transparency by (1-F) so grazing reflections look more opaque.
           float a = max(uAlpha, uAlphaNearMin);
+          a = clamp(a * (0.65 + 0.35 * (1.0 - F)), 0.0, 1.0);
           gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
         }
       `,
@@ -382,22 +450,37 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     this.depthWrite = alpha >= 1.0;
   }
   // Keep old signature for compatibility; now maps to wave/optics tuning
-  setRefraction(_strength: number, _eta = 0.75, waveAmp = 0.15, waveScale = 0.035, fresnel = 0.08){
+  setRefraction(strength: number, eta = 1.0/1.333, waveAmp = 0.15, waveScale = 0.035, fresnelBias = 0.02){
+    // Screen-space refraction amount and physical IOR ratio
+    this.uniforms.uRefractAmount.value = Math.max(0, strength);
+    this.uniforms.uEta.value = Math.max(1e-3, eta);
+    // Wave spectrum tuning
     this.uniforms.uWaveAmp.value = Math.max(0, waveAmp);
-    // Map waveScale to wavelengths reasonably
     const s = Math.max(1e-4, waveScale);
-    // Use _eta only to keep API parity and satisfy linting; neutralized influence
-    const refrScale = 1.0 + 0.0 * (1.0 - _eta);
-    this.uniforms.uL0.value = (12.0 / s) * refrScale;
-    this.uniforms.uL1.value = (6.0 / s) * refrScale;
-    this.uniforms.uL2.value = (2.5 / s) * refrScale;
-    this.uniforms.uFresnel.value = Math.max(0, fresnel);
+    this.uniforms.uL0.value = (12.0 / s);
+    this.uniforms.uL1.value = (6.0 / s);
+    this.uniforms.uL2.value = (2.5 / s);
+    // Additional Fresnel bias on top of IOR-derived F0
+    this.uniforms.uFresnel.value = Math.max(0, fresnelBias);
   }
 
   // Extra tuning knobs for new shader
   setSun(direction: THREE.Vector3, color?: THREE.Color){
     (this.uniforms.uSunDir.value as THREE.Vector3).copy(direction).normalize()
     if (color) (this.uniforms.uSunColor.value as THREE.Color).copy(color)
+  }
+  // Optional: supply a background scene color for proper screen-space refraction
+  setScreenRefraction(sceneColor: THREE.Texture | null, resolution?: { x: number; y: number }){
+    if (sceneColor) {
+      this.uniforms.tSceneColor.value = sceneColor
+      this.uniforms.uHasSceneColor.value = 1
+      if (resolution) {
+        (this.uniforms.uResolution.value as THREE.Vector2).set(Math.max(1, Math.floor(resolution.x)), Math.max(1, Math.floor(resolution.y)))
+      }
+    } else {
+      this.uniforms.tSceneColor.value = null
+      this.uniforms.uHasSceneColor.value = 0
+    }
   }
   
   // Update ambient lighting to respond to day/night cycle
