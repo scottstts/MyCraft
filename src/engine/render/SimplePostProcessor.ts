@@ -72,11 +72,16 @@ export class SimplePostProcessor {
     const safeHeight = Math.max(1, Math.floor(height));
 
     // Create render targets with depth texture for SSAO
+    // Use higher-precision depth to reduce banding in fog (24-bit depth + 8-bit stencil)
+    const depthTex = new THREE.DepthTexture(safeWidth, safeHeight, THREE.UnsignedInt248Type);
+    depthTex.format = THREE.DepthStencilFormat;
     this.renderTarget1 = new THREE.WebGLRenderTarget(safeWidth, safeHeight, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
-      depthTexture: new THREE.DepthTexture(safeWidth, safeHeight, THREE.UnsignedShortType)
+      depthTexture: depthTex,
+      depthBuffer: true,
+      stencilBuffer: true,
     });
 
     this.renderTarget2 = new THREE.WebGLRenderTarget(safeWidth, safeHeight, {
@@ -122,6 +127,8 @@ export class SimplePostProcessor {
         volumetricsEnabled: { value: this.settings.volumetricsEnabled },
         volumetricsIntensity: { value: this.settings.volumetricsIntensity },
         volumetricsSteps: { value: this.settings.volumetricsSteps },
+        // Small fog dither to mask any residual depth quantization
+        fogDitherAmount: { value: 0.75 },
       },
       vertexShader: `
         varying vec2 vUv;
@@ -148,6 +155,7 @@ export class SimplePostProcessor {
         uniform bool fogEnabled;
         uniform float fogBaseDensity;
         uniform float fogMaxDistance;
+        uniform float fogDitherAmount;
         uniform bool volumetricsEnabled;
         uniform float volumetricsIntensity;
         uniform int volumetricsSteps;
@@ -269,6 +277,13 @@ export class SimplePostProcessor {
           float d = min(viewDepth, fogMaxDistance);
           float fogFactor = 1.0 - exp(-d * fogBaseDensity);
           vec3 fogColor = vec3(0.72, 0.82, 0.92);
+          // Dither the fog factor a tiny amount in sRGB to break visible bands
+          if (fogDitherAmount > 0.0) {
+            float n1 = hash12(gl_FragCoord.xy);
+            float n2 = hash12(gl_FragCoord.yx);
+            float tri = (n1 + n2) - 1.0; // ~triangular in [-1,1]
+            fogFactor = clamp(fogFactor + tri * (fogDitherAmount / 255.0), 0.0, 1.0);
+          }
           return mix(color, fogColor, clamp(fogFactor, 0.0, 0.9));
         }
 
