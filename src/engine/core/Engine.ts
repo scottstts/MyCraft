@@ -567,7 +567,7 @@ async function start(canvas: HTMLCanvasElement) {
     composer = new Composer(renderer.getRenderer(), scene, camera, canvasSize.width, canvasSize.height);
     // Configure composer defaults
     // console.log('[Engine] Configuring composer post-processing settings');
-    composer.setSSAO(true, 0.3, 0.01);
+    composer.setSSAO(true, 0.3, 0.2);
     // Align defaults with DebugPanel: strength 0.30, threshold 0.05
     composer.setBloom(true, 0.30, 0.05);
     composer.setLens(true, 0.6);
