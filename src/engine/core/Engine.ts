@@ -494,8 +494,12 @@ async function start(canvas: HTMLCanvasElement) {
   const atlas = await loadFullAtlas();
   blockMaterial = new BlockMaterial(
     atlas.getTexture(),
-    envMap
+    envMap,
+    undefined,
+    { tileSize: atlas.getConfig().tileSize, atlasSize: atlas.getConfig().atlasSize }
   );
+  // Mild in-shader AA to reduce texture shimmer on distant blocks
+  blockMaterial.setAntialiasing(true, 0.9);
   
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);

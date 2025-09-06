@@ -11,7 +11,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   constructor(
     albedoTexture: THREE.Texture,
     envMap: THREE.CubeTexture | null,
-    normalMap?: THREE.Texture
+    normalMap?: THREE.Texture,
+    atlasInfo?: { tileSize: number; atlasSize: number }
   ) {
     const vertexShader = `
       // Block vertex shader using per-vertex colors for AO/skylight/tint
@@ -53,6 +54,12 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float time;
       uniform float alphaScale;
       uniform float lightingMix;
+
+      // Anti-aliasing controls
+      uniform bool aaEnabled;
+      uniform float aaStrength;   // 0..1
+      uniform float atlasSize;    // tiles across (U). 1.0 if not using atlas
+      uniform float tileSize;     // texels per tile (square)
       
       // Sun uniforms (directional light driven by SunController)
       uniform vec3 sunDirection;
@@ -268,6 +275,64 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           return clamp(clouds, 0.0, 1.0);
       }
 
+      // Specular anti-aliasing: broaden roughness near high normal gradients
+      float specularAARoughness(float r, vec3 N) {
+          // Variance from normal derivatives; clamp to avoid NaNs
+          vec3 dnx = dFdx(N);
+          vec3 dny = dFdy(N);
+          float variance = max(dot(dnx, dnx), dot(dny, dny));
+          // Increase roughness based on variance (simple approximation)
+          float rr = r*r + variance;
+          return clamp(sqrt(rr), 0.0, 1.0);
+      }
+
+      // Clamp UV to current atlas tile interior to avoid cross-tile bleed when supersampling
+      vec2 clampUvToTile(vec2 uv) {
+          if (atlasSize <= 1.0) return uv; // not an atlas: no clamp needed
+          float tileW = 1.0 / atlasSize;
+          float tileIndex = floor(uv.x / tileW);
+          float uMin = tileIndex * tileW;
+          float uMax = uMin + tileW;
+          // Match mesher epsilon: half-pixel in UV space
+          float epsU = 0.5 / (atlasSize * tileSize);
+          float epsV = 0.5 / max(tileSize, 1.0);
+          uv.x = clamp(uv.x, uMin + epsU, uMax - epsU);
+          uv.y = clamp(uv.y, 0.0 + epsV, 1.0 - epsV);
+          return uv;
+      }
+
+      // Derivative-aware texture sampling to reduce minification shimmer (4-tap RGSS)
+      vec4 texture2D_AA(sampler2D tex, vec2 uv) {
+          vec4 base = texture2D(tex, uv);
+          if (!aaEnabled) return base;
+
+          // Estimate minification level in texels per pixel
+          vec2 texSize = vec2(max(1.0, atlasSize * tileSize), max(1.0, tileSize));
+          vec2 dx_uv = dFdx(uv) * texSize;
+          vec2 dy_uv = dFdy(uv) * texSize;
+          float minif = max(length(dx_uv), length(dy_uv));
+
+          // Blend between 1-tap and 4-tap based on minification
+          float k = smoothstep(1.0, 3.0, minif) * clamp(aaStrength, 0.0, 1.0);
+          if (k <= 0.001) return base;
+
+          // Rotated-grid supersampling inside pixel footprint (use UV-space derivatives)
+          vec2 dx = dFdx(uv);
+          vec2 dy = dFdy(uv);
+          const float ofs = 0.35;
+          vec2 o1 = ( dx + dy) * ofs;
+          vec2 o2 = ( dx - dy) * ofs;
+          vec2 o3 = (-dx + dy) * ofs;
+          vec2 o4 = (-dx - dy) * ofs;
+
+          vec4 c1 = texture2D(tex, clampUvToTile(uv + o1));
+          vec4 c2 = texture2D(tex, clampUvToTile(uv + o2));
+          vec4 c3 = texture2D(tex, clampUvToTile(uv + o3));
+          vec4 c4 = texture2D(tex, clampUvToTile(uv + o4));
+          vec4 avg4 = (c1 + c2 + c3 + c4) * 0.25;
+          return mix(base, avg4, k);
+      }
+
       vec3 calculateEnhancedLighting(vec3 albedo, vec3 normal, vec3 viewDir) {
           vec3 color = vec3(0.0);
           
@@ -305,8 +370,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 reflection = vec3(0.0);
           #ifdef USE_ENVMAP
             vec3 reflectDir = reflect(-viewDir, normal);
-          vec3 envColor = textureCube(envMap, reflectDir).rgb;
-          reflection = envColor * envMapIntensity * (1.0 - roughness) * fresnel * clamp(dayLight, 0.0, 1.0);
+            vec3 envColor = textureCube(envMap, reflectDir).rgb;
+            float roughAA = specularAARoughness(roughness, normal);
+            reflection = envColor * envMapIntensity * (1.0 - roughAA) * fresnel * clamp(dayLight, 0.0, 1.0);
           #endif
           
           // Subsurface scattering
@@ -327,7 +393,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       }
 
       void main() {
-          vec4 texColor = texture2D(map, vUv);
+          vec4 texColor = texture2D_AA(map, vUv);
           vec3 albedo = texColor.rgb;
           vec3 tinted = albedo * vColor;
           
@@ -398,11 +464,18 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         cloudWind: { value: new THREE.Vector2(Math.cos(Math.PI*0.25)*5.0, Math.sin(Math.PI*0.25)*5.0) },
         dayLight: { value: 1.0 },
         starLight: { value: 0.0 },
-        materialFogEnabled: { value: false }
+        materialFogEnabled: { value: false },
+        // Anti-aliasing defaults
+        aaEnabled: { value: true },
+        aaStrength: { value: 1.0 },
+        atlasSize: { value: (atlasInfo?.atlasSize ?? 1) },
+        tileSize: { value: (atlasInfo?.tileSize ?? 16) }
       },
       defines: envMap ? { USE_ENVMAP: true } : {},
       side: THREE.FrontSide,
-      transparent: false
+      transparent: false,
+      // Enable derivatives for dFdx/dFdy on WebGL1
+      extensions: { derivatives: true }
     });
 
     this.startTime = Date.now();
@@ -434,6 +507,20 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   setLightingMix(t: number): void {
     const uniforms = this.uniforms as Record<string, { value: unknown }>;
     uniforms.lightingMix.value = THREE.MathUtils.clamp(t, 0, 1);
+  }
+
+  /** Configure in-shader anti-aliasing strength (0..1) and toggle */
+  setAntialiasing(enabled: boolean, strength = 1.0): void {
+    const u = this.uniforms as Record<string, { value: unknown }>;
+    u.aaEnabled.value = !!enabled;
+    u.aaStrength.value = THREE.MathUtils.clamp(strength, 0, 1);
+  }
+
+  /** Update atlas info (tile size/atlas size) to keep AA sampling stable */
+  setAtlasInfo(info: { tileSize: number; atlasSize: number }): void {
+    const u = this.uniforms as Record<string, { value: unknown }>;
+    u.tileSize.value = Math.max(1, info.tileSize | 0);
+    u.atlasSize.value = Math.max(1, info.atlasSize | 0);
   }
 
   /**
