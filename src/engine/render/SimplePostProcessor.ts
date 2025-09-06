@@ -9,6 +9,7 @@ export interface PostProcessorSettings {
   ssaoEnabled: boolean;
   ssaoIntensity: number;
   ssaoRadius: number;
+  waterLevel?: number;
   bloomEnabled: boolean;
   bloomStrength: number;
   bloomThreshold: number;
@@ -111,10 +112,12 @@ export class SimplePostProcessor {
         cameraFar: { value: 1000 },
         invProjection: { value: new THREE.Matrix4() },
         invView: { value: new THREE.Matrix4() },
+        cameraMatrixWorld: { value: new THREE.Matrix4() },
         sunDirView: { value: new THREE.Vector3(0.6, 0.8, 0.1).normalize() },
         ssaoEnabled: { value: this.settings.ssaoEnabled },
         ssaoIntensity: { value: this.settings.ssaoIntensity },
         ssaoRadius: { value: this.settings.ssaoRadius },
+        waterLevel: { value: this.settings.waterLevel ?? 42.0 },
         bloomEnabled: { value: this.settings.bloomEnabled },
         bloomStrength: { value: this.settings.bloomStrength },
         bloomThreshold: { value: this.settings.bloomThreshold },
@@ -146,6 +149,7 @@ export class SimplePostProcessor {
         uniform bool ssaoEnabled;
         uniform float ssaoIntensity;
         uniform float ssaoRadius;
+        uniform float waterLevel;
         uniform bool bloomEnabled;
         uniform float bloomStrength;
         uniform float bloomThreshold;
@@ -161,6 +165,7 @@ export class SimplePostProcessor {
         uniform int volumetricsSteps;
         uniform mat4 invProjection;
         uniform mat4 invView;
+        uniform mat4 cameraMatrixWorld;
         uniform vec3 sunDirView;
         
         varying vec2 vUv;
@@ -183,6 +188,16 @@ export class SimplePostProcessor {
           vec3 dir = normalize(rayView.xyz);
           return dir * viewDepth;
         }
+        vec3 reconstructWorldPos(float viewDepth){
+          vec2 ndc = vUv * 2.0 - 1.0;
+          vec4 clip = vec4(ndc, 1.0, 1.0);
+          vec4 viewFar = invProjection * clip; viewFar /= viewFar.w;
+          vec3 dirV = normalize(viewFar.xyz);
+          float t = viewDepth / max(1e-4, -dirV.z);
+          vec3 posV = dirV * t;
+          vec4 posW = cameraMatrixWorld * vec4(posV, 1.0);
+          return posW.xyz;
+        }
 
         // Hash for per-pixel random rotation
         float hash12(vec2 p) {
@@ -193,15 +208,45 @@ export class SimplePostProcessor {
         // Improved SSAO with rotating kernel and continuous falloff
         float ssao(vec2 uv, vec3 position, vec3 normal) {
           if (!ssaoEnabled) return 1.0;
+          // Avoid applying AO on semi-transparent surfaces (e.g., water)
+          if (texture2D(tDiffuse, uv).a < 0.99) return 1.0;
           float current = readDepth(uv);
           if (current >= cameraFar * 0.99) return 1.0;
-          float baseRadius = ssaoRadius * 200.0;
+          // Also skip AO for underwater pixels based on reconstructed world Y
+          vec3 pw = reconstructWorldPos(current);
+          if (pw.y <= waterLevel + 0.25) return 1.0;
+          
+          // Local flatness gating: suppress AO on very smooth regions
+          float px = 1.5 / min(resolution.x, resolution.y);
+          float d1 = readDepth(clamp(uv + vec2(px, 0.0), vec2(0.0), vec2(1.0)));
+          float d2 = readDepth(clamp(uv + vec2(-px, 0.0), vec2(0.0), vec2(1.0)));
+          float d3 = readDepth(clamp(uv + vec2(0.0, px), vec2(0.0), vec2(1.0)));
+          float d4 = readDepth(clamp(uv + vec2(0.0, -px), vec2(0.0), vec2(1.0)));
+          if (d1 >= cameraFar*0.99) d1 = current; if (d2 >= cameraFar*0.99) d2 = current;
+          if (d3 >= cameraFar*0.99) d3 = current; if (d4 >= cameraFar*0.99) d4 = current;
+          float dmin = min(min(d1,d2), min(d3,d4));
+          float dmax = max(max(d1,d2), max(d3,d4));
+          float drange = dmax - dmin;
+          float eps = mix(0.06, 6.0, clamp(current / cameraFar, 0.0, 1.0));
+          float edgeMaskDepth = smoothstep(eps * 0.5, eps, drange);
+          // Also include color-space edge gating so open water (color-uniform) is not darkened
+          vec3 colC = texture2D(tDiffuse, uv).rgb;
+          float colGrad = length(dFdx(colC)) + length(dFdy(colC));
+          float edgeMaskColor = smoothstep(0.02, 0.12, colGrad);
+          float edgeMask = max(edgeMaskDepth, edgeMaskColor);
+          if (edgeMask <= 0.0) return 1.0;
+
+          // Depth-scaled kernel radius for approximate constant world-space reach
+          float baseRadius = (ssaoRadius * 220.0) / max(1.0, current);
           float angle0 = hash12(uv * resolution) * 6.2831853;
           float cs = cos(angle0), sn = sin(angle0);
           mat2 rot = mat2(cs, -sn, sn, cs);
           int samples = 16;
           float occlusion = 0.0;
-          const float maxDelta = 5.0;
+          float valid = 0.0;
+          float depthScale = clamp(current / cameraFar, 0.0, 1.0);
+          float maxDelta = mix(5.0, 30.0, depthScale);
+          float thickness = mix(0.25, 3.0, depthScale);
           for (int i=0; i<16; i++) {
             float t = (float(i)+0.5) / 16.0;
             float r = mix(0.25, 1.0, t);
@@ -210,13 +255,19 @@ export class SimplePostProcessor {
             vec2 o = rot * dir * (baseRadius * r) / resolution;
             vec2 suv = clamp(uv + o, vec2(0.0), vec2(1.0));
             float sd = readDepth(suv);
+            if (sd >= cameraFar * 0.99) { continue; }
+            valid += 1.0;
             float diff = current - sd; // positive when sample is closer
-            if (diff > 0.001) {
-              float w = 1.0 - clamp(diff / maxDelta, 0.0, 1.0);
+            if (diff > thickness) {
+              float w = 1.0 - clamp((diff - thickness) / maxDelta, 0.0, 1.0);
               occlusion += w;
             }
           }
-          occlusion = (occlusion / float(samples)) * ssaoIntensity;
+          // Normalize by number of valid samples (avoid horizon artifacts)
+          occlusion = (occlusion / max(1.0, valid)) * ssaoIntensity * edgeMask;
+          // Fade AO near the far plane to avoid a visible seam over water
+          float farFade = smoothstep(cameraFar * 0.30, cameraFar * 0.65, current);
+          occlusion *= (1.0 - farFade);
           return clamp(1.0 - occlusion * 0.75, 0.5, 1.0);
         }
 
@@ -371,8 +422,8 @@ export class SimplePostProcessor {
     //   changes: newSettings
     // });
 
-    if (this.quadMaterial) {
-      const uniforms = this.quadMaterial.uniforms as Record<string, { value: unknown }>;
+      if (this.quadMaterial) {
+        const uniforms = this.quadMaterial.uniforms as Record<string, { value: unknown }>;
       
       if (newSettings.ssaoEnabled !== undefined) {
         uniforms.ssaoEnabled.value = newSettings.ssaoEnabled;
@@ -380,6 +431,7 @@ export class SimplePostProcessor {
       }
       if (newSettings.ssaoIntensity !== undefined) uniforms.ssaoIntensity.value = newSettings.ssaoIntensity;
       if (newSettings.ssaoRadius !== undefined) uniforms.ssaoRadius.value = newSettings.ssaoRadius;
+      if (newSettings.waterLevel !== undefined) uniforms.waterLevel.value = newSettings.waterLevel;
       if (newSettings.bloomEnabled !== undefined) {
         uniforms.bloomEnabled.value = newSettings.bloomEnabled;
         // console.log('[PostProcessor] Bloom enabled:', newSettings.bloomEnabled);
@@ -431,6 +483,7 @@ export class SimplePostProcessor {
       const cam = this.camera as THREE.PerspectiveCamera;
       (uniforms.invProjection.value as THREE.Matrix4).copy(cam.projectionMatrixInverse);
       (uniforms.invView.value as THREE.Matrix4).copy(cam.matrixWorldInverse);
+      (uniforms.cameraMatrixWorld.value as THREE.Matrix4).copy(cam.matrixWorld);
       (uniforms.sunDirView.value as THREE.Vector3).copy(this.sunDirView);
     }
     

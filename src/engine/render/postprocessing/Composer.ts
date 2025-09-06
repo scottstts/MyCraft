@@ -100,6 +100,7 @@ export class Composer {
     this.lens.setSun(sunDirWorld, sunColor ?? new THREE.Color(1,1,0.95), camera)
     this.fog.setCamera(camera)
   }
+  setSSAOWaterLevel(y: number){ this.ssao.setWaterLevel(y) }
   setSSAO(enabled: boolean, intensity: number, radius: number) { this.ssao.setSettings({ enabled, intensity, radius }) }
   setVolumetrics(enabled: boolean, intensity: number, steps: number) { this.vol.setSettings({ enabled, intensity, steps }) }
   setBloom(enabled: boolean, strength: number, threshold: number) { this.bloom.setSettings({ enabled, strength, threshold }) }

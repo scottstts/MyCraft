@@ -572,6 +572,8 @@ async function start(canvas: HTMLCanvasElement) {
     composer.setBloom(true, 0.30, 0.05);
     composer.setLens(true, 0.6);
     composer.setFog(true, 0.002, dynamicFogDistance);
+    // Tell SSAO where the water plane is so we can skip underwater AO
+    composer.setSSAOWaterLevel(WATER_LEVEL + 1.0);
     // Default volumetrics off
     composer.setVolumetrics(false, 0.1, 32);
   } else {
@@ -587,6 +589,7 @@ async function start(canvas: HTMLCanvasElement) {
       ssaoEnabled: true,
       ssaoIntensity: 0.3,
       ssaoRadius: 0.01,
+      waterLevel: WATER_LEVEL + 1.0,
       bloomEnabled: true,
       bloomStrength: 0.30,
       bloomThreshold: 0.05,
