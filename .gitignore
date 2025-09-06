@@ -24,6 +24,8 @@ dist-ssr
 *.sw?
 
 .playwright-mcp
+screenshots/
+ref/
 
 # Documentation
 docs/
