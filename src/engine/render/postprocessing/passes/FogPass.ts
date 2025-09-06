@@ -63,7 +63,12 @@ export class FogPass extends ShaderPass {
           vec3 dirV = normalize(viewFar.xyz);
           return normalize((cameraMatrixWorld * vec4(dirV, 0.0)).xyz);
         }
-        void main(){ vec3 col = texture2D(tDiffuse,vUv).rgb; col *= exposure; float d = readDepth(vUv); if(enabled){ bool bg = d >= cameraFar*0.99; d = min(d, maxDistance); float f = 1.0 - exp(-d * baseDensity); if (bg) { f *= mix(0.3, 1.0, clamp(dayLight,0.0,1.0)); } col = mix(col, fogColor, clamp(f,0.0,0.9)); }
+        void main(){ vec3 col = texture2D(tDiffuse,vUv).rgb; col *= exposure; float d = readDepth(vUv); if(enabled){ bool bg = d >= cameraFar*0.99; d = min(d, maxDistance); float f = 1.0 - exp(-d * baseDensity); if (bg) { f *= mix(0.3, 1.0, clamp(dayLight,0.0,1.0)); } 
+        // Preserve bright highlights like sun glints by reducing fog on bright pixels
+        float brightness = max(col.r, max(col.g, col.b));
+        float highlightPreserve = 1.0 - smoothstep(0.8, 2.0, brightness);
+        f *= highlightPreserve;
+        col = mix(col, fogColor, clamp(f,0.0,0.9)); }
         // Extra haze above water at far distance
         if (hazeEnabled) {
           float dV = readDepth(vUv);
