@@ -56,23 +56,24 @@ export class OceanHorizon {
     this.material.setFresnelAlpha(0.65, 0.9)
 
     const { minX, maxX, minZ, maxZ } = opts.bounds
-    const y = opts.waterLevel + 1.0 - 0.001 // align to water surface height
-    const pad = 0.0 // keep inner edges exact to avoid z-fighting with world
+    const y = opts.waterLevel + 1.0 - 0.001 // align to water surface height, slightly below chunk water to avoid z-fighting
+    // Slight overlap into the world to eliminate a sub‑pixel crack between chunk water and far ocean
+    const overlap = 0.05
     const far = Math.max(opts.farDistance, 1)
 
     // Build 8 tiles around the center bounds (tic-tac-toe layout minus center)
     const tiles: Array<{ x0:number,x1:number,z0:number,z1:number }> = [
       // Top row (north)
-      { x0: minX,       x1: maxX,       z0: minZ - far, z1: minZ + pad }, // top-middle
-      { x0: minX - far, x1: minX + pad, z0: minZ - far, z1: minZ + pad }, // top-left corner
-      { x0: maxX - pad, x1: maxX + far, z0: minZ - far, z1: minZ + pad }, // top-right corner
+      { x0: minX,           x1: maxX,           z0: minZ - far, z1: minZ + overlap }, // top-middle overlaps inward
+      { x0: minX - far,     x1: minX + overlap, z0: minZ - far, z1: minZ + overlap }, // top-left corner overlaps inward
+      { x0: maxX - overlap, x1: maxX + far,     z0: minZ - far, z1: minZ + overlap }, // top-right corner overlaps inward
       // Middle row (west/east)
-      { x0: minX - far, x1: minX + pad, z0: minZ,       z1: maxZ       }, // left-middle
-      { x0: maxX - pad, x1: maxX + far, z0: minZ,       z1: maxZ       }, // right-middle
+      { x0: minX - far,     x1: minX + overlap, z0: minZ,       z1: maxZ       }, // left-middle overlaps inward
+      { x0: maxX - overlap, x1: maxX + far,     z0: minZ,       z1: maxZ       }, // right-middle overlaps inward
       // Bottom row (south)
-      { x0: minX,       x1: maxX,       z0: maxZ - pad, z1: maxZ + far }, // bottom-middle
-      { x0: minX - far, x1: minX + pad, z0: maxZ - pad, z1: maxZ + far }, // bottom-left corner
-      { x0: maxX - pad, x1: maxX + far, z0: maxZ - pad, z1: maxZ + far }, // bottom-right corner
+      { x0: minX,           x1: maxX,           z0: maxZ - overlap, z1: maxZ + far }, // bottom-middle overlaps inward
+      { x0: minX - far,     x1: minX + overlap, z0: maxZ - overlap, z1: maxZ + far }, // bottom-left corner overlaps inward
+      { x0: maxX - overlap, x1: maxX + far,     z0: maxZ - overlap, z1: maxZ + far }, // bottom-right corner overlaps inward
     ]
 
     for (const t of tiles) {
@@ -151,8 +152,9 @@ export class OceanHorizon {
   }
 
   update(dt: number){
-    this.time += dt
-    this.material.setTime(this.time)
+    // Time for water animation is driven by WaterSurfaceMaterial's global ticker,
+    // so we don't advance a separate clock here to avoid seam phase mismatch.
+    this.time += dt // retained for potential future use
     // Keep seabed material uniforms in sync with terrain block material for a perfect match
     if (this.seabedMaterial && this.blockMaterialSource) {
       this.syncSeabedUniforms(this.blockMaterialSource)
