@@ -98,13 +98,18 @@ export class LensFlarePass extends ShaderPass {
     let visible = 0
     const ndc = this._sunNdc
     if (v4.w !== 0){ ndc.set(v4.x / v4.w, v4.y / v4.w); }
-    // Disable when sun is below the horizon
-    if (dirWorld.y > 0) {
-      // Visible if in front of camera and inside the screen
-      if (v4.w > 0 && Math.abs(ndc.x) <= 1.0 && Math.abs(ndc.y) <= 1.0) visible = 1
-    } else {
-      visible = 0
+    // Smooth fade around horizon (matches ocean glint timing)
+    let elevationFade = 0
+    if (dirWorld.y > -0.05) {
+      // Smooth fade from -0.05 (fully off) to -0.01 (fully on)
+      elevationFade = THREE.MathUtils.smoothstep(-0.05, -0.01, dirWorld.y)
     }
+    
+    // Screen visibility check
+    let screenVisible = 0
+    if (v4.w > 0 && Math.abs(ndc.x) <= 1.0 && Math.abs(ndc.y) <= 1.0) screenVisible = 1
+    
+    visible = elevationFade * screenVisible
     this._sunVisible = visible
     ;(this.uniforms.sunNdc.value as THREE.Vector2).copy(ndc)
     ;(this.uniforms.sunColor.value as THREE.Color).copy(this._sunColor)
