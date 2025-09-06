@@ -400,8 +400,8 @@ export function StartPanel() {
                       gridTemplateColumns: 'repeat(3, 1fr)', 
                       gridTemplateRows: 'repeat(2, 1fr)',
                       gap: 'clamp(3px, 1vw, 4px)', 
-                      width: 'clamp(75px, 18vw, 90px)',
-                      height: 'clamp(60px, 14vw, 70px)'
+                      width: 'clamp(90px, 22vw, 108px)',
+                      height: 'clamp(60px, 14vw, 72px)'
                     }}>
                       {/* Empty cell */}
                       <div></div>
@@ -480,14 +480,18 @@ export function StartPanel() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Sprint</span>
                     <kbd style={{
-                      padding: 'clamp(10px, 2.5vw, 12px) clamp(16px, 4vw, 20px)',
+                      padding: '0 clamp(16px, 4vw, 20px)',
                       background: 'linear-gradient(145deg, #4b5563, #374151)',
                       color: '#f3f4f6',
-                      borderRadius: 'clamp(8px, 2vw, 10px)',
+                      borderRadius: 'clamp(4px, 1vw, 6px)',
                       fontSize: 'clamp(10px, 2.2vw, 12px)',
                       fontWeight: 700,
                       border: '1px solid rgba(255,255,255,0.15)',
-                      boxShadow: '0 3px 8px rgba(0,0,0,0.4), inset 0 1px 2px rgba(255,255,255,0.1)'
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.1)',
+                      height: 'clamp(28px, 7vw, 34px)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
                     }}>
                       SHIFT
                     </kbd>
@@ -495,16 +499,19 @@ export function StartPanel() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Jump / Surface</span>
                     <kbd style={{
-                      padding: 'clamp(10px, 2.5vw, 12px) clamp(28px, 7vw, 36px)',
+                      padding: '0 clamp(28px, 7vw, 36px)',
                       background: 'linear-gradient(145deg, #4b5563, #374151)',
                       color: '#f3f4f6',
-                      borderRadius: 'clamp(8px, 2vw, 10px)',
+                      borderRadius: 'clamp(4px, 1vw, 6px)',
                       fontSize: 'clamp(10px, 2.2vw, 12px)',
                       fontWeight: 700,
                       border: '1px solid rgba(255,255,255,0.15)',
-                      boxShadow: '0 3px 8px rgba(0,0,0,0.4), inset 0 1px 2px rgba(255,255,255,0.1)',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.1)',
+                      height: 'clamp(28px, 7vw, 34px)',
                       minWidth: 'clamp(90px, 22vw, 110px)',
-                      textAlign: 'center'
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
                     }}>
                       SPACE
                     </kbd>
@@ -524,68 +531,19 @@ export function StartPanel() {
                       justifyContent: 'center',
                       cursor: 'default'
                     }}>
-                      {/* Left mouse button */}
+                      {/* Left mouse button - highlighted */}
                       <div style={{
                         position: 'absolute',
                         left: '12%',
                         top: '15%',
                         width: '35%',
                         height: '50%',
-                        background: 'linear-gradient(145deg, #6b7280, #52525b)',
+                        background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
                         borderRadius: 'clamp(6px, 1.5vw, 8px) clamp(6px, 1.5vw, 8px) clamp(2px, 0.5vw, 3px) clamp(2px, 0.5vw, 3px)',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(255,255,255,0.1)'
+                        border: '2px solid rgba(79,172,254,0.6)',
+                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 0 8px rgba(79,172,254,0.4)'
                       }} />
-                      {/* Mouse wheel */}
-                      <div style={{
-                        position: 'absolute',
-                        left: '50%',
-                        top: '15%',
-                        width: '12%',
-                        height: '35%',
-                        background: 'linear-gradient(145deg, #71717a, #52525b)',
-                        borderRadius: 'clamp(1px, 0.3vw, 2px)',
-                        transform: 'translateX(-50%)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)'
-                      }} />
-                      <div style={{
-                        position: 'absolute',
-                        bottom: '8%',
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        width: '85%',
-                        textAlign: 'center'
-                      }}>
-                        <span style={{
-                          fontSize: 'clamp(7px, 1.6vw, 9px)',
-                          fontWeight: 700,
-                          color: '#f3f4f6',
-                          lineHeight: 1.1,
-                          textShadow: '0 1px 2px rgba(0,0,0,0.5)',
-                          display: 'block'
-                        }}>
-                          LEFT CLICK
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Place Block</span>
-                    <div style={{
-                      position: 'relative',
-                      width: 'clamp(50px, 12vw, 60px)',
-                      height: 'clamp(35px, 8vw, 42px)',
-                      background: 'linear-gradient(145deg, #52525b, #3f3f46)',
-                      borderRadius: 'clamp(15px, 4vw, 18px) clamp(15px, 4vw, 18px) clamp(8px, 2vw, 10px) clamp(8px, 2vw, 10px)',
-                      border: '1.5px solid rgba(255,255,255,0.2)',
-                      boxShadow: '0 3px 12px rgba(0,0,0,0.5), inset 0 1px 3px rgba(255,255,255,0.15)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'default'
-                    }}>
-                      {/* Right mouse button */}
+                      {/* Right mouse button - normal */}
                       <div style={{
                         position: 'absolute',
                         right: '12%',
@@ -610,25 +568,60 @@ export function StartPanel() {
                         border: '1px solid rgba(255,255,255,0.1)',
                         boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)'
                       }} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Place Block</span>
+                    <div style={{
+                      position: 'relative',
+                      width: 'clamp(50px, 12vw, 60px)',
+                      height: 'clamp(35px, 8vw, 42px)',
+                      background: 'linear-gradient(145deg, #52525b, #3f3f46)',
+                      borderRadius: 'clamp(15px, 4vw, 18px) clamp(15px, 4vw, 18px) clamp(8px, 2vw, 10px) clamp(8px, 2vw, 10px)',
+                      border: '1.5px solid rgba(255,255,255,0.2)',
+                      boxShadow: '0 3px 12px rgba(0,0,0,0.5), inset 0 1px 3px rgba(255,255,255,0.15)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'default'
+                    }}>
+                      {/* Left mouse button - normal */}
                       <div style={{
                         position: 'absolute',
-                        bottom: '8%',
+                        left: '12%',
+                        top: '15%',
+                        width: '35%',
+                        height: '50%',
+                        background: 'linear-gradient(145deg, #6b7280, #52525b)',
+                        borderRadius: 'clamp(6px, 1.5vw, 8px) clamp(6px, 1.5vw, 8px) clamp(2px, 0.5vw, 3px) clamp(2px, 0.5vw, 3px)',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(255,255,255,0.1)'
+                      }} />
+                      {/* Right mouse button - highlighted */}
+                      <div style={{
+                        position: 'absolute',
+                        right: '12%',
+                        top: '15%',
+                        width: '35%',
+                        height: '50%',
+                        background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+                        borderRadius: 'clamp(6px, 1.5vw, 8px) clamp(6px, 1.5vw, 8px) clamp(2px, 0.5vw, 3px) clamp(2px, 0.5vw, 3px)',
+                        border: '2px solid rgba(79,172,254,0.6)',
+                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 0 8px rgba(79,172,254,0.4)'
+                      }} />
+                      {/* Mouse wheel */}
+                      <div style={{
+                        position: 'absolute',
                         left: '50%',
+                        top: '15%',
+                        width: '12%',
+                        height: '35%',
+                        background: 'linear-gradient(145deg, #71717a, #52525b)',
+                        borderRadius: 'clamp(1px, 0.3vw, 2px)',
                         transform: 'translateX(-50%)',
-                        width: '85%',
-                        textAlign: 'center'
-                      }}>
-                        <span style={{
-                          fontSize: 'clamp(7px, 1.6vw, 9px)',
-                          fontWeight: 700,
-                          color: '#f3f4f6',
-                          lineHeight: 1.1,
-                          textShadow: '0 1px 2px rgba(0,0,0,0.5)',
-                          display: 'block'
-                        }}>
-                          RIGHT CLICK
-                        </span>
-                      </div>
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)'
+                      }} />
                     </div>
                   </div>
                 </div>
