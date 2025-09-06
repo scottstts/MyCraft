@@ -588,7 +588,7 @@ async function start(canvas: HTMLCanvasElement) {
     postProcessor.updateSettings({
       ssaoEnabled: true,
       ssaoIntensity: 0.3,
-      ssaoRadius: 0.01,
+      ssaoRadius: 0.2,
       waterLevel: WATER_LEVEL + 1.0,
       bloomEnabled: true,
       bloomStrength: 0.30,

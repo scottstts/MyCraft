@@ -38,7 +38,7 @@ export class SimplePostProcessor {
   private settings: PostProcessorSettings = {
     ssaoEnabled: true,
     ssaoIntensity: 0.3,
-    ssaoRadius: 0.01,
+    ssaoRadius: 0.2,
     bloomEnabled: true,
     bloomStrength: 0.30,
     bloomThreshold: 0.05,

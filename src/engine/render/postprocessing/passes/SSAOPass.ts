@@ -15,7 +15,7 @@ export class SSAOPass extends ShaderPass {
         waterLevel: { value: 42.0 },
         ssaoEnabled: { value: true },
         ssaoIntensity: { value: 0.35 },
-        ssaoRadius: { value: 0.02 },
+        ssaoRadius: { value: 0.2 },
       },
       vertexShader: `
         varying vec2 vUv;
