@@ -383,10 +383,10 @@ function update(dtSeconds: number) {
     const waterAmbient = Math.max(WATER_NIGHT_MIN, rawDayLight);
     
     // Update sky colors based on time of day for realistic reflections
-    const skyNightTop = new THREE.Color(0.05, 0.08, 0.15);
-    const skyDayTop = new THREE.Color(0.32, 0.50, 0.80);
-    const skyNightHorizon = new THREE.Color(0.10, 0.12, 0.20);
-    const skyDayHorizon = new THREE.Color(0.68, 0.78, 0.92);
+    const skyNightTop = new THREE.Color(0.02, 0.04, 0.08);      // Much darker at night
+    const skyDayTop = new THREE.Color(0.25, 0.42, 0.72);        // Slightly darker blue
+    const skyNightHorizon = new THREE.Color(0.05, 0.07, 0.12);  // Much darker at night  
+    const skyDayHorizon = new THREE.Color(0.58, 0.68, 0.82);    // Slightly darker horizon
     
     const skyTop = skyNightTop.clone().lerp(skyDayTop, waterAmbient);
     const skyHorizon = skyNightHorizon.clone().lerp(skyDayHorizon, waterAmbient);
@@ -533,6 +533,7 @@ async function start(canvas: HTMLCanvasElement) {
   // Water material uses the same shader as far ocean, but uses vUv on block meshes
   waterMaterial = new WaterSurfaceMaterial({
     map: waterTex,
+    color: 0x1a2744, // Deep navy blue like real ocean
     tileScale: 1.0,
     useWorldUV: true,
     bounds: {
@@ -709,6 +710,7 @@ async function start(canvas: HTMLCanvasElement) {
       bounds,
       waterLevel: WATER_LEVEL,
       farDistance: farOceanDistance,
+      color: 0x1a2744, // Deep navy blue like real ocean
       map: waterTex ?? undefined,
       tileScale: 1.0,
       enableSeabed: true,

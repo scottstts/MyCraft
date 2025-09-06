@@ -23,7 +23,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     this._rafId = requestAnimationFrame(tick);
   }
   constructor(params: WaterSurfaceParams){
-    const color = new THREE.Color(params.color ?? 0x4aa3d8)
+    const color = new THREE.Color(params.color ?? 0x1a2744) // Deep navy blue like real ocean
     const tileScale = Math.max(1e-3, params.tileScale ?? 1.0)
     const useWorldUV = !!params.useWorldUV
     const b = params.bounds ?? { minX: -1e9, maxX: 1e9, minZ: -1e9, maxZ: 1e9 }
@@ -200,31 +200,43 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec3 L = normalize(uSunDir);
           float spec = max(dot(R, L), 0.0);
           
-          // Multi-layer glint system for realistic sun path on water
-          // Ultra-sharp core highlight (sun disc reflection)
-          float coreGlint = pow(spec, 800.0) * 2.5;
-          // Sharp main highlight (primary reflection path) 
-          float mainGlint = pow(spec, 320.0) * 1.8;
+          // Ultra-sharp multi-layer glint system for crisp ocean reflections
+          // Razor-sharp core highlight (sun disc reflection) - much higher power for crispness
+          float coreGlint = pow(spec, 1800.0) * 4.0;
+          // Very sharp main highlight (primary reflection path) 
+          float mainGlint = pow(spec, 1200.0) * 3.2;
+          // Sharp secondary highlight 
+          float sharpGlint = pow(spec, 600.0) * 2.0;
           // Medium shoulder (scattered light around main path)
-          float mediumGlint = pow(spec, 80.0) * 0.6;
+          float mediumGlint = pow(spec, 120.0) * 0.8;
           // Soft outer glow (wide reflection area)
-          float softGlint = pow(spec, 16.0) * 0.3;
+          float softGlint = pow(spec, 24.0) * 0.4;
           
-          // Add wave-based sparkle variations (dancing light effect)
+          // Add ultra-sharp wave-based sparkle variations (dancing light effect)
           // Use slightly different normals to create glint variations across wave crests
           float spec1 = max(dot(R1, L), 0.0);
           float spec2 = max(dot(R2, L), 0.0);
-          float sparkleCore = pow(spec1, 600.0) * 1.5 + pow(spec2, 400.0) * 1.2;
-          float sparkleMain = pow(spec1, 180.0) * 0.8 + pow(spec2, 120.0) * 0.6;
+          float sparkleCore = pow(spec1, 1400.0) * 2.8 + pow(spec2, 1000.0) * 2.2;
+          float sparkleMain = pow(spec1, 400.0) * 1.5 + pow(spec2, 280.0) * 1.2;
           
-          // Combine all layers for realistic sun glint intensity
-          float totalGlint = coreGlint + mainGlint + mediumGlint + softGlint + sparkleCore + sparkleMain;
+          // Combine all layers for ultra-crisp sun glint
+          float totalGlint = coreGlint + mainGlint + sharpGlint + mediumGlint + softGlint + sparkleCore + sparkleMain;
           
-          // Boost intensity when sun is lower (sunset/sunrise effect)
+          // Dynamic sun color based on elevation for warm sunrise/sunset colors
           float sunElevation = clamp(uSunDir.y, 0.0, 1.0);
-          float elevationBoost = mix(2.5, 1.0, sunElevation); // 2.5x stronger at horizon
+          float elevationBoost = mix(3.5, 1.0, sunElevation); // 3.5x stronger at horizon
           
-          vec3 sunGlint = uSunColor * totalGlint * uSpecular * elevationBoost;
+          // Create warm sunset/sunrise colors
+          vec3 sunsetOrange = vec3(1.0, 0.4, 0.1);  // Deep orange
+          vec3 sunriseGold = vec3(1.0, 0.7, 0.2);   // Golden
+          vec3 midDayWhite = vec3(1.0, 0.98, 0.90); // Warm white
+          
+          // Interpolate sun glint color based on elevation
+          vec3 lowSunColor = mix(sunsetOrange, sunriseGold, 0.5);
+          vec3 dynamicSunColor = mix(lowSunColor, midDayWhite, pow(sunElevation, 0.6));
+          
+          // Apply dynamic coloring to sun glint
+          vec3 sunGlint = mix(uSunColor, dynamicSunColor, 0.8) * totalGlint * uSpecular * elevationBoost;
 
           // Forward scattering tint (cheap subsurface feel)
           float fwd = pow(max(dot(N, -L), 0.0), 3.0) * 0.25;
