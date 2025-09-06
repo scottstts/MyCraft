@@ -115,6 +115,20 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash(i); float b=hash(i+vec2(1.0,0.0)); float c=hash(i+vec2(0.0,1.0)); float d=hash(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y; }
 
+        // Multi-octave noise for natural randomization
+        float fbm(vec2 p, int octaves) {
+          float value = 0.0;
+          float amplitude = 0.5;
+          float frequency = 1.0;
+          for (int i = 0; i < 8; i++) {
+            if (i >= octaves) break;
+            value += amplitude * noise(p * frequency);
+            frequency *= 2.0;
+            amplitude *= 0.5;
+          }
+          return value;
+        }
+
         // Compute Gerstner-style normal from multi-scale spectral components with micro-ripples
         vec4 waveNormalCrest(vec2 xz, float t){
           // Primary wave directions (existing)
@@ -122,10 +136,22 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec2 d1 = normalize(vec2(-uWind.y, uWind.x));
           vec2 d2 = normalize(vec2(-0.7*uWind.x + 0.4*uWind.y, 0.6*uWind.x + 0.7*uWind.y));
           
-          // Additional micro-ripple directions with randomization
-          vec2 d3 = normalize(vec2(0.8*uWind.x + 0.6*uWind.y, -0.6*uWind.x + 0.8*uWind.y));
-          vec2 d4 = normalize(vec2(-0.9*uWind.x - 0.44*uWind.y, 0.44*uWind.x - 0.9*uWind.y));
-          vec2 d5 = normalize(vec2(0.5*uWind.x - 0.87*uWind.y, 0.87*uWind.x + 0.5*uWind.y));
+          // More chaotic micro-ripple directions using spatial noise for variation
+          float n_seed = hash(floor(xz * 0.01)); // Low frequency spatial variation
+          float angle3 = 1.2 + n_seed * 1.8; // Random angle offset
+          float angle4 = 2.8 + hash(floor(xz * 0.007)) * 2.1;
+          float angle5 = 4.3 + hash(floor(xz * 0.013)) * 1.9;
+          
+          vec2 d3 = vec2(cos(angle3), sin(angle3));
+          vec2 d4 = vec2(cos(angle4), sin(angle4));  
+          vec2 d5 = vec2(cos(angle5), sin(angle5));
+          
+          // Additional cross-wind variations with noise modulation
+          vec2 wind_perp = vec2(-uWind.y, uWind.x);
+          float wind_noise = fbm(xz * 0.02 + vec2(t * 0.01), 3);
+          d3 = normalize(mix(d3, normalize(uWind + wind_perp * 0.6), 0.3 + 0.2 * wind_noise));
+          d4 = normalize(mix(d4, normalize(uWind * 0.8 - wind_perp * 0.4), 0.4 + 0.3 * wind_noise));
+          d5 = normalize(mix(d5, normalize(-uWind * 0.5 + wind_perp * 0.9), 0.2 + 0.4 * wind_noise));
           
           // Wave numbers (existing + new micro scales)
           float k0 = 6.2831853 / max(1e-3, uL0);      // 12m primary
@@ -184,16 +210,34 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           grad += d4 * (a4 * k4 * cos(p4));
           grad += d5 * (a5 * k5 * cos(p5));
           
-          // Additional procedural noise ripples with anti-aliasing
-          float noiseScale1 = 0.25;
-          float noiseScale2 = 0.45;
-          float noiseAA1 = 1.0 - smoothstep(0.0, 1.5, maxDerivative * noiseScale1 * 6.28);
-          float noiseAA2 = 1.0 - smoothstep(0.0, 1.0, maxDerivative * noiseScale2 * 6.28);
+          // Multi-scale procedural noise ripples with better randomization
+          float baseScale = 0.08;
           
-          float n1 = noise(xz * noiseScale1 + vec2(0.123, -0.271) + t*0.04) * 2.0 - 1.0;
-          float n2 = noise(xz * noiseScale2 + vec2(-0.456, 0.789) + t*0.06) * 2.0 - 1.0;
-          grad += vec2(n1 * 0.06 * noiseAA1, -n1 * 0.05 * noiseAA1);
-          grad += vec2(-n2 * 0.04 * noiseAA2, n2 * 0.03 * noiseAA2);
+          // Multiple noise layers with different characteristics
+          float fbm1 = fbm(xz * baseScale + vec2(t * 0.02, t * 0.015), 4) * 2.0 - 1.0;
+          float fbm2 = fbm(xz * baseScale * 1.7 + vec2(t * -0.025, t * 0.032), 3) * 2.0 - 1.0;
+          float fbm3 = fbm(xz * baseScale * 2.8 + vec2(t * 0.018, t * -0.021), 3) * 2.0 - 1.0;
+          
+          // Anti-aliasing for noise layers
+          float noiseAA1 = 1.0 - smoothstep(0.0, 2.0, maxDerivative * baseScale * 6.28);
+          float noiseAA2 = 1.0 - smoothstep(0.0, 1.8, maxDerivative * baseScale * 1.7 * 6.28);
+          float noiseAA3 = 1.0 - smoothstep(0.0, 1.5, maxDerivative * baseScale * 2.8 * 6.28);
+          
+          // Apply noise with rotational variation to break grid patterns
+          float rotation = fbm(xz * 0.003 + t * 0.001, 2) * 3.14159;
+          float c = cos(rotation), s = sin(rotation);
+          
+          vec2 noise_grad1 = vec2(fbm1 * c - fbm2 * s, fbm1 * s + fbm2 * c);
+          vec2 noise_grad2 = vec2(fbm2 * c + fbm3 * s, fbm3 * c - fbm2 * s);
+          
+          grad += noise_grad1 * 0.035 * noiseAA1;
+          grad += noise_grad2 * 0.025 * noiseAA2;
+          
+          // Additional high-frequency detail with spatial variation
+          float detail_intensity = 0.5 + 0.3 * fbm(xz * 0.005, 2);
+          float detail_noise = fbm(xz * baseScale * 4.2 + vec2(t * 0.04, t * -0.035), 2) * 2.0 - 1.0;
+          float detailAA = 1.0 - smoothstep(0.0, 1.2, maxDerivative * baseScale * 4.2 * 6.28);
+          grad += vec2(detail_noise * 0.015 * detail_intensity * detailAA);
 
           vec3 N = normalize(vec3(-grad.x * ch, 1.0, -grad.y * ch));
           
