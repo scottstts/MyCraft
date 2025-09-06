@@ -55,6 +55,12 @@ export class SSAOPass extends ShaderPass {
           float occlusion = 0.0;
           // Continuous falloff within a reasonable depth window
           const float maxDelta = 5.0; // world/view units window
+          // Plane-slope compensation: estimate expected depth change over the kernel
+          // so a flat or gently sloped surface doesn't self-occlude.
+          float dzdx = dFdx(readDepth(uv));
+          float dzdy = dFdy(readDepth(uv));
+          vec2 grad = vec2(dzdx, dzdy); // depth change per +1.0 UV
+          const float thickness = 0.25; // ignore differences explainable by thickness on same plane
           for (int i=0;i<16;i++){
             float t = (float(i) + 0.5) / 16.0;
             // Distribute samples from near center to radius with a slight bias to inner ring
@@ -65,8 +71,11 @@ export class SSAOPass extends ShaderPass {
             vec2 suv = clamp(uv + o, vec2(0.0), vec2(1.0));
             float sd = readDepth(suv);
             float diff = current - sd; // positive when sample is closer (occluder)
-            if (diff > 0.001) {
-              float w = 1.0 - clamp(diff / maxDelta, 0.0, 1.0);
+            // Expected depth difference on the same plane from local gradient
+            float expected = -dot(grad, o);
+            float resid = diff - expected;
+            if (resid > thickness) {
+              float w = 1.0 - clamp((resid - thickness) / maxDelta, 0.0, 1.0);
               // Closer occluders contribute more, farther ones fade
               occlusion += w;
             }
