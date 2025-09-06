@@ -129,29 +129,24 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           return value;
         }
 
-        // Compute Gerstner-style normal from multi-scale spectral components with micro-ripples
+        // Compute Gerstner-style normal from physically-based wave spectrum
         vec4 waveNormalCrest(vec2 xz, float t){
-          // Primary wave directions (existing)
-          vec2 d0 = normalize(uWind);
-          vec2 d1 = normalize(vec2(-uWind.y, uWind.x));
-          vec2 d2 = normalize(vec2(-0.7*uWind.x + 0.4*uWind.y, 0.6*uWind.x + 0.7*uWind.y));
+          // Primary wave directions following realistic ocean physics
+          vec2 windDir = normalize(uWind);
+          vec2 windPerp = vec2(-windDir.y, windDir.x);
           
-          // More chaotic micro-ripple directions using spatial noise for variation
-          float n_seed = hash(floor(xz * 0.01)); // Low frequency spatial variation
-          float angle3 = 1.2 + n_seed * 1.8; // Random angle offset
-          float angle4 = 2.8 + hash(floor(xz * 0.007)) * 2.1;
-          float angle5 = 4.3 + hash(floor(xz * 0.013)) * 1.9;
+          // Main wind waves (dominant energy)
+          vec2 d0 = windDir;  // Primary wind direction
+          vec2 d1 = windPerp; // Cross-wind waves (90 degrees)
+          vec2 d2 = normalize(windDir * 0.7 + windPerp * 0.7); // 45-degree angle
           
-          vec2 d3 = vec2(cos(angle3), sin(angle3));
-          vec2 d4 = vec2(cos(angle4), sin(angle4));  
-          vec2 d5 = vec2(cos(angle5), sin(angle5));
-          
-          // Additional cross-wind variations with noise modulation
-          vec2 wind_perp = vec2(-uWind.y, uWind.x);
-          float wind_noise = fbm(xz * 0.02 + vec2(t * 0.01), 3);
-          d3 = normalize(mix(d3, normalize(uWind + wind_perp * 0.6), 0.3 + 0.2 * wind_noise));
-          d4 = normalize(mix(d4, normalize(uWind * 0.8 - wind_perp * 0.4), 0.4 + 0.3 * wind_noise));
-          d5 = normalize(mix(d5, normalize(-uWind * 0.5 + wind_perp * 0.9), 0.2 + 0.4 * wind_noise));
+          // Realistic micro-wave directions based on physics:
+          // - Small waves tend to align more with local wind
+          // - Cross-waves at specific angles (30°, 60°) due to wave interaction
+          // - Slight angular spreading decreases with wave size
+          vec2 d3 = normalize(windDir * 0.866 + windPerp * 0.5);   // 30-degree spread
+          vec2 d4 = normalize(windDir * 0.866 - windPerp * 0.5);   // -30-degree spread  
+          vec2 d5 = normalize(windDir * 0.5 + windPerp * 0.866);   // 60-degree cross-waves
           
           // Wave numbers (existing + new micro scales with 50% longer wavelengths)
           float k0 = 6.2831853 / max(1e-3, uL0);      // 12m primary
@@ -210,34 +205,18 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           grad += d4 * (a4 * k4 * cos(p4));
           grad += d5 * (a5 * k5 * cos(p5));
           
-          // Multi-scale procedural noise ripples with better randomization
-          float baseScale = 0.027; // Further reduced scale for 50% longer wavelength patterns
+          // Physics-based micro-turbulence (much simpler and more organized)
+          // Small-scale wind-driven ripples aligned with dominant directions
+          float microScale = 0.08;
+          float microAA = 1.0 - smoothstep(0.0, 2.0, maxDerivative * microScale * 6.28);
           
-          // Multiple noise layers with different characteristics (longer wavelengths)
-          float fbm1 = fbm(xz * baseScale + vec2(t * 0.02, t * 0.015), 4) * 2.0 - 1.0;
-          float fbm2 = fbm(xz * baseScale * 1.3 + vec2(t * -0.025, t * 0.032), 3) * 2.0 - 1.0;
-          float fbm3 = fbm(xz * baseScale * 1.8 + vec2(t * 0.018, t * -0.021), 3) * 2.0 - 1.0;
+          // Two primary micro-turbulence patterns following wind physics
+          float turbulence1 = noise(xz * microScale + windDir * t * 0.03) * 2.0 - 1.0;
+          float turbulence2 = noise(xz * microScale * 0.7 + windPerp * t * 0.025) * 2.0 - 1.0;
           
-          // Anti-aliasing for noise layers (adjusted for new scales)
-          float noiseAA1 = 1.0 - smoothstep(0.0, 2.0, maxDerivative * baseScale * 6.28);
-          float noiseAA2 = 1.0 - smoothstep(0.0, 1.8, maxDerivative * baseScale * 1.3 * 6.28);
-          float noiseAA3 = 1.0 - smoothstep(0.0, 1.5, maxDerivative * baseScale * 1.8 * 6.28);
-          
-          // Apply noise with rotational variation to break grid patterns
-          float rotation = fbm(xz * 0.003 + t * 0.001, 2) * 3.14159;
-          float c = cos(rotation), s = sin(rotation);
-          
-          vec2 noise_grad1 = vec2(fbm1 * c - fbm2 * s, fbm1 * s + fbm2 * c);
-          vec2 noise_grad2 = vec2(fbm2 * c + fbm3 * s, fbm3 * c - fbm2 * s);
-          
-          grad += noise_grad1 * 0.035 * noiseAA1;
-          grad += noise_grad2 * 0.025 * noiseAA2;
-          
-          // Additional high-frequency detail with spatial variation (longer wavelength)
-          float detail_intensity = 0.5 + 0.3 * fbm(xz * 0.003, 2);
-          float detail_noise = fbm(xz * baseScale * 2.5 + vec2(t * 0.04, t * -0.035), 2) * 2.0 - 1.0;
-          float detailAA = 1.0 - smoothstep(0.0, 1.2, maxDerivative * baseScale * 2.5 * 6.28);
-          grad += vec2(detail_noise * 0.015 * detail_intensity * detailAA);
+          // Apply micro-turbulence primarily along wind directions
+          grad += windDir * (turbulence1 * 0.025 * microAA);
+          grad += windPerp * (turbulence2 * 0.015 * microAA);
 
           vec3 N = normalize(vec3(-grad.x * ch, 1.0, -grad.y * ch));
           
