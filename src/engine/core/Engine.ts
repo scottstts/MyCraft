@@ -544,6 +544,8 @@ async function start(canvas: HTMLCanvasElement) {
   waterMaterial.setAlpha(0.7);
   // Add subtle refraction and wave perturbation
   waterMaterial.setRefraction(0.18, 0.75, 0.12, 0.035, 0.06);
+  // Increase Fresnel-driven opacity at shallow (grazing) angles
+  waterMaterial.setFresnelAlpha(0.65, 0.9);
 
   chunkRenderer = new ChunkRenderer(scene, { opaque: blockMaterial, transparent: waterMaterial });
   

@@ -47,6 +47,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uEdgeStrength: { value: 0.0 },
         uEdgeWidth: { value: 2.0 },
         uAlpha: { value: 1.0 },
+        // Alpha shaping (transparency vs. angle): a = max(uAlpha, uAlphaNearMin) * (base + scale * F)
+        uAlphaFresnelBase: { value: 0.65 },
+        uAlphaFresnelScale: { value: 0.35 },
         // Water optics + waves
         uFresnel: { value: 0.035 },         // Additional Fresnel bias (adds to physical F0)
         uEta: { value: 1.0 / 1.333 },       // Air->Water IOR ratio (eta = n1/n2)
@@ -105,6 +108,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uTileScale; uniform bool uUseWorldUV; // kept for API stability
         uniform float uInnerMinX, uInnerMaxX, uInnerMinZ, uInnerMaxZ;
         uniform float uEdgeStrength; uniform float uEdgeWidth; uniform float uAlpha;
+        uniform float uAlphaFresnelBase; uniform float uAlphaFresnelScale;
         // Optics
         uniform float uFresnel; uniform float uSpecular; uniform float uRoughness; uniform vec3 uSunColor; uniform vec3 uSunDir;
         uniform float uEta; uniform float uRefractAmount; uniform vec3 uAbsorption; uniform float uDepthApprox;
@@ -415,9 +419,10 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           col = col / (col + vec3(1.0));
           col = pow(col, vec3(1.0/2.2));
 
-          // Robust alpha: bias transparency by (1-F) so grazing reflections look more opaque.
+          // Fresnel-driven alpha shaping so grazing angles appear less transparent
           float a = max(uAlpha, uAlphaNearMin);
-          a = clamp(a * (0.65 + 0.35 * (1.0 - F)), 0.0, 1.0);
+          float fresnelAlpha = clamp(uAlphaFresnelBase + uAlphaFresnelScale * F, 0.0, 2.0);
+          a = clamp(a * fresnelAlpha, 0.0, 1.0);
           gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
         }
       `,
@@ -426,6 +431,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     // Register instance for internal ticking
     WaterSurfaceMaterial._instances.add(this)
     WaterSurfaceMaterial._ensureTicker()
+  }
+  // Tune alpha vs. Fresnel angle response. a = max(uAlpha, uAlphaNearMin) * (base + scale * F)
+  setFresnelAlpha(base: number, scale: number){
+    this.uniforms.uAlphaFresnelBase.value = base
+    this.uniforms.uAlphaFresnelScale.value = scale
   }
 
   setTime(t: number){ (this.uniforms.uTime.value as number) = t }
