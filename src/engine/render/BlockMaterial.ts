@@ -58,8 +58,11 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       // Anti-aliasing controls
       uniform bool aaEnabled;
       uniform float aaStrength;   // 0..1
+      uniform bool aaLodBiasEnabled; // use explicit LOD bias for non-atlas textures
+      uniform float aaLodBias;    // 0..2 typically
       uniform float atlasSize;    // tiles across (U). 1.0 if not using atlas
       uniform float tileSize;     // texels per tile (square)
+      uniform float ditherAmount; // 0..1 strength in sRGB LDR (approx 1 LSB at 1.0)
       
       // Sun uniforms (directional light driven by SunController)
       uniform vec3 sunDirection;
@@ -302,6 +305,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       }
 
       // Derivative-aware texture sampling to reduce minification shimmer
+      // Provide LOD function with graceful fallback if the extension is missing
+      #ifdef TEXTURE_LOD_EXT
+      vec4 texLod2D(sampler2D tex, vec2 uv, float lod) { return texture2DLodEXT(tex, uv, lod); }
+      #else
+      vec4 texLod2D(sampler2D tex, vec2 uv, float lod) { return texture2D(tex, uv); }
+      #endif
+
       // Combines 4-tap RGSS with a directional anisotropic kernel when footprint is elongated
       vec4 texture2D_AA(sampler2D tex, vec2 uv) {
           vec4 base = texture2D(tex, uv);
@@ -341,7 +351,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
               float t = fi / max(halfT, 1.0);    // [-1, 1]
               float w = exp(-t*t * 3.0);         // Gaussian-ish weights
               vec2 o = major * (t * 0.5);        // ±0.5 pixel along major axis
-              vec4 c = texture2D(tex, clampUvToTile(uv + o));
+              // On non-atlas textures (single image with mipmaps), push a slight lod bias to avoid banding
+              float lodBias = (atlasSize <= 1.0 && aaLodBiasEnabled) ? (aaLodBias * smoothstep(1.5, 8.0, maxLen)) : 0.0;
+              vec4 c = texLod2D(tex, clampUvToTile(uv + o), lodBias);
               sum += c * w; wsum += w;
             }
             vec4 anisoAvg = sum / max(wsum, 1e-5);
@@ -357,10 +369,11 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec2 o3 = (-dx + dy) * ofs;
           vec2 o4 = (-dx - dy) * ofs;
 
-          vec4 c1 = texture2D(tex, clampUvToTile(uv + o1));
-          vec4 c2 = texture2D(tex, clampUvToTile(uv + o2));
-          vec4 c3 = texture2D(tex, clampUvToTile(uv + o3));
-          vec4 c4 = texture2D(tex, clampUvToTile(uv + o4));
+          float lodBiasIso = (atlasSize <= 1.0 && aaLodBiasEnabled) ? (aaLodBias * smoothstep(1.5, 8.0, maxLen)) : 0.0;
+          vec4 c1 = texLod2D(tex, clampUvToTile(uv + o1), lodBiasIso);
+          vec4 c2 = texLod2D(tex, clampUvToTile(uv + o2), lodBiasIso);
+          vec4 c3 = texLod2D(tex, clampUvToTile(uv + o3), lodBiasIso);
+          vec4 c4 = texLod2D(tex, clampUvToTile(uv + o4), lodBiasIso);
           vec4 avg4 = (c1 + c2 + c3 + c4) * 0.25;
           return mix(base, avg4, k);
       }
@@ -441,7 +454,16 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           // Tone mapping and gamma correction
           color = color / (color + vec3(1.0));
           color = pow(color, vec3(1.0/2.2));
-          
+
+          // Small blue-noise-ish dithering in sRGB to reduce visible banding downstream
+          if (ditherAmount > 0.0) {
+            float n1 = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233))) * 43758.5453);
+            float n2 = fract(sin(dot(gl_FragCoord.yx, vec2(39.3467,11.135))) * 24634.6345);
+            float tri = (n1 + n2) - 1.0; // triangular distribution in [-1,1]
+            float amp = (ditherAmount / 255.0); // ~1 LSB at 1.0
+            color += tri * amp;
+          }
+
           gl_FragColor = vec4(color, texColor.a * alphaScale);
       }
     `;
@@ -500,14 +522,15 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         // Anti-aliasing defaults
         aaEnabled: { value: true },
         aaStrength: { value: 1.0 },
+        aaLodBiasEnabled: { value: true },
+        aaLodBias: { value: 0.9 },
         atlasSize: { value: (atlasInfo?.atlasSize ?? 1) },
-        tileSize: { value: (atlasInfo?.tileSize ?? 16) }
+        tileSize: { value: (atlasInfo?.tileSize ?? 16) },
+        ditherAmount: { value: 0.75 }
       },
       defines: envMap ? { USE_ENVMAP: true } : {},
       side: THREE.FrontSide,
-      transparent: false,
-      // Enable derivatives for dFdx/dFdy on WebGL1
-      extensions: { derivatives: true }
+      transparent: false
     });
 
     this.startTime = Date.now();
@@ -546,6 +569,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     const u = this.uniforms as Record<string, { value: unknown }>;
     u.aaEnabled.value = !!enabled;
     u.aaStrength.value = THREE.MathUtils.clamp(strength, 0, 1);
+  }
+
+  /** Configure LOD bias AA (for non-atlas textures with mipmaps such as seabed sand) */
+  setAALodBias(enabled: boolean, bias = 0.9): void {
+    const u = this.uniforms as Record<string, { value: unknown }>;
+    u.aaLodBiasEnabled.value = !!enabled;
+    u.aaLodBias.value = THREE.MathUtils.clamp(bias, 0, 2);
   }
 
   /** Update atlas info (tile size/atlas size) to keep AA sampling stable */
