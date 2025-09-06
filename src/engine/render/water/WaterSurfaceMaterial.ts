@@ -153,13 +153,13 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           d4 = normalize(mix(d4, normalize(uWind * 0.8 - wind_perp * 0.4), 0.4 + 0.3 * wind_noise));
           d5 = normalize(mix(d5, normalize(-uWind * 0.5 + wind_perp * 0.9), 0.2 + 0.4 * wind_noise));
           
-          // Wave numbers (existing + new micro scales)
+          // Wave numbers (existing + new micro scales with 50% longer wavelengths)
           float k0 = 6.2831853 / max(1e-3, uL0);      // 12m primary
           float k1 = 6.2831853 / max(1e-3, uL1);      // 6m secondary  
           float k2 = 6.2831853 / max(1e-3, uL2);      // 2.5m tertiary
-          float k3 = 6.2831853 / max(1e-3, 1.2);      // 1.2m micro ripples
-          float k4 = 6.2831853 / max(1e-3, 0.6);      // 0.6m fine ripples
-          float k5 = 6.2831853 / max(1e-3, 0.3);      // 0.3m capillary waves
+          float k3 = 6.2831853 / max(1e-3, 5.25);     // 5.25m larger micro ripples (3.5 * 1.5)
+          float k4 = 6.2831853 / max(1e-3, 3.0);      // 3.0m medium ripples (2.0 * 1.5)
+          float k5 = 6.2831853 / max(1e-3, 1.5);      // 1.5m fine ripples (1.0 * 1.5)
           
           // Dispersion relations
           float w0 = sqrt(9.8 * k0);
@@ -211,17 +211,17 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           grad += d5 * (a5 * k5 * cos(p5));
           
           // Multi-scale procedural noise ripples with better randomization
-          float baseScale = 0.08;
+          float baseScale = 0.027; // Further reduced scale for 50% longer wavelength patterns
           
-          // Multiple noise layers with different characteristics
+          // Multiple noise layers with different characteristics (longer wavelengths)
           float fbm1 = fbm(xz * baseScale + vec2(t * 0.02, t * 0.015), 4) * 2.0 - 1.0;
-          float fbm2 = fbm(xz * baseScale * 1.7 + vec2(t * -0.025, t * 0.032), 3) * 2.0 - 1.0;
-          float fbm3 = fbm(xz * baseScale * 2.8 + vec2(t * 0.018, t * -0.021), 3) * 2.0 - 1.0;
+          float fbm2 = fbm(xz * baseScale * 1.3 + vec2(t * -0.025, t * 0.032), 3) * 2.0 - 1.0;
+          float fbm3 = fbm(xz * baseScale * 1.8 + vec2(t * 0.018, t * -0.021), 3) * 2.0 - 1.0;
           
-          // Anti-aliasing for noise layers
+          // Anti-aliasing for noise layers (adjusted for new scales)
           float noiseAA1 = 1.0 - smoothstep(0.0, 2.0, maxDerivative * baseScale * 6.28);
-          float noiseAA2 = 1.0 - smoothstep(0.0, 1.8, maxDerivative * baseScale * 1.7 * 6.28);
-          float noiseAA3 = 1.0 - smoothstep(0.0, 1.5, maxDerivative * baseScale * 2.8 * 6.28);
+          float noiseAA2 = 1.0 - smoothstep(0.0, 1.8, maxDerivative * baseScale * 1.3 * 6.28);
+          float noiseAA3 = 1.0 - smoothstep(0.0, 1.5, maxDerivative * baseScale * 1.8 * 6.28);
           
           // Apply noise with rotational variation to break grid patterns
           float rotation = fbm(xz * 0.003 + t * 0.001, 2) * 3.14159;
@@ -233,10 +233,10 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           grad += noise_grad1 * 0.035 * noiseAA1;
           grad += noise_grad2 * 0.025 * noiseAA2;
           
-          // Additional high-frequency detail with spatial variation
-          float detail_intensity = 0.5 + 0.3 * fbm(xz * 0.005, 2);
-          float detail_noise = fbm(xz * baseScale * 4.2 + vec2(t * 0.04, t * -0.035), 2) * 2.0 - 1.0;
-          float detailAA = 1.0 - smoothstep(0.0, 1.2, maxDerivative * baseScale * 4.2 * 6.28);
+          // Additional high-frequency detail with spatial variation (longer wavelength)
+          float detail_intensity = 0.5 + 0.3 * fbm(xz * 0.003, 2);
+          float detail_noise = fbm(xz * baseScale * 2.5 + vec2(t * 0.04, t * -0.035), 2) * 2.0 - 1.0;
+          float detailAA = 1.0 - smoothstep(0.0, 1.2, maxDerivative * baseScale * 2.5 * 6.28);
           grad += vec2(detail_noise * 0.015 * detail_intensity * detailAA);
 
           vec3 N = normalize(vec3(-grad.x * ch, 1.0, -grad.y * ch));
