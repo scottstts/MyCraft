@@ -49,7 +49,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uAlpha: { value: 1.0 },
         // Water optics + waves
         uFresnel: { value: 0.035 },         // Fresnel blend strength
-        uSpecular: { value: 0.65 },         // Sun glint strength
+        uSpecular: { value: 1.2 },          // Sun glint strength (boosted for dramatic effect)
         uRoughness: { value: 0.35 },        // Reflection blur (analytic, cheap)
         uSunDir: { value: new THREE.Vector3(0.35, 0.9, 0.2).normalize() }, // default midday
         uSunColor: { value: new THREE.Color(1.0, 0.98, 0.90) },
@@ -196,12 +196,35 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec3 deep = uColor;
           vec3 base = mix(deep, skyRef, F);
 
-          // Sun specular glint
+          // Enhanced sun specular glint for dramatic ocean reflections
           vec3 L = normalize(uSunDir);
           float spec = max(dot(R, L), 0.0);
-          // Very tight highlight with soft shoulder
-          float glint = pow(spec, 220.0) * 0.9 + pow(spec, 32.0) * 0.2;
-          vec3 sunGlint = uSunColor * glint * uSpecular;
+          
+          // Multi-layer glint system for realistic sun path on water
+          // Ultra-sharp core highlight (sun disc reflection)
+          float coreGlint = pow(spec, 800.0) * 2.5;
+          // Sharp main highlight (primary reflection path) 
+          float mainGlint = pow(spec, 320.0) * 1.8;
+          // Medium shoulder (scattered light around main path)
+          float mediumGlint = pow(spec, 80.0) * 0.6;
+          // Soft outer glow (wide reflection area)
+          float softGlint = pow(spec, 16.0) * 0.3;
+          
+          // Add wave-based sparkle variations (dancing light effect)
+          // Use slightly different normals to create glint variations across wave crests
+          float spec1 = max(dot(R1, L), 0.0);
+          float spec2 = max(dot(R2, L), 0.0);
+          float sparkleCore = pow(spec1, 600.0) * 1.5 + pow(spec2, 400.0) * 1.2;
+          float sparkleMain = pow(spec1, 180.0) * 0.8 + pow(spec2, 120.0) * 0.6;
+          
+          // Combine all layers for realistic sun glint intensity
+          float totalGlint = coreGlint + mainGlint + mediumGlint + softGlint + sparkleCore + sparkleMain;
+          
+          // Boost intensity when sun is lower (sunset/sunrise effect)
+          float sunElevation = clamp(uSunDir.y, 0.0, 1.0);
+          float elevationBoost = mix(2.5, 1.0, sunElevation); // 2.5x stronger at horizon
+          
+          vec3 sunGlint = uSunColor * totalGlint * uSpecular * elevationBoost;
 
           // Forward scattering tint (cheap subsurface feel)
           float fwd = pow(max(dot(N, -L), 0.0), 3.0) * 0.25;
