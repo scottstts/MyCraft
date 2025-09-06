@@ -506,6 +506,7 @@ async function start(canvas: HTMLCanvasElement) {
 
   // Load raw water texture once for both near water and far ocean
   let waterTex: THREE.Texture | null = null;
+  let maxAniso = 0;
   try {
     waterTex = await new Promise<THREE.Texture>((resolve, reject) => {
       new THREE.TextureLoader().load(
@@ -523,7 +524,7 @@ async function start(canvas: HTMLCanvasElement) {
     waterTex.generateMipmaps = true;
     // Enable anisotropic filtering if supported
     try {
-      const maxAniso = renderer?.getRenderer().capabilities.getMaxAnisotropy?.() ?? 0;
+      maxAniso = renderer?.getRenderer().capabilities.getMaxAnisotropy?.() ?? 0;
       if (maxAniso && maxAniso > 1) {
         waterTex.anisotropy = Math.min(8, maxAniso);
       }
@@ -723,6 +724,7 @@ async function start(canvas: HTMLCanvasElement) {
       seed: world.getSeed(),
       worldRadius,
       blockMaterialSource: blockMaterial ?? undefined,
+      anisotropy: maxAniso ? Math.min(8, maxAniso) : 8,
     });
   }
 

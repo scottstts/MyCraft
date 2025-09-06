@@ -20,6 +20,8 @@ export interface OceanHorizonOptions {
   worldRadius?: number
   /** Source block material to sync lighting/shadows so seabed matches terrain sand */
   blockMaterialSource?: BlockMaterial
+  /** Desired anisotropy for seabed sand texture (if extension supported) */
+  anisotropy?: number
 }
 
 /**
@@ -192,10 +194,18 @@ export class OceanHorizon {
     sandTex.magFilter = THREE.NearestFilter
     sandTex.minFilter = THREE.LinearMipMapLinearFilter
     sandTex.generateMipmaps = true
+    // Strongly reduce grazing-angle moiré with anisotropic filtering if available
+    try {
+      // Use provided anisotropy from options when available; renderer clamps to hardware max
+      const desired = Math.max(1, Math.floor(opts.anisotropy ?? 8))
+      sandTex.anisotropy = desired
+    } catch { /* no-op */ }
     sandTex.needsUpdate = true
 
     // Material: reuse BlockMaterial shader for identical look to terrain sand
     this.seabedMaterial = new BlockMaterial(sandTex, null)
+    // Increase in-shader AA slightly since this surface is seen at shallow angles
+    this.seabedMaterial.setAntialiasing(true, 1.0)
     // Use same roughness/metalness/env intensity as terrain default
     this.seabedMaterial.setMaterialProperties(0.8, 0.0, 0.3)
 
