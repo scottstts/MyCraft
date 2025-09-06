@@ -224,7 +224,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           
           // Sun visibility check - only show glints when sun is above horizon
           float sunElevation = uSunDir.y; // Raw elevation, can be negative
-          float sunVisibility = smoothstep(-0.05, 0.02, sunElevation); // Fade out before horizon
+          float sunVisibility = smoothstep(-0.05, -0.01, sunElevation); // Persist until well below visual horizon
           
           float elevationBoost = mix(3.5, 1.0, clamp(sunElevation, 0.0, 1.0)); // 3.5x stronger at horizon
           
