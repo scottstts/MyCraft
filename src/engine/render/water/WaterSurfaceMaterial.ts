@@ -355,6 +355,24 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           // If we have scene color, use it as refracted base; otherwise approximate with seabed tint
           vec3 refrBase = (sceneRefr.x >= 0.0) ? sceneRefr : seabedTint;
           vec3 refrCol = mix(deep, refrBase, 0.65) * transmittance;
+          // Above-water only tweaks to refraction/transmission (do not touch reflection)
+          if (!isUnder) {
+            // Thicker water along the ray appears darker; crests slightly brighter
+            float thickness = clamp(path / max(1e-3, uDepthApprox), 0.0, 4.0);
+            float slope = clamp(1.0 - N.y, 0.0, 1.0);
+            float shade = mix(1.08, 0.82, clamp(0.55*thickness + 0.45*slope, 0.0, 1.0));
+            // Shallow water picks up a hint of seabed warmth
+            vec3 shallowShift = (seabedTint - deep) * (1.0 - exp(-thickness * 0.9)) * 0.18;
+            // Gentle sun-through-water brightening (subsurface forward scatter)
+            float tlen = max(length(Tdir), 1e-4);
+            float subSun = pow(max(dot(normalize(-uSunDir), (-Tdir)/tlen), 0.0), 3.0);
+            refrCol = refrCol * shade + shallowShift + deep * (0.08 * subSun);
+            // Night darkening when looking down from above (does not affect reflection)
+            float NdVpos = max(dot(N, V), 0.0);
+            float night = 1.0 - clamp(uAmbientIntensity, 0.0, 1.0);
+            float nightDark = 1.0 - night * 0.35 * smoothstep(0.2, 0.95, NdVpos);
+            refrCol *= nightDark;
+          }
           // Underwater reflection shouldn't sample the sky; use deep water tint only
           vec3 reflCol = isUnder ? deep : skyRef;
           vec3 base;
