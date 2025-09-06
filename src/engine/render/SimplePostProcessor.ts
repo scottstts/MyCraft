@@ -208,15 +208,13 @@ export class SimplePostProcessor {
         // Improved SSAO with rotating kernel and continuous falloff
         float ssao(vec2 uv, vec3 position, vec3 normal) {
           if (!ssaoEnabled) return 1.0;
-          // Avoid applying AO on semi-transparent surfaces (e.g., water)
-          if (texture2D(tDiffuse, uv).a < 0.99) return 1.0;
           float current = readDepth(uv);
           if (current >= cameraFar * 0.99) return 1.0;
           // Also skip AO for underwater pixels based on reconstructed world Y
           vec3 pw = reconstructWorldPos(current);
-          if (pw.y <= waterLevel + 0.25) return 1.0;
+          if (pw.y < waterLevel - 0.1) return 1.0;
           
-          // Local flatness gating: suppress AO on very smooth regions
+          // Mild flatness gating to avoid AO on perfectly flat areas only
           float px = 1.5 / min(resolution.x, resolution.y);
           float d1 = readDepth(clamp(uv + vec2(px, 0.0), vec2(0.0), vec2(1.0)));
           float d2 = readDepth(clamp(uv + vec2(-px, 0.0), vec2(0.0), vec2(1.0)));
@@ -227,17 +225,11 @@ export class SimplePostProcessor {
           float dmin = min(min(d1,d2), min(d3,d4));
           float dmax = max(max(d1,d2), max(d3,d4));
           float drange = dmax - dmin;
-          float eps = mix(0.06, 6.0, clamp(current / cameraFar, 0.0, 1.0));
-          float edgeMaskDepth = smoothstep(eps * 0.5, eps, drange);
-          // Also include color-space edge gating so open water (color-uniform) is not darkened
-          vec3 colC = texture2D(tDiffuse, uv).rgb;
-          float colGrad = length(dFdx(colC)) + length(dFdy(colC));
-          float edgeMaskColor = smoothstep(0.02, 0.12, colGrad);
-          float edgeMask = max(edgeMaskDepth, edgeMaskColor);
-          if (edgeMask <= 0.0) return 1.0;
+          float eps = mix(0.01, 0.25, clamp(current / cameraFar, 0.0, 1.0));
+          float edgeMask = smoothstep(eps * 0.25, eps, drange);
 
-          // Depth-scaled kernel radius for approximate constant world-space reach
-          float baseRadius = (ssaoRadius * 220.0) / max(1.0, current);
+          // Screen-space kernel radius (pixels)
+          float baseRadius = ssaoRadius * 200.0;
           float angle0 = hash12(uv * resolution) * 6.2831853;
           float cs = cos(angle0), sn = sin(angle0);
           mat2 rot = mat2(cs, -sn, sn, cs);
@@ -245,8 +237,8 @@ export class SimplePostProcessor {
           float occlusion = 0.0;
           float valid = 0.0;
           float depthScale = clamp(current / cameraFar, 0.0, 1.0);
-          float maxDelta = mix(5.0, 30.0, depthScale);
-          float thickness = mix(0.25, 3.0, depthScale);
+          float maxDelta = mix(2.0, 20.0, depthScale);
+          float thickness = mix(0.002, 0.08, depthScale);
           for (int i=0; i<16; i++) {
             float t = (float(i)+0.5) / 16.0;
             float r = mix(0.25, 1.0, t);
@@ -264,7 +256,7 @@ export class SimplePostProcessor {
             }
           }
           // Normalize by number of valid samples (avoid horizon artifacts)
-          occlusion = (occlusion / max(1.0, valid)) * ssaoIntensity * edgeMask;
+          occlusion = (occlusion / max(1.0, valid)) * ssaoIntensity * (0.75 + 0.25 * edgeMask);
           // Fade AO near the far plane to avoid a visible seam over water
           float farFade = smoothstep(cameraFar * 0.30, cameraFar * 0.65, current);
           occlusion *= (1.0 - farFade);

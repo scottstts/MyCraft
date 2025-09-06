@@ -59,16 +59,14 @@ export class SSAOPass extends ShaderPass {
         }
         float aoFunc(vec2 uv) {
           if (!ssaoEnabled) return 1.0;
-          // Avoid applying AO on semi-transparent surfaces (e.g., water)
-          if (texture2D(tDiffuse, uv).a < 0.99) return 1.0;
           float current = readDepth(uv);
           if (current >= cameraFar * 0.99) return 1.0;
           // Skip SSAO for underwater pixels (world Y below water plane). This
           // prevents the far seabed ramp from producing a horizon-wide AO seam.
           vec3 pw = reconstructWorldPos(current);
-          if (pw.y <= waterLevel + 0.25) return 1.0;
+          if (pw.y < waterLevel - 0.1) return 1.0;
           
-          // Local flatness gating: suppress AO on very smooth regions
+          // Mild flatness gating to avoid AO on perfectly flat areas only
           float px = 1.5 / min(resolution.x, resolution.y);
           float d1 = readDepth(clamp(uv + vec2(px, 0.0), vec2(0.0), vec2(1.0)));
           float d2 = readDepth(clamp(uv + vec2(-px, 0.0), vec2(0.0), vec2(1.0)));
@@ -79,21 +77,11 @@ export class SSAOPass extends ShaderPass {
           float dmin = min(min(d1,d2), min(d3,d4));
           float dmax = max(max(d1,d2), max(d3,d4));
           float drange = dmax - dmin;
-          float eps = mix(0.06, 6.0, clamp(current / cameraFar, 0.0, 1.0));
-          float edgeMaskDepth = smoothstep(eps * 0.5, eps, drange);
-          // Also include color-space edge gating (pre-tonemap), so we don't
-          // darken large uniform areas like open water.
-          vec3 colC = texture2D(tDiffuse, uv).rgb;
-          float colGrad = length(dFdx(colC)) + length(dFdy(colC));
-          float edgeMaskColor = smoothstep(0.02, 0.12, colGrad);
-          float edgeMask = max(edgeMaskDepth, edgeMaskColor);
-          if (edgeMask <= 0.0) return 1.0; // entirely flat, no AO
+          float eps = mix(0.01, 0.25, clamp(current / cameraFar, 0.0, 1.0));
+          float edgeMask = smoothstep(eps * 0.25, eps, drange);
 
           // Screen-space radius in pixels -> convert to UV
-          // Use a depth-scaled kernel so the sample radius represents roughly
-          // constant world-space size. This prevents distance-anchored bands on
-          // large flat surfaces (like seabed under water).
-          float baseRadius = (ssaoRadius * 220.0) / max(1.0, current);
+          float baseRadius = ssaoRadius * 200.0;
           // Per-pixel random rotation to break banding
           float angle0 = hash12(uv * resolution) * 6.2831853;
           float cs = cos(angle0); float sn = sin(angle0);
@@ -104,12 +92,8 @@ export class SSAOPass extends ShaderPass {
           float valid = 0.0;
           // Depth-scaled tolerance to avoid far-distance banding
           float depthScale = clamp(current / cameraFar, 0.0, 1.0);
-          float maxDelta = mix(5.0, 30.0, depthScale);
-          float thickness = mix(0.25, 3.0, depthScale);
-          // Plane-slope compensation from local gradient
-          float dzdx = dFdx(readDepth(uv));
-          float dzdy = dFdy(readDepth(uv));
-          vec2 grad = vec2(dzdx, dzdy);
+          float maxDelta = mix(2.0, 20.0, depthScale);
+          float thickness = mix(0.01, 0.15, depthScale);
           for (int i = 0; i < 16; i++){
             float t = (float(i) + 0.5) / 16.0;
             float r = mix(0.25, 1.0, t);
@@ -121,16 +105,15 @@ export class SSAOPass extends ShaderPass {
             if (sd >= cameraFar * 0.99) continue; // ignore background
             valid += 1.0;
             float diff = current - sd; // positive when sample is closer
-            float expected = -dot(grad, o);
-            float resid = diff - expected;
-            if (resid > thickness) {
-              float w = 1.0 - clamp((resid - thickness) / maxDelta, 0.0, 1.0);
+            // Simple bias-only SSAO is more robust for our voxel terrain
+            if (diff > thickness) {
+              float w = 1.0 - clamp((diff - thickness) / maxDelta, 0.0, 1.0);
               occlusion += w;
             }
           }
           // Normalize by number of valid samples to avoid artifacts when
           // background samples dominate (common near the horizon over water).
-          occlusion = (occlusion / max(1.0, valid)) * ssaoIntensity * edgeMask;
+          occlusion = (occlusion / max(1.0, valid)) * ssaoIntensity * (0.75 + 0.25 * edgeMask);
           // Also fade AO as we approach the far plane (hidden by fog anyway)
           // Fade earlier so far-field planes (ocean/sea-bed) never accumulate AO
           float farFade = smoothstep(cameraFar * 0.30, cameraFar * 0.65, current);
