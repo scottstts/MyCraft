@@ -89,6 +89,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         // Ambient lighting controls
         uAmbientIntensity: { value: 1.0 },   // Overall ambient light multiplier [0..1]
         uNightTint: { value: new THREE.Color(0.1, 0.15, 0.25) }, // Tint applied at night
+        
       },
       vertexShader: `
         varying vec3 vWorld;
@@ -122,8 +123,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uAlphaNearMin; uniform float uAlphaNearDist;
         // Sky gradient
         uniform vec3 uSkyTop; uniform vec3 uSkyHorizon;
-        // Ambient lighting
-        uniform float uAmbientIntensity; uniform vec3 uNightTint;
+          // Ambient lighting
+          uniform float uAmbientIntensity; uniform vec3 uNightTint;
 
         // Utility noise (small and stable)
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -267,12 +268,16 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         }
 
         // Cheap screen-space refraction sampling: distort screen UV by refracted direction and wave detail
+        // Note: use correct IOR depending on which side of the surface we're on so
+        // underwater "looking up" gets proper bending and critical-angle behavior.
         vec3 sampleRefractedScene(vec2 xz, vec3 N, vec3 V, float refractStrength){
           if (uHasSceneColor == 0) return vec3(-1.0); // sentinel to indicate unavailable
           // Incident vector from eye toward surface
           vec3 I = -V;
-          // Refract into water (air->water)
-          vec3 T = refract(I, N, uEta);
+          // Pick IOR for the current side: above water (air->water) or underwater (water->air)
+          float etaSide = (dot(N, V) < 0.0) ? (1.0 / uEta) : uEta;
+          // Refract into the other medium
+          vec3 T = refract(I, N, etaSide);
           // If total internal reflection or grazing where T is near-zero, skip
           if (length(T) < 1e-5) return vec3(-1.0);
           // Screen UV
@@ -322,22 +327,27 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec3 skyRef = (skyColor(R) + skyColor(R1) + skyColor(R2)) / 3.0;
 
           // Base water coloration (absorption + proper Fresnel for dielectrics)
-          float NdV = max(dot(N, V), 0.0);
-          // Physical F0 from IOR ratio (air->water ~ 0.02)
-          float F0 = pow((1.0 - uEta) / (1.0 + uEta), 2.0);
+          // Determine if the camera is underwater looking up (view on backface).
+          bool isUnder = (dot(N, V) < 0.0);
+          // Use absolute angle for Fresnel so backfaces don't clamp to grazing (fixes pale white washout)
+          float NdV = abs(dot(N, V));
+          // Physical F0 from the correct IOR ratio for the current side
+          float etaSide = isUnder ? (1.0 / uEta) : uEta;
+          float F0 = pow((1.0 - etaSide) / (1.0 + etaSide), 2.0);
           F0 = clamp(F0 + uFresnel, 0.0, 1.0);
           float F = fresnelSchlick(NdV, F0);
 
-          // Refraction direction (into water)
+          // Refraction direction into the opposite medium, with side-aware IOR
           vec3 I = -V;
-          vec3 Tdir = refract(I, N, uEta);
+          vec3 Tdir = refract(I, N, etaSide);
           bool tir = length(Tdir) < 1e-5; // total internal reflection or grazing
 
           // Optional screen-space refraction sample if provided by engine
           vec3 sceneRefr = sampleRefractedScene(xz, N, V, uRefractAmount * (1.0 - F));
 
           // Physical absorption using Beer-Lambert to create depth-based tint
-          float path = uDepthApprox / max(1e-3, -Tdir.y + 1e-3); // approximate distance traveled in water
+          // approximate distance traveled in water; use |cos| so this works on both sides
+          float path = uDepthApprox / max(1e-3, abs(Tdir.y) + 1e-3);
           vec3 transmittance = beerLambert(uAbsorption, path);
           // Approximate seabed tint under water (sandy)
           vec3 seabedTint = vec3(0.85, 0.80, 0.65);
@@ -345,8 +355,18 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           // If we have scene color, use it as refracted base; otherwise approximate with seabed tint
           vec3 refrBase = (sceneRefr.x >= 0.0) ? sceneRefr : seabedTint;
           vec3 refrCol = mix(deep, refrBase, 0.65) * transmittance;
-          // Mix reflection and refraction by Fresnel; handle TIR
-          vec3 base = mix(refrCol, skyRef, tir ? 1.0 : F);
+          // Underwater reflection shouldn't sample the sky; use deep water tint only
+          vec3 reflCol = isUnder ? deep : skyRef;
+          vec3 base;
+          if (isUnder) {
+            // Removed Snell's window: use constant subtle reflection from below
+            float Rmix = 0.06; // 6% reflection on underside
+            base = mix(refrCol, reflCol, Rmix);
+          } else {
+            // Above water: standard Fresnel mixing
+            float Rmix = tir ? 1.0 : F;
+            base = mix(refrCol, reflCol, Rmix);
+          }
 
           // Enhanced sun specular glint for dramatic ocean reflections
           vec3 L = normalize(uSunDir);
@@ -389,8 +409,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec3 lowSunColor = mix(sunsetOrange, sunriseGold, 0.5);
           vec3 dynamicSunColor = mix(lowSunColor, midDayWhite, pow(clamp(sunElevation, 0.0, 1.0), 0.6));
           
-          // Apply dynamic coloring to sun glint with visibility fade
-          vec3 sunGlint = mix(uSunColor, dynamicSunColor, 0.8) * totalGlint * uSpecular * elevationBoost * sunVisibility;
+          // Apply dynamic coloring to sun glint with visibility fade.
+          // Underwater, specular glints on the underside look like a large circular artifact,
+          // so disable the glint when the camera is below the surface.
+          float glintMask = isUnder ? 0.0 : 1.0;
+          vec3 sunGlint = mix(uSunColor, dynamicSunColor, 0.8) * totalGlint * uSpecular * elevationBoost * sunVisibility * glintMask;
 
           // Forward scattering tint (cheap subsurface feel)
           float fwd = pow(max(dot(N, -L), 0.0), 3.0) * 0.25;
@@ -423,6 +446,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float a = max(uAlpha, uAlphaNearMin);
           float fresnelAlpha = clamp(uAlphaFresnelBase + uAlphaFresnelScale * F, 0.0, 2.0);
           a = clamp(a * fresnelAlpha, 0.0, 1.0);
+          // Slightly reduce underwater opacity to keep terrain readable
+          if (isUnder) a *= 0.85;
           gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
         }
       `,
