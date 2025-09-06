@@ -222,9 +222,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           // Combine all layers for ultra-crisp sun glint
           float totalGlint = coreGlint + mainGlint + sharpGlint + mediumGlint + softGlint + sparkleCore + sparkleMain;
           
-          // Dynamic sun color based on elevation for warm sunrise/sunset colors
-          float sunElevation = clamp(uSunDir.y, 0.0, 1.0);
-          float elevationBoost = mix(3.5, 1.0, sunElevation); // 3.5x stronger at horizon
+          // Sun visibility check - only show glints when sun is above horizon
+          float sunElevation = uSunDir.y; // Raw elevation, can be negative
+          float sunVisibility = smoothstep(-0.05, 0.02, sunElevation); // Fade out before horizon
+          
+          float elevationBoost = mix(3.5, 1.0, clamp(sunElevation, 0.0, 1.0)); // 3.5x stronger at horizon
           
           // Create warm sunset/sunrise colors
           vec3 sunsetOrange = vec3(1.0, 0.4, 0.1);  // Deep orange
@@ -233,10 +235,10 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           
           // Interpolate sun glint color based on elevation
           vec3 lowSunColor = mix(sunsetOrange, sunriseGold, 0.5);
-          vec3 dynamicSunColor = mix(lowSunColor, midDayWhite, pow(sunElevation, 0.6));
+          vec3 dynamicSunColor = mix(lowSunColor, midDayWhite, pow(clamp(sunElevation, 0.0, 1.0), 0.6));
           
-          // Apply dynamic coloring to sun glint
-          vec3 sunGlint = mix(uSunColor, dynamicSunColor, 0.8) * totalGlint * uSpecular * elevationBoost;
+          // Apply dynamic coloring to sun glint with visibility fade
+          vec3 sunGlint = mix(uSunColor, dynamicSunColor, 0.8) * totalGlint * uSpecular * elevationBoost * sunVisibility;
 
           // Forward scattering tint (cheap subsurface feel)
           float fwd = pow(max(dot(N, -L), 0.0), 3.0) * 0.25;
