@@ -133,6 +133,19 @@ export class OceanHorizon {
     this.material.setMap(tex)
     this.material.setTileScale(tileScale)
   }
+  
+  // Pass through ambient lighting updates to the water material
+  setAmbientLighting(intensity: number, nightTint?: THREE.Color) {
+    this.material.setAmbientLighting(intensity, nightTint)
+  }
+  
+  setSun(direction: THREE.Vector3, color?: THREE.Color) {
+    this.material.setSun(direction, color)
+  }
+  
+  setSkyColors(topColor: THREE.Color, horizonColor: THREE.Color) {
+    this.material.setSkyColors(topColor, horizonColor)
+  }
 
   update(dt: number){
     this.time += dt

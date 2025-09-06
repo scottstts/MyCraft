@@ -75,6 +75,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         // Sky gradient controls (simple analytic sky for reflections)
         uSkyTop: { value: new THREE.Color(0.32, 0.50, 0.80) },
         uSkyHorizon: { value: new THREE.Color(0.68, 0.78, 0.92) },
+        // Ambient lighting controls
+        uAmbientIntensity: { value: 1.0 },   // Overall ambient light multiplier [0..1]
+        uNightTint: { value: new THREE.Color(0.1, 0.15, 0.25) }, // Tint applied at night
       },
       vertexShader: `
         varying vec3 vWorld;
@@ -105,6 +108,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uAlphaNearMin; uniform float uAlphaNearDist;
         // Sky gradient
         uniform vec3 uSkyTop; uniform vec3 uSkyHorizon;
+        // Ambient lighting
+        uniform float uAmbientIntensity; uniform vec3 uNightTint;
 
         // Utility noise (small and stable)
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -210,6 +215,12 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
 
           vec3 col = base + sunGlint;
 
+          // Apply ambient lighting modulation
+          // At night (low ambient), blend toward night tint color and reduce overall intensity
+          float nightMix = 1.0 - uAmbientIntensity;
+          col = mix(col, col * uNightTint, nightMix * 0.8);
+          col *= mix(0.15, 1.0, uAmbientIntensity); // Scale overall brightness
+
           // Optional subtle ocean-only edge softening/brightening
           float outside = max(max(uInnerMinX - vWorld.x, vWorld.x - uInnerMaxX), max(uInnerMinZ - vWorld.z, vWorld.z - uInnerMaxZ));
           float f = uEdgeStrength * smoothstep(0.0, max(uEdgeWidth, 1e-3), outside);
@@ -270,6 +281,18 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
   setSun(direction: THREE.Vector3, color?: THREE.Color){
     (this.uniforms.uSunDir.value as THREE.Vector3).copy(direction).normalize()
     if (color) (this.uniforms.uSunColor.value as THREE.Color).copy(color)
+  }
+  
+  // Update ambient lighting to respond to day/night cycle
+  setAmbientLighting(intensity: number, nightTint?: THREE.Color) {
+    this.uniforms.uAmbientIntensity.value = Math.max(0, Math.min(1, intensity))
+    if (nightTint) (this.uniforms.uNightTint.value as THREE.Color).copy(nightTint)
+  }
+  
+  // Update sky colors based on time of day
+  setSkyColors(topColor: THREE.Color, horizonColor: THREE.Color) {
+    (this.uniforms.uSkyTop.value as THREE.Color).copy(topColor);
+    (this.uniforms.uSkyHorizon.value as THREE.Color).copy(horizonColor);
   }
   setWaves(params: { amp?: number; chop?: number; wind?: THREE.Vector2; speed?: number; L0?: number; L1?: number; L2?: number }){
     if (params.amp !== undefined) this.uniforms.uWaveAmp.value = Math.max(0, params.amp)

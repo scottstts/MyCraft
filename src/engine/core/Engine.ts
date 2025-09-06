@@ -355,7 +355,7 @@ function update(dtSeconds: number) {
       // grass billboards don't receive shadows to keep shader simple
     }
   }
-  // Update block materials with sun uniforms (water uses unlit shader)
+  // Update block materials with sun uniforms
   if (blockMaterial && sunController) {
     const sdir = sunController.getSunDirection();
     blockMaterial.setSunUniforms(sdir, sunController.getSunColor());
@@ -370,6 +370,38 @@ function update(dtSeconds: number) {
     if (grassSystem) grassSystem.setSunUniforms(sdir, sunController.getSunColor());
     if (grassSystem) grassSystem.setDayNight(dayLight, starVis * 0.35);
     if (playerBody) playerBody.setLighting(sdir, sunController.getSunColor(), dayLight, starVis * 0.35);
+  }
+
+  // Update water materials with ambient lighting to match day/night cycle
+  if ((waterMaterial || oceanHorizon) && sunController) {
+    const sdir = sunController.getSunDirection();
+    const sunColor = sunController.getSunColor();
+    
+    // Use same ambient calculation as blocks but with more dramatic night reduction
+    const rawDayLight = Math.max(0, sdir.y);
+    const WATER_NIGHT_MIN = 0.15; // Water can be darker than blocks at night
+    const waterAmbient = Math.max(WATER_NIGHT_MIN, rawDayLight);
+    
+    // Update sky colors based on time of day for realistic reflections
+    const skyNightTop = new THREE.Color(0.05, 0.08, 0.15);
+    const skyDayTop = new THREE.Color(0.32, 0.50, 0.80);
+    const skyNightHorizon = new THREE.Color(0.10, 0.12, 0.20);
+    const skyDayHorizon = new THREE.Color(0.68, 0.78, 0.92);
+    
+    const skyTop = skyNightTop.clone().lerp(skyDayTop, waterAmbient);
+    const skyHorizon = skyNightHorizon.clone().lerp(skyDayHorizon, waterAmbient);
+    
+    // Apply to both water material instances
+    if (waterMaterial) {
+      waterMaterial.setSun(sdir, sunColor);
+      waterMaterial.setAmbientLighting(waterAmbient);
+      waterMaterial.setSkyColors(skyTop, skyHorizon);
+    }
+    if (oceanHorizon) {
+      oceanHorizon.setSun(sdir, sunColor);
+      oceanHorizon.setAmbientLighting(waterAmbient);
+      oceanHorizon.setSkyColors(skyTop, skyHorizon);
+    }
   }
   
   // Animate far ocean illusion
