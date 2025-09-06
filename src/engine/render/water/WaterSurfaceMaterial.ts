@@ -115,44 +115,101 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float noise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash(i); float b=hash(i+vec2(1.0,0.0)); float c=hash(i+vec2(0.0,1.0)); float d=hash(i+vec2(1.0,1.0)); vec2 u=f*f*(3.0-2.0*f); return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y; }
 
-        // Compute Gerstner-style normal from three spectral components
+        // Compute Gerstner-style normal from multi-scale spectral components with micro-ripples
         vec4 waveNormalCrest(vec2 xz, float t){
-          // Directions
+          // Primary wave directions (existing)
           vec2 d0 = normalize(uWind);
           vec2 d1 = normalize(vec2(-uWind.y, uWind.x));
           vec2 d2 = normalize(vec2(-0.7*uWind.x + 0.4*uWind.y, 0.6*uWind.x + 0.7*uWind.y));
-          float k0 = 6.2831853 / max(1e-3, uL0);
-          float k1 = 6.2831853 / max(1e-3, uL1);
-          float k2 = 6.2831853 / max(1e-3, uL2);
+          
+          // Additional micro-ripple directions with randomization
+          vec2 d3 = normalize(vec2(0.8*uWind.x + 0.6*uWind.y, -0.6*uWind.x + 0.8*uWind.y));
+          vec2 d4 = normalize(vec2(-0.9*uWind.x - 0.44*uWind.y, 0.44*uWind.x - 0.9*uWind.y));
+          vec2 d5 = normalize(vec2(0.5*uWind.x - 0.87*uWind.y, 0.87*uWind.x + 0.5*uWind.y));
+          
+          // Wave numbers (existing + new micro scales)
+          float k0 = 6.2831853 / max(1e-3, uL0);      // 12m primary
+          float k1 = 6.2831853 / max(1e-3, uL1);      // 6m secondary  
+          float k2 = 6.2831853 / max(1e-3, uL2);      // 2.5m tertiary
+          float k3 = 6.2831853 / max(1e-3, 1.2);      // 1.2m micro ripples
+          float k4 = 6.2831853 / max(1e-3, 0.6);      // 0.6m fine ripples
+          float k5 = 6.2831853 / max(1e-3, 0.3);      // 0.3m capillary waves
+          
+          // Dispersion relations
           float w0 = sqrt(9.8 * k0);
           float w1 = sqrt(9.8 * k1);
           float w2 = sqrt(9.8 * k2);
+          float w3 = sqrt(9.8 * k3);
+          float w4 = sqrt(9.8 * k4);
+          float w5 = sqrt(9.8 * k5);
+          
+          // Amplitudes with natural decay for smaller waves
           float a0 = uWaveAmp;
           float a1 = uWaveAmp * 0.55;
           float a2 = uWaveAmp * 0.22;
+          float a3 = uWaveAmp * 0.12;  // Micro ripples
+          float a4 = uWaveAmp * 0.08;  // Fine ripples  
+          float a5 = uWaveAmp * 0.05;  // Capillary waves
           float ch = uChop;
 
+          // Phase calculations with varied speeds for randomization
           float p0 = dot(xz, d0) * k0 + t * (uSpeed * w0);
-          float p1 = dot(xz, d1) * k1 + t * (0.8*uSpeed * w1);
-          float p2 = dot(xz, d2) * k2 + t * (1.2*uSpeed * w2);
+          float p1 = dot(xz, d1) * k1 + t * (0.8 * uSpeed * w1);
+          float p2 = dot(xz, d2) * k2 + t * (1.2 * uSpeed * w2);
+          float p3 = dot(xz, d3) * k3 + t * (0.9 * uSpeed * w3);
+          float p4 = dot(xz, d4) * k4 + t * (1.1 * uSpeed * w4);
+          float p5 = dot(xz, d5) * k5 + t * (0.7 * uSpeed * w5);
 
-          // Height gradients -> normal
+          // Anti-aliasing: reduce amplitude based on screen-space derivatives to prevent aliasing
+          vec2 dxz_dx = dFdx(xz);
+          vec2 dxz_dy = dFdy(xz);
+          float maxDerivative = max(length(dxz_dx), length(dxz_dy));
+          
+          // Fade out high-frequency waves when screen derivatives are large
+          float aa3 = 1.0 - smoothstep(0.0, 2.0, maxDerivative * k3);
+          float aa4 = 1.0 - smoothstep(0.0, 1.5, maxDerivative * k4);
+          float aa5 = 1.0 - smoothstep(0.0, 1.0, maxDerivative * k5);
+          
+          // Apply anti-aliasing to micro-wave amplitudes
+          a3 *= aa3;
+          a4 *= aa4;
+          a5 *= aa5;
+
+          // Height gradients -> normal (all wave components)
           vec2 grad = vec2(0.0);
           grad += d0 * (a0 * k0 * cos(p0));
           grad += d1 * (a1 * k1 * cos(p1));
           grad += d2 * (a2 * k2 * cos(p2));
-          // Micro ripples using procedural noise to avoid repetition
-          float n = noise(xz * 0.15 + vec2(0.123, -0.271) + t*0.05) * 2.0 - 1.0;
-          grad += vec2(n*0.08, -n*0.06);
+          grad += d3 * (a3 * k3 * cos(p3));
+          grad += d4 * (a4 * k4 * cos(p4));
+          grad += d5 * (a5 * k5 * cos(p5));
+          
+          // Additional procedural noise ripples with anti-aliasing
+          float noiseScale1 = 0.25;
+          float noiseScale2 = 0.45;
+          float noiseAA1 = 1.0 - smoothstep(0.0, 1.5, maxDerivative * noiseScale1 * 6.28);
+          float noiseAA2 = 1.0 - smoothstep(0.0, 1.0, maxDerivative * noiseScale2 * 6.28);
+          
+          float n1 = noise(xz * noiseScale1 + vec2(0.123, -0.271) + t*0.04) * 2.0 - 1.0;
+          float n2 = noise(xz * noiseScale2 + vec2(-0.456, 0.789) + t*0.06) * 2.0 - 1.0;
+          grad += vec2(n1 * 0.06 * noiseAA1, -n1 * 0.05 * noiseAA1);
+          grad += vec2(-n2 * 0.04 * noiseAA2, n2 * 0.03 * noiseAA2);
 
           vec3 N = normalize(vec3(-grad.x * ch, 1.0, -grad.y * ch));
-          // Crest metric: slope plus instantaneous constructive interference
+          
+          // Enhanced crest metric including micro-waves
           float slope = clamp(1.0 - N.y, 0.0, 1.0);
           float s0 = abs(sin(p0));
           float s1 = abs(sin(p1));
           float s2 = abs(sin(p2));
-          float inter = (a0*s0 + a1*s1 + a2*s2) / max(1e-3, (a0+a1+a2));
-          float crest = clamp(slope * (0.6 + 0.7*inter), 0.0, 1.0);
+          float s3 = abs(sin(p3)) * aa3;
+          float s4 = abs(sin(p4)) * aa4;
+          float s5 = abs(sin(p5)) * aa5;
+          
+          float totalAmp = a0 + a1 + a2 + a3 + a4 + a5;
+          float inter = (a0*s0 + a1*s1 + a2*s2 + a3*s3 + a4*s4 + a5*s5) / max(1e-3, totalAmp);
+          float crest = clamp(slope * (0.5 + 0.8*inter), 0.0, 1.0);
+          
           return vec4(N, crest);
         }
 
