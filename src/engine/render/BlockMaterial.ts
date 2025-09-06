@@ -301,22 +301,54 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           return uv;
       }
 
-      // Derivative-aware texture sampling to reduce minification shimmer (4-tap RGSS)
+      // Derivative-aware texture sampling to reduce minification shimmer
+      // Combines 4-tap RGSS with a directional anisotropic kernel when footprint is elongated
       vec4 texture2D_AA(sampler2D tex, vec2 uv) {
           vec4 base = texture2D(tex, uv);
           if (!aaEnabled) return base;
 
-          // Estimate minification level in texels per pixel
+          // Estimate pixel footprint in texel units
           vec2 texSize = vec2(max(1.0, atlasSize * tileSize), max(1.0, tileSize));
-          vec2 dx_uv = dFdx(uv) * texSize;
-          vec2 dy_uv = dFdy(uv) * texSize;
-          float minif = max(length(dx_uv), length(dy_uv));
+          vec2 dx_uvt = dFdx(uv) * texSize;
+          vec2 dy_uvt = dFdy(uv) * texSize;
+          float lenx = length(dx_uvt);
+          float leny = length(dy_uvt);
+          float maxLen = max(lenx, leny);
+          float minLen = max(min(lenx, leny), 1e-5);
+          float aniso = maxLen / minLen;
 
-          // Blend between 1-tap and 4-tap based on minification
-          float k = smoothstep(1.0, 3.0, minif) * clamp(aaStrength, 0.0, 1.0);
+          // Mix factor vs minification
+          float k = smoothstep(1.0, 3.0, maxLen) * clamp(aaStrength, 0.0, 1.0);
           if (k <= 0.001) return base;
 
-          // Rotated-grid supersampling inside pixel footprint (use UV-space derivatives)
+          // If footprint is strongly elongated, sample along its major axis (screen-aligned stripes case)
+          if (aniso > 2.0) {
+            // Major axis in UV space
+            vec2 major = (lenx > leny) ? dFdx(uv) : dFdy(uv);
+            float mlen = length(major);
+            if (mlen > 1e-5) major /= mlen; else major = vec2(1.0, 0.0);
+
+            // 7- or 9-tap kernel depending on minification (clamped)
+            int taps = (maxLen > 6.0) ? 9 : 7;
+            float halfT = float(taps - 1) * 0.5;
+
+            // Cover the pixel footprint width (±0.5 along major) with a Gaussian
+            vec4 sum = vec4(0.0);
+            float wsum = 0.0;
+            for (int i = 0; i < 9; i++) {
+              if (i >= taps) break;
+              float fi = float(i) - halfT;       // [-halfT, halfT]
+              float t = fi / max(halfT, 1.0);    // [-1, 1]
+              float w = exp(-t*t * 3.0);         // Gaussian-ish weights
+              vec2 o = major * (t * 0.5);        // ±0.5 pixel along major axis
+              vec4 c = texture2D(tex, clampUvToTile(uv + o));
+              sum += c * w; wsum += w;
+            }
+            vec4 anisoAvg = sum / max(wsum, 1e-5);
+            return mix(base, anisoAvg, k);
+          }
+
+          // Otherwise use 4-tap rotated grid inside the pixel footprint (good isotropic prefilter)
           vec2 dx = dFdx(uv);
           vec2 dy = dFdy(uv);
           const float ofs = 0.35;
