@@ -31,15 +31,17 @@ export class Composer {
     this.scene = scene
 
     // Separate depth target to avoid feedback loops
+    // Use higher-precision depth to reduce banding in fog: 24-bit depth + 8-bit stencil
     this.depthTarget = new THREE.WebGLRenderTarget(width, height, {
       minFilter: THREE.NearestFilter,
       magFilter: THREE.NearestFilter,
       format: THREE.RGBAFormat,
       depthBuffer: true,
-      stencilBuffer: false,
+      stencilBuffer: true,
     })
-    this.depthTarget.depthTexture = new THREE.DepthTexture(width, height, THREE.UnsignedShortType)
-    this.depthTarget.depthTexture.format = THREE.DepthFormat
+    const depthTex = new THREE.DepthTexture(width, height, THREE.UnsignedInt248Type)
+    depthTex.format = THREE.DepthStencilFormat
+    this.depthTarget.depthTexture = depthTex
 
     this.renderPass = new RenderPass(scene, camera)
     this.composer.addPass(this.renderPass)
@@ -70,6 +72,12 @@ export class Composer {
 
   setSize(w: number, h: number) {
     this.depthTarget.setSize(w, h)
+    // Ensure attached depth texture tracks the new size
+    if (this.depthTarget.depthTexture) {
+      this.depthTarget.depthTexture.image.width = w
+      this.depthTarget.depthTexture.image.height = h
+      this.depthTarget.depthTexture.needsUpdate = true
+    }
     this.composer.setSize(w, h)
     this.ssao.setSize(w, h)
     this.vol.setSize(w, h)

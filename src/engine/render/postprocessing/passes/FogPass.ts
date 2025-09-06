@@ -17,6 +17,8 @@ export class FogPass extends ShaderPass {
         exposure: { value: 0.9 },
         contrast: { value: 1.15 },
         saturation: { value: 1.1 },
+        // Small dithering to mask visible fog banding (approx 1 LSB at 1.0)
+        ditherAmount: { value: 0.75 },
         // Matrices and params for horizon haze (above-water extra fog)
         invProjectionMatrix: { value: new THREE.Matrix4() },
         cameraMatrixWorld: { value: new THREE.Matrix4() },
@@ -35,6 +37,7 @@ export class FogPass extends ShaderPass {
         uniform float cameraNear; uniform float cameraFar; uniform bool enabled;
         uniform float baseDensity; uniform float maxDistance; uniform vec3 fogColor; uniform float dayLight;
         uniform float exposure; uniform float contrast; uniform float saturation;
+        uniform float ditherAmount;
         // Horizon haze and matrices
         uniform mat4 invProjectionMatrix; uniform mat4 cameraMatrixWorld;
         uniform bool hazeEnabled; uniform float waterLevel; uniform float hazeStart; uniform float hazeDensity; uniform float hazeMaxMix;
@@ -68,6 +71,13 @@ export class FogPass extends ShaderPass {
         float brightness = max(col.r, max(col.g, col.b));
         float highlightPreserve = 1.0 - smoothstep(0.8, 2.0, brightness);
         f *= highlightPreserve;
+        // Subtle blue-noise-ish dithering in sRGB to break visible bands
+        if (ditherAmount > 0.0) {
+          float n1 = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233))) * 43758.5453);
+          float n2 = fract(sin(dot(gl_FragCoord.yx, vec2(39.3467,11.135))) * 24634.6345);
+          float tri = (n1 + n2) - 1.0; // ~triangular in [-1,1]
+          f = clamp(f + tri * (ditherAmount / 255.0), 0.0, 0.9);
+        }
         col = mix(col, fogColor, clamp(f,0.0,0.9)); }
         // Extra haze above water at far distance
         if (hazeEnabled) {
