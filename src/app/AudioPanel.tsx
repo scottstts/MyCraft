@@ -1,6 +1,6 @@
 import React from 'react'
 import { useUIStore } from '../state/ui'
-import { getVolume, setVolume, tryPlayOnUserGesture, pauseNow, nextTrack, prevTrack, isPlaying, getCurrentTime, getDuration, setCurrentTime, getCurrentTrackName } from './BgMusic'
+import { getVolume, setVolume, tryPlayOnUserGesture, nextTrack, prevTrack, isPlaying, getCurrentTime, getDuration, setCurrentTime, getCurrentTrackName, setDesiredPlaying } from './BgMusic'
 
 export const AudioPanel: React.FC = () => {
   const panelRef = React.useRef<HTMLDivElement | null>(null)
@@ -400,17 +400,18 @@ export const AudioPanel: React.FC = () => {
           }}
         >⏮</button>
 
-        <button
-          aria-label={playing ? 'Pause' : 'Play'}
-          onClick={() => {
-            if (playing) {
-              pauseNow()
-              setPlaying(false)
-            } else {
-              tryPlayOnUserGesture()
-              setPlaying(isPlaying())
-            }
-          }}
+          <button
+            aria-label={playing ? 'Pause' : 'Play'}
+            onClick={() => {
+              if (playing) {
+                setDesiredPlaying(false)
+                setPlaying(false)
+              } else {
+                setDesiredPlaying(true)
+                tryPlayOnUserGesture()
+                setPlaying(true)
+              }
+            }}
           style={{
             padding: '16px',
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',

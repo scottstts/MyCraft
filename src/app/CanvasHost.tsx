@@ -26,7 +26,6 @@ export function CanvasHost() {
   const setInGame = useUIStore(s => s.setInGame)
   const restartToken = useUIStore(s => s.restartToken)
   const gameStarted = useUIStore(s => s.gameStarted)
-  const paused = useUIStore(s => s.paused)
 
   useEffect(() => {
     let engineApi: EngineApi | null = null
@@ -73,8 +72,8 @@ export function CanvasHost() {
     if (document.pointerLockElement !== canvas) {
       canvas.requestPointerLock()
     }
-    // Kick off background music from a user gesture if we're entering the game
-    if (gameStarted && !paused) {
+    // Kick off background music from a user gesture after game start
+    if (gameStarted) {
       tryPlayOnUserGesture()
       // Prime SFX playback as well
       ;(window as Window & { __primeSfx?: () => void }).__primeSfx?.()

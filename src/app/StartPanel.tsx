@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useUIStore } from '../state/ui'
+import { setDesiredPlaying } from './BgMusic'
 import type { WorldSaveFile, WorldSavePayload, SavedInventory } from '../types/save'
 import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, SAVE_ENC_ALG, verifyPayload, bytesFromBase64, base64FromBytes, decryptPayload } from '../shared/save'
 import { CHUNK_SIZE } from '../config/constants'
@@ -246,6 +247,8 @@ export function StartPanel() {
         setChunkCount(payload.settings.chunkCount)
         setChunkSize(payload.settings.chunkSize)
         setGameStarted(true)
+        // Start background music as we enter the world; UI controls it after
+        setDesiredPlaying(true)
         setLoading(false)
       }
       input.click()
@@ -747,6 +750,8 @@ export function StartPanel() {
               setChunkCount(localCount)
               setChunkSize(localSize)
               setGameStarted(true)
+              // Start background music when entering the world
+              setDesiredPlaying(true)
             }}
             style={{ 
               padding: 'clamp(12px, 3vw, 16px) clamp(20px, 5vw, 24px)', 
