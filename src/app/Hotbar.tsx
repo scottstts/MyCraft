@@ -104,7 +104,7 @@ export function TopRightWidget() {
   if (!gameStarted) return null
 
   return (
-    <div style={{
+    <div id="top-right-widget" style={{
       position: 'absolute',
       right: 12,
       top: 12,

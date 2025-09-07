@@ -7,6 +7,7 @@ import { useUIStore } from '../state/ui';
 import type { PostProcessorSettings } from '../engine/render/SimplePostProcessor';
 import type { ShadowSettings } from '../engine/render/ShadowSystem';
 import type { GraphicsSettings } from '../engine/render/settings/GraphicsSettings';
+import SaveWorldButton from './SaveWorldButton';
 
 interface WindowWithEngineGlobals extends Window {
   updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
@@ -74,6 +75,7 @@ export const DebugPanel: React.FC = () => {
   const [cloudsEnabled, setCloudsEnabled] = useState(false);
   const [cloudsCoverage, setCloudsCoverage] = useState(0.45);
   const [cloudsDensity, setCloudsDensity] = useState(0.65);
+  const [sfxVol, setSfxVol] = useState(0.7);
 
   // Time-of-day UI local state
   const [timeOfDay, setTimeOfDay] = useState(0.0); // 6am sunrise
@@ -100,6 +102,12 @@ export const DebugPanel: React.FC = () => {
 
   // Initialize settings on mount
   useEffect(() => {
+    // Initialize SFX volume display from engine if available
+    try {
+      const sfx = (window as Window & { __getSfxVolume?: () => number }).__getSfxVolume?.()
+      if (typeof sfx === 'number' && !Number.isNaN(sfx)) setSfxVol(sfx)
+    } catch {}
+
     // Apply initial settings to the engine with a small delay to ensure engine is ready
     const timer = setTimeout(() => {
       // console.log('[DebugPanel] Initializing settings on mount');
@@ -178,6 +186,9 @@ export const DebugPanel: React.FC = () => {
         top: '12px',
         left: '12px',
         zIndex: 1000,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px'
       }}>
         <button
           onClick={() => { setAudioVisible(false); setDebugVisible(true) }}
@@ -217,8 +228,9 @@ export const DebugPanel: React.FC = () => {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', flexShrink: 0 }}>
             <path d="M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7l-2 3v1h8v-1l-2-3h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 12H3V4h18v10z" fill="currentColor" opacity="0.8"/>
           </svg>
-          Graphics Settings
+          Settings
         </button>
+        <SaveWorldButton />
       </div>
     );
   }
@@ -312,7 +324,7 @@ export const DebugPanel: React.FC = () => {
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           backgroundClip: 'text'
-        }}>Graphics Settings</h3>
+        }}>Settings</h3>
         <button
           onClick={() => setDebugVisible(false)}
           style={{
@@ -338,6 +350,39 @@ export const DebugPanel: React.FC = () => {
         >
           ✕
         </button>
+      </div>
+
+      {/* Sound Effects */}
+      <div style={{ marginBottom: '20px' }}>
+        <h4 style={{
+          margin: '0 0 12px 0',
+          fontSize: '14px',
+          color: '#e2e8f0',
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          letterSpacing: 0.5,
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          paddingBottom: '6px'
+        }}>Sound Effects</h4>
+        <label style={{ display: 'block', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.02)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '12px', fontWeight: 500, color: '#94a3b8' }}>
+            <span>Sound Effects Volume</span>
+            <span style={{ color: '#e2e8f0' }}>{Math.round(sfxVol * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={sfxVol}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value)
+              setSfxVol(v)
+              ;(window as Window & { __setSfxVolume?: (v: number) => void }).__setSfxVolume?.(v)
+            }}
+            style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.1)', outline: 'none', cursor: 'pointer' }}
+          />
+        </label>
       </div>
 
       {/* Day/Night Cycle */}
