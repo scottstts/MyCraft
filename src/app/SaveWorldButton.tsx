@@ -83,7 +83,7 @@ export function SaveWorldButton() {
       }}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', flexShrink: 0 }}>
-        <path d="M17 3H7a2 2 0 00-2 2v14l7-3 7 3V5a2 2 0 00-2-2z" fill="currentColor" opacity="0.8"/>
+        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" opacity="0.8"/>
       </svg>
       Save World
     </button>
