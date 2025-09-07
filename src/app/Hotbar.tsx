@@ -108,7 +108,6 @@ export function TopRightWidget() {
       position: 'absolute',
       right: 12,
       top: 12,
-      width: 240,
       display: 'flex',
       alignItems: 'center',
       gap: '8px',
@@ -133,7 +132,7 @@ export function TopRightWidget() {
       <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.2)' }} />
       
       {/* FPS display */}
-      <span style={{ color: '#4ade80', fontWeight: 700 }}>{fps} fps</span>
+      <span style={{ color: '#4ade80', fontWeight: 700, minWidth: '48px', textAlign: 'center' }}>{fps} fps</span>
       
       {/* Separator */}
       <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.2)' }} />

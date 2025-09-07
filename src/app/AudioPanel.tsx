@@ -12,9 +12,9 @@ export const AudioPanel: React.FC = () => {
   const [trackName, setTrackName] = React.useState('')
   const [volume, setVol] = React.useState(0)
   const [topPx, setTopPx] = React.useState<number>(84)
+  const [widthPx, setWidthPx] = React.useState<number>(240)
   const [isDraggingProgress, setIsDraggingProgress] = React.useState(false)
   const [isDraggingVolume, setIsDraggingVolume] = React.useState(false)
-  const fixedWidthPx = 240 // Fixed width to match TopRightWidget
 
   React.useEffect(() => {
     try { setPlaying(isPlaying()) } catch {}
@@ -45,13 +45,14 @@ export const AudioPanel: React.FC = () => {
     return () => cancelAnimationFrame(raf)
   }, [])
 
-  // Position below the FPS widget
+  // Position and size to match the FPS widget
   React.useEffect(() => {
     const update = () => {
       const el = document.getElementById('top-right-widget')
       if (!el) return
       const r = el.getBoundingClientRect()
       if (Number.isFinite(r.bottom)) setTopPx(Math.ceil(r.bottom + 12))
+      if (Number.isFinite(r.width) && r.width > 0) setWidthPx(Math.ceil(r.width))
     }
     update()
     window.addEventListener('resize', update)
@@ -108,7 +109,10 @@ export const AudioPanel: React.FC = () => {
       position: 'fixed',
       right: 12,
       top: topPx,
-      width: fixedWidthPx,
+      width: widthPx,
+      minWidth: 0,
+      boxSizing: 'border-box',
+      overflow: 'hidden',
       background: 'linear-gradient(90deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
       border: '1px solid rgba(255,255,255,0.06)',
       borderRadius: '12px',
@@ -119,10 +123,10 @@ export const AudioPanel: React.FC = () => {
       zIndex: 1001,
       pointerEvents: 'auto',
       backdropFilter: 'blur(24px)',
-      boxShadow: '0 24px 64px rgba(0,0,0,0.6), 0 12px 32px rgba(0,0,0,0.5)'
+      boxShadow: '0 4px 16px rgba(0,0,0,0.3)'
     }}>
       {/* Player */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
         {/* Track name (gradient text, no pill) */}
         <div style={{
           alignSelf: 'flex-start',
@@ -132,7 +136,11 @@ export const AudioPanel: React.FC = () => {
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           backgroundClip: 'text',
-          letterSpacing: -0.2
+          letterSpacing: -0.2,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          maxWidth: '100%'
         }}>{trackName || '—'}</div>
 
         {/* Progress bar */}
@@ -161,7 +169,7 @@ export const AudioPanel: React.FC = () => {
         </div>
 
         {/* Control buttons */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', minWidth: 0 }}>
           <button
             aria-label="Previous track"
             onClick={() => { prevTrack(); setPlaying(isPlaying()); setTrackName(getCurrentTrackName()) }}
@@ -228,8 +236,8 @@ export const AudioPanel: React.FC = () => {
         </div>
 
         {/* Volume control */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '1px' }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ color: '#94a3b8', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '1px', minWidth: 0 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ color: '#94a3b8', flexShrink: 0 }}>
             <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
           </svg>
           <div
@@ -246,7 +254,8 @@ export const AudioPanel: React.FC = () => {
             }}
             style={{
               flex: 1, height: '6px', borderRadius: '4px',
-              background: 'rgba(255,255,255,0.12)', cursor: 'pointer', position: 'relative'
+              background: 'rgba(255,255,255,0.12)', cursor: 'pointer', position: 'relative',
+              minWidth: 0
             }}
           >
             <div style={{
@@ -255,7 +264,7 @@ export const AudioPanel: React.FC = () => {
               background: 'linear-gradient(90deg, rgba(148,163,184,0.7), rgba(99,102,241,0.7))', borderRadius: '4px'
             }} />
           </div>
-          <span style={{ fontSize: '11px', color: '#94a3b8', minWidth: '32px', textAlign: 'right' }}>
+          <span style={{ fontSize: '11px', color: '#94a3b8', minWidth: '28px', textAlign: 'right' }}>
             {Math.round(volume * 100)}%
           </span>
         </div>
