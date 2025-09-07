@@ -108,6 +108,7 @@ export function TopRightWidget() {
       position: 'absolute',
       right: 12,
       top: 12,
+      width: 240,
       display: 'flex',
       alignItems: 'center',
       gap: '8px',

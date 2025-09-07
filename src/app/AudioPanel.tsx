@@ -11,7 +11,7 @@ export const AudioPanel: React.FC = () => {
   const [duration, setDur] = React.useState(0)
   const [trackName, setTrackName] = React.useState('')
   const [topPx, setTopPx] = React.useState<number>(84)
-  const [wPx, setWPx] = React.useState<number>(280)
+  const fixedWidthPx = 240 // Fixed width to match TopRightWidget
 
   React.useEffect(() => {
     try { setPlaying(isPlaying()) } catch {}
@@ -39,13 +39,12 @@ export const AudioPanel: React.FC = () => {
     return () => cancelAnimationFrame(raf)
   }, [])
 
-  // Align width and position with the FPS widget above
+  // Position below the FPS widget
   React.useEffect(() => {
     const update = () => {
       const el = document.getElementById('top-right-widget')
       if (!el) return
       const r = el.getBoundingClientRect()
-      if (Number.isFinite(r.width) && r.width > 0) setWPx(Math.ceil(r.width))
       if (Number.isFinite(r.bottom)) setTopPx(Math.ceil(r.bottom + 12))
     }
     update()
@@ -65,7 +64,7 @@ export const AudioPanel: React.FC = () => {
       position: 'fixed',
       right: 12,
       top: topPx,
-      width: wPx,
+      width: fixedWidthPx,
       background: 'linear-gradient(135deg, rgba(20,25,35,0.98) 0%, rgba(15,20,28,0.98) 100%)',
       border: '1px solid rgba(255,255,255,0.06)',
       borderRadius: '12px',
