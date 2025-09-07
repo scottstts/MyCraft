@@ -9,5 +9,24 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.spec.ts']
   },
-  assetsInclude: ['**/*.png']
+  assetsInclude: ['**/*.png'],
+  // Build-only optimizations: keep app code unchanged, improve chunking.
+  build: {
+    rollupOptions: {
+      output: {
+        // Split heavy and common dependencies into dedicated chunks.
+        // This reduces the size of app-specific chunks like the Engine split.
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('/three/examples/')) return 'three-examples'
+            if (id.includes('/three/')) return 'three'
+            if (id.includes('/react/')) return 'react'
+            if (id.includes('/react-dom/')) return 'react'
+            // Group any other third-party modules together.
+            return 'vendor'
+          }
+        }
+      }
+    }
+  }
 })
