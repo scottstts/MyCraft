@@ -35,7 +35,6 @@ import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { GrassBillboardSystem } from '../render/GrassBillboardSystem';
 import { getBlockIdByName } from '../world/blocks/BlockRegistry';
-import waterTexture from '../../assets/textures/water.png';
 import { useUIStore } from '../../state/ui';
 import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
@@ -504,40 +503,15 @@ async function start(canvas: HTMLCanvasElement) {
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
 
-  // Load raw water texture once for both near water and far ocean
-  let waterTex: THREE.Texture | null = null;
+  // Determine anisotropy support for any textures that can benefit (e.g., seabed sand)
   let maxAniso = 0;
   try {
-    waterTex = await new Promise<THREE.Texture>((resolve, reject) => {
-      new THREE.TextureLoader().load(
-        waterTexture,
-        (tex) => resolve(tex),
-        undefined,
-        reject
-      );
-    });
-    waterTex.colorSpace = THREE.SRGBColorSpace;
-    waterTex.magFilter = THREE.NearestFilter;
-    waterTex.minFilter = THREE.LinearMipMapLinearFilter;
-    waterTex.wrapS = THREE.RepeatWrapping;
-    waterTex.wrapT = THREE.RepeatWrapping;
-    waterTex.generateMipmaps = true;
-    // Enable anisotropic filtering if supported
-    try {
-      maxAniso = renderer?.getRenderer().capabilities.getMaxAnisotropy?.() ?? 0;
-      if (maxAniso && maxAniso > 1) {
-        waterTex.anisotropy = Math.min(8, maxAniso);
-      }
-    } catch { void 0; }
-    waterTex.needsUpdate = true;
-  } catch (e) {
-    console.warn('Water texture load failed, far ocean will fallback to color.', e);
-    waterTex = null;
-  }
+    maxAniso = renderer?.getRenderer().capabilities.getMaxAnisotropy?.() ?? 0;
+  } catch { void 0; }
 
   // Water material uses the same shader as far ocean, but uses vUv on block meshes
   waterMaterial = new WaterSurfaceMaterial({
-    map: waterTex,
+    map: null,
     color: 0x1a2744, // Deep navy blue like real ocean
     tileScale: 1.0,
     useWorldUV: true,
@@ -721,7 +695,6 @@ async function start(canvas: HTMLCanvasElement) {
       waterLevel: WATER_LEVEL,
       farDistance: farOceanDistance,
       color: 0x1a2744, // Deep navy blue like real ocean
-      map: waterTex ?? undefined,
       tileScale: 1.0,
       enableSeabed: true,
       seed: world.getSeed(),

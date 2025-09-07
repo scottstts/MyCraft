@@ -12,7 +12,6 @@ import dirtTexture from '../../assets/textures/dirt.png';
 import grassSideTexture from '../../assets/textures/grass_side.png';
 import cobblestoneTexture from '../../assets/textures/cobblestone.png';
 import sandTexture from '../../assets/textures/sand.png';
-import waterTexture from '../../assets/textures/water.png';
 import woodTopTexture from '../../assets/textures/wood_top.png';
 import woodSideTexture from '../../assets/textures/wood_side.png';
 import treeLeavesTexture from '../../assets/textures/tree_leaves.png';
@@ -114,7 +113,7 @@ function createSimpleAtlas(): THREE.Texture {
 async function loadTextureAtlas(): Promise<THREE.Texture> {
   const textureLoader = new THREE.TextureLoader();
   const tileSize = 16;
-  const atlasWidth = 11; // expanded to include wood + leaves
+  const atlasWidth = 11; // expanded to include wood + leaves (water tile slot left empty)
   const atlasHeight = 1; // 1 tile tall
 
   const canvas = document.createElement('canvas');
@@ -132,7 +131,7 @@ async function loadTextureAtlas(): Promise<THREE.Texture> {
     'grass_side': { path: grassSideTexture, position: [2, 0] },
     'cobblestone': { path: cobblestoneTexture, position: [3, 0] },
     'sand': { path: sandTexture, position: [4, 0] },
-    'water': { path: waterTexture, position: [5, 0] },
+    // Slot [5,0] reserved for historical 'water' tile; left transparent as water uses procedural shader
     'wood_top': { path: woodTopTexture, position: [6, 0] },
     'wood_side': { path: woodSideTexture, position: [7, 0] },
     'tree_leaves': { path: treeLeavesTexture, position: [8, 0] },
