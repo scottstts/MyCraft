@@ -503,15 +503,11 @@ export const AudioPanel: React.FC = () => {
               alignItems: 'center',
               gap: '8px'
             }}>
-              <div style={{
-                fontSize: '16px',
-                opacity: 0.8
-              }}>🎵</div>
               <span style={{
                 fontSize: '14px',
                 fontWeight: 600,
                 color: 'rgba(255,255,255,0.9)'
-              }}>Music</span>
+              }}>Music Volume</span>
             </div>
             <span style={{ 
               color: '#ffffff',
@@ -563,15 +559,11 @@ export const AudioPanel: React.FC = () => {
               alignItems: 'center',
               gap: '8px'
             }}>
-              <div style={{
-                fontSize: '16px',
-                opacity: 0.8
-              }}>🔊</div>
               <span style={{
                 fontSize: '14px',
                 fontWeight: 600,
                 color: 'rgba(255,255,255,0.9)'
-              }}>Sound Effects</span>
+              }}>Sound Effects Volume</span>
             </div>
             <span style={{ 
               color: '#ffffff',
