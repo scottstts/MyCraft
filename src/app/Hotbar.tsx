@@ -113,7 +113,7 @@ export function TopRightWidget() {
       alignItems: 'center',
       gap: '8px',
       padding: '8px 12px',
-      background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+      background: 'linear-gradient(90deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
       color: '#f8f9fa',
       border: '1px solid rgba(255,255,255,0.1)',
       borderRadius: '8px',
@@ -123,7 +123,8 @@ export function TopRightWidget() {
       letterSpacing: 0.3,
       pointerEvents: 'none',
       backdropFilter: 'blur(10px)',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.3)'
+      boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+      zIndex: 1001
     }}>
       {/* Pause hint */}
       <span style={{ opacity: 0.8 }}>Press P to pause</span>
@@ -213,7 +214,7 @@ export function PauseMenu() {
       <div style={{ 
         width: 420, 
         padding: 32, 
-        background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))', 
+        background: 'linear-gradient(90deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))', 
         borderRadius: 16, 
         color: '#f8f9fa', 
         boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.4)', 
