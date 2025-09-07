@@ -54,26 +54,63 @@ export class OceanHorizon {
     this.material.setAlpha(0.7)
     this.material.setRefraction(0.18, 0.75, 0.12, 0.035, 0.06)
     this.material.setFresnelAlpha(0.65, 0.9)
+    
+    // Hard-clip the tiny inward overlap band when underwater so only one surface
+    // contributes at the join. We inject a tiny snippet via onBeforeCompile to
+    // keep the change local to OceanHorizon and avoid touching the shared shader.
+    // This removes the dark blue line caused by double-blending underwater.
+    const injectInnerClip = (clipWidth: number) => {
+      this.material.onBeforeCompile = (shader) => {
+        // Add uniform value for the clip width
+        ;(shader.uniforms as Record<string, THREE.IUniform>).uClipInner = { value: clipWidth };
+        // Ensure the uniform is declared in the fragment shader
+        if (!/uniform\s+float\s+uClipInner\s*;/.test(shader.fragmentShader)) {
+          shader.fragmentShader = `uniform float uClipInner;\n` + shader.fragmentShader;
+        }
+        // Inject discard logic right after underwater detection line
+        shader.fragmentShader = shader.fragmentShader.replace(
+          'bool isUnder = (dot(N, V) < 0.0);',
+          `bool isUnder = (dot(N, V) < 0.0);
+          if (uClipInner > 0.0) {
+            bool insideXc = (vWorld.x >= uInnerMinX) && (vWorld.x <= uInnerMaxX);
+            bool insideZc = (vWorld.z >= uInnerMinZ) && (vWorld.z <= uInnerMaxZ);
+            if (insideXc && insideZc) {
+              float dxc = min(vWorld.x - uInnerMinX, uInnerMaxX - vWorld.x);
+              float dzc = min(vWorld.z - uInnerMinZ, uInnerMaxZ - vWorld.z);
+              float edgeDistC = max(0.0, min(dxc, dzc));
+              if (isUnder && edgeDistC < uClipInner) discard;
+            }
+          }`
+        );
+      };
+      this.material.needsUpdate = true;
+    };
 
     const { minX, maxX, minZ, maxZ } = opts.bounds
     const y = opts.waterLevel + 1.0 - 0.001 // align to water surface height, slightly below chunk water to avoid z-fighting
     // Slight overlap into the world to eliminate a sub‑pixel crack between chunk water and far ocean
     const overlap = 0.05
+    // Clip exactly the overlap band when underwater (far ocean only). Use a small
+    // safety factor to fully cover the band regardless of precision.
+    injectInnerClip(overlap * 1.1)
     const far = Math.max(opts.farDistance, 1)
 
     // Build 8 tiles around the center bounds (tic-tac-toe layout minus center)
+    // Important: Only the edge tiles overlap inward with the world bounds to hide the
+    // crack. Corner tiles butt exactly against the edge tiles (no overlap) to avoid
+    // corner double-blend seams between far-ocean tiles themselves.
     const tiles: Array<{ x0:number,x1:number,z0:number,z1:number }> = [
-      // Top row (north)
-      { x0: minX,           x1: maxX,           z0: minZ - far, z1: minZ + overlap }, // top-middle overlaps inward
-      { x0: minX - far,     x1: minX + overlap, z0: minZ - far, z1: minZ + overlap }, // top-left corner overlaps inward
-      { x0: maxX - overlap, x1: maxX + far,     z0: minZ - far, z1: minZ + overlap }, // top-right corner overlaps inward
-      // Middle row (west/east)
-      { x0: minX - far,     x1: minX + overlap, z0: minZ,       z1: maxZ       }, // left-middle overlaps inward
-      { x0: maxX - overlap, x1: maxX + far,     z0: minZ,       z1: maxZ       }, // right-middle overlaps inward
-      // Bottom row (south)
-      { x0: minX,           x1: maxX,           z0: maxZ - overlap, z1: maxZ + far }, // bottom-middle overlaps inward
-      { x0: minX - far,     x1: minX + overlap, z0: maxZ - overlap, z1: maxZ + far }, // bottom-left corner overlaps inward
-      { x0: maxX - overlap, x1: maxX + far,     z0: maxZ - overlap, z1: maxZ + far }, // bottom-right corner overlaps inward
+      // Top row (north) — only the middle tile overlaps inward on Z
+      { x0: minX,       x1: maxX,       z0: minZ - far, z1: minZ + overlap }, // top-middle (overlaps inward on Z)
+      { x0: minX - far, x1: minX,       z0: minZ - far, z1: minZ           }, // top-left (no inward overlap)
+      { x0: maxX,       x1: maxX + far, z0: minZ - far, z1: minZ           }, // top-right (no inward overlap)
+      // Middle row (west/east) — only the edge tiles overlap inward on X
+      { x0: minX - far, x1: minX + overlap, z0: minZ, z1: maxZ }, // left-middle (overlaps inward on X)
+      { x0: maxX - overlap, x1: maxX + far, z0: minZ, z1: maxZ }, // right-middle (overlaps inward on X)
+      // Bottom row (south) — only the middle tile overlaps inward on Z
+      { x0: minX,       x1: maxX,       z0: maxZ - overlap, z1: maxZ + far }, // bottom-middle (overlaps inward on Z)
+      { x0: minX - far, x1: minX,       z0: maxZ,       z1: maxZ + far },   // bottom-left (no inward overlap)
+      { x0: maxX,       x1: maxX + far, z0: maxZ,       z1: maxZ + far },   // bottom-right (no inward overlap)
     ]
 
     for (const t of tiles) {
