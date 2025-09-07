@@ -106,7 +106,7 @@ export const DebugPanel: React.FC = () => {
     try {
       const sfx = (window as Window & { __getSfxVolume?: () => number }).__getSfxVolume?.()
       if (typeof sfx === 'number' && !Number.isNaN(sfx)) setSfxVol(sfx)
-    } catch {}
+    } catch { /* ignore */ }
 
     // Apply initial settings to the engine with a small delay to ensure engine is ready
     const timer = setTimeout(() => {

@@ -12,18 +12,18 @@ export const AudioPanel: React.FC = () => {
   const [trackName, setTrackName] = React.useState('')
   const [volume, setVol] = React.useState(0)
   const [topPx, setTopPx] = React.useState<number>(84)
-  const [widthPx, setWidthPx] = React.useState<number>(240)
+  const [widthPx, setWidthPx] = React.useState<number | undefined>(undefined)
   const [isDraggingProgress, setIsDraggingProgress] = React.useState(false)
   const [isDraggingVolume, setIsDraggingVolume] = React.useState(false)
 
   React.useEffect(() => {
-    try { setPlaying(isPlaying()) } catch {}
+    try { setPlaying(isPlaying()) } catch { /* ignore */ }
     try {
       setElapsed(getCurrentTime())
       setDur(getDuration())
       setTrackName(getCurrentTrackName())
       setVol(getVolume())
-    } catch {}
+    } catch { /* ignore */ }
   }, [])
 
   React.useEffect(() => {
@@ -54,10 +54,21 @@ export const AudioPanel: React.FC = () => {
       if (Number.isFinite(r.bottom)) setTopPx(Math.ceil(r.bottom + 12))
       if (Number.isFinite(r.width) && r.width > 0) setWidthPx(Math.ceil(r.width))
     }
+    
+    // Immediate update
     update()
+    
+    // Also try to update on next frame to catch initial render
+    const raf = requestAnimationFrame(update)
+    
     window.addEventListener('resize', update)
-    const id = window.setInterval(update, 1000)
-    return () => { window.removeEventListener('resize', update); window.clearInterval(id) }
+    const id = window.setInterval(update, 100) // More frequent updates initially
+    
+    return () => { 
+      window.removeEventListener('resize', update)
+      window.clearInterval(id)
+      cancelAnimationFrame(raf)
+    }
   }, [])
 
   // Handle dragging for progress and volume bars
@@ -101,8 +112,9 @@ export const AudioPanel: React.FC = () => {
   // no time labels in the compact widget
 
   if (!gameStarted) return null
-
-  if (!gameStarted) return null
+  
+  // Don't render until we have the width measurement
+  if (widthPx === undefined) return null
 
   return (
     <div ref={panelRef} style={{
