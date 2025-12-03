@@ -4,6 +4,14 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    // Restrict dependency scan to the main app entry to avoid pulling in reference HTML files.
+    entries: ['index.html'],
+    include: ['react', 'react-dom']
+  },
+  resolve: {
+    dedupe: ['react', 'react-dom']
+  },
   test: {
     globals: true,
     environment: 'node',

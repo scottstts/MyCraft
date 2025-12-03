@@ -4,13 +4,14 @@
  */
 
 import * as THREE from 'three';
+import type { WebGPURenderer } from 'three/webgpu';
 
 export class Environment {
   private envMap: THREE.CubeTexture | null = null;
   private pmremGenerator: THREE.PMREMGenerator | null = null;
 
-  constructor(renderer: THREE.WebGLRenderer) {
-    this.pmremGenerator = new THREE.PMREMGenerator(renderer);
+  constructor(renderer: THREE.WebGLRenderer | WebGPURenderer) {
+    this.pmremGenerator = new THREE.PMREMGenerator(renderer as unknown as THREE.WebGLRenderer);
   }
 
   /**

@@ -469,6 +469,8 @@ async function start(canvas: HTMLCanvasElement) {
   
   // Initialize renderer
   renderer = new Renderer(canvas);
+  const baseRenderer = renderer.getRenderer();
+  const isWebGPU = (baseRenderer as { isWebGPURenderer?: boolean }).isWebGPURenderer === true;
   
   // Initialize scene and camera
   scene = createScene();
@@ -479,13 +481,13 @@ async function start(canvas: HTMLCanvasElement) {
   world = new World();
   
   // Create simple environment mapping (temporarily simplified to avoid WebGL errors)
-  environment = new Environment(renderer.getRenderer());
+  environment = new Environment(baseRenderer);
   let envMap: THREE.CubeTexture | null = null;
   try {
     envMap = environment.createEnvironmentMap();
     scene.environment = envMap;
   } catch (error) {
-    console.warn('Environment mapping disabled due to WebGL compatibility:', error);
+    console.warn('Environment mapping disabled due to renderer compatibility:', error);
     envMap = null;
   }
   
@@ -505,9 +507,12 @@ async function start(canvas: HTMLCanvasElement) {
 
   // Determine anisotropy support for any textures that can benefit (e.g., seabed sand)
   let maxAniso = 0;
-  try {
-    maxAniso = renderer?.getRenderer().capabilities.getMaxAnisotropy?.() ?? 0;
-  } catch { void 0; }
+  if ('capabilities' in baseRenderer) {
+    const caps = (baseRenderer as THREE.WebGLRenderer).capabilities;
+    if (caps?.getMaxAnisotropy) {
+      maxAniso = caps.getMaxAnisotropy() ?? 0;
+    }
+  }
 
   // Water material uses the same shader as far ocean, but uses vUv on block meshes
   waterMaterial = new WaterSurfaceMaterial({
@@ -537,28 +542,24 @@ async function start(canvas: HTMLCanvasElement) {
 
   // Initialize post-processing pipeline
   const canvasSize = renderer.getCanvasSize();
-  if (USE_EFFECT_COMPOSER) {
-    composer = new Composer(renderer.getRenderer(), scene, camera, canvasSize.width, canvasSize.height);
-    // Configure composer defaults
-    // console.log('[Engine] Configuring composer post-processing settings');
+  if (USE_EFFECT_COMPOSER && !isWebGPU) {
+    const glRenderer = baseRenderer as THREE.WebGLRenderer;
+    composer = new Composer(glRenderer, scene, camera, canvasSize.width, canvasSize.height);
     composer.setSSAO(true, 0.3, 0.2);
-    // Align defaults with DebugPanel: strength 0.30, threshold 0.05
     composer.setBloom(true, 0.30, 0.05);
     composer.setLens(true, 0.6);
     composer.setFog(true, 0.002, dynamicFogDistance);
-    // Tell SSAO where the water plane is so we can skip underwater AO
     composer.setSSAOWaterLevel(WATER_LEVEL + 1.0);
-    // Default volumetrics off
     composer.setVolumetrics(false, 0.1, 32);
-  } else {
+  } else if (!isWebGPU) {
+    const glRenderer = baseRenderer as THREE.WebGLRenderer;
     postProcessor = new SimplePostProcessor(
-      renderer.getRenderer(),
+      glRenderer,
       scene,
       camera,
       canvasSize.width,
       canvasSize.height
     );
-    // console.log('[Engine] Configuring post-processing settings');
     postProcessor.updateSettings({
       ssaoEnabled: true,
       ssaoIntensity: 0.3,
@@ -573,15 +574,17 @@ async function start(canvas: HTMLCanvasElement) {
       fogEnabled: true,
       fogBaseDensity: 0.002,
       fogMaxDistance: dynamicFogDistance,
-      // Default volumetrics off
       volumetricsEnabled: false,
       volumetricsIntensity: 0.1,
       volumetricsSteps: 32,
     });
+  } else {
+    composer = null;
+    postProcessor = null;
   }
 
   // Initialize shadow system (temporarily disabled to avoid WebGL feedback loops)
-  shadowSystem = new ShadowSystem(renderer.getRenderer(), scene);
+  shadowSystem = isWebGPU ? null : new ShadowSystem(baseRenderer as THREE.WebGLRenderer, scene);
 
   // Initialize sun controller (day/night cycle)
   sunController = new SunController(scene, { cycleSeconds: 180, initialTime: 0.0 });
@@ -616,7 +619,7 @@ async function start(canvas: HTMLCanvasElement) {
   
   // Configure shadows for strong, crisp sun shadows
   // console.log('[Engine] Configuring shadow settings');
-  shadowSystem.updateSettings({
+  shadowSystem?.updateSettings({
     enabled: true, // Enable shadows by default
     resolution: 1024,
     cascades: 3,
@@ -945,7 +948,8 @@ function updatePostProcessingSettings(settings: PostProcessorSettings) {
     postProcessor.updateSettings(settings);
     // console.log('[Engine] Applied post-processing settings successfully');
   } else {
-    console.error('[Engine] Post-processor not available!');
+    // Engine not ready or running in a renderer path without post FX (e.g., WebGPU fallback).
+    return;
   }
 }
 
@@ -956,7 +960,8 @@ function updateShadowSettings(settings: ShadowSettings) {
     shadowSystem.updateSettings(settings);
     // console.log('[Engine] Applied shadow settings successfully');
   } else {
-    console.error('[Engine] Shadow system not available!');
+    // Shadows disabled/not initialized (e.g., WebGPU path). No-op.
+    return;
   }
 }
 

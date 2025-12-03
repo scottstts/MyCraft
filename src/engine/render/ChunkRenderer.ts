@@ -35,66 +35,108 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
   handleChunkMesh(response: ChunkMeshResponse): void {
     const { key, payload } = response;
     const { opaque, transparent } = payload;
-    // Remove existing mesh if it exists
-    this.removeChunkMesh(key);
-    const group = new THREE.Group();
 
-    const makeMesh = (buf: { positions: Float32Array; normals: Float32Array; uvs: Float32Array; colors: Float32Array; indices: Uint16Array | Uint32Array }, mat: THREE.Material, isTransparent: boolean): THREE.Mesh | null => {
+    // Reuse group/meshes if present to keep GPU buffers alive (better for WebGPU).
+    let group = this.chunkGroups.get(key);
+    if (!group) {
+      group = new THREE.Group();
+      this.chunkGroups.set(key, group);
+      this.scene.add(group);
+    }
+
+    // Extract existing meshes (by material) before clearing.
+    const existingOpaque = group.children.find(
+      (c): c is THREE.Mesh => c instanceof THREE.Mesh && c.material === this.materialOpaque
+    );
+    const existingTransparent = group.children.find(
+      (c): c is THREE.Mesh => c instanceof THREE.Mesh && c.material === this.materialTransparent
+    );
+
+    // Clear children but keep group and meshes referenced separately.
+    group.clear();
+
+    const upsertMesh = (
+      buf: { positions: Float32Array; normals: Float32Array; uvs: Float32Array; colors: Float32Array; indices: Uint16Array | Uint32Array },
+      mesh: THREE.Mesh | null | undefined,
+      mat: THREE.Material,
+      isTransparent: boolean
+    ): THREE.Mesh | null => {
       if (!buf.positions.length) return null;
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(buf.positions, 3));
-      geometry.setAttribute('normal', new THREE.BufferAttribute(buf.normals, 3));
-      geometry.setAttribute('uv', new THREE.BufferAttribute(buf.uvs, 2));
-      if (buf.colors && buf.colors.length) {
-        geometry.setAttribute('color', new THREE.BufferAttribute(buf.colors, 3));
+      let target = mesh ?? null;
+      if (!target) {
+        const geometry = new THREE.BufferGeometry();
+        target = new THREE.Mesh(geometry, mat);
       }
-      geometry.setIndex(new THREE.BufferAttribute(buf.indices, 1));
-      const mesh = new THREE.Mesh(geometry, mat);
-      mesh.castShadow = !isTransparent;
-      mesh.receiveShadow = !isTransparent;
-      if (isTransparent) mesh.renderOrder = 2; // draw after opaque
-      return mesh;
+      const geometry = target.geometry as THREE.BufferGeometry;
+
+      const ensureAttr = (name: string, itemSize: number, array: ArrayLike<number>) => {
+        const existing = geometry.getAttribute(name) as THREE.BufferAttribute | undefined;
+        if (existing && existing.array.length === array.length) {
+          existing.set(array as ArrayLike<number>, 0);
+          existing.needsUpdate = true;
+        } else {
+          geometry.setAttribute(name, new THREE.BufferAttribute(array as Float32Array | Uint16Array | Uint32Array, itemSize));
+        }
+      };
+
+      ensureAttr('position', 3, buf.positions);
+      ensureAttr('normal', 3, buf.normals);
+      ensureAttr('uv', 2, buf.uvs);
+      if (buf.colors && buf.colors.length) {
+        ensureAttr('color', 3, buf.colors);
+      } else if (geometry.getAttribute('color')) {
+        geometry.deleteAttribute('color');
+      }
+
+      const indexAttr = geometry.getIndex();
+      if (indexAttr && indexAttr.array.length === buf.indices.length) {
+        (indexAttr as THREE.BufferAttribute).set(buf.indices, 0);
+        (indexAttr as THREE.BufferAttribute).needsUpdate = true;
+      } else {
+        geometry.setIndex(new THREE.BufferAttribute(buf.indices, 1));
+      }
+
+      target.castShadow = !isTransparent;
+      target.receiveShadow = !isTransparent;
+      if (isTransparent) target.renderOrder = 2; // draw after opaque
+      return target;
     };
 
-    const opaqueMesh = makeMesh(opaque, this.materialOpaque, false);
-    const transparentMesh = makeMesh(transparent, this.materialTransparent, true);
-    
+    // Prefer reusing existing meshes to keep GPU buffers resident.
+    const opaqueMesh = upsertMesh(opaque, existingOpaque, this.materialOpaque, false);
+    const transparentMesh = upsertMesh(transparent, existingTransparent, this.materialTransparent, true);
+
     if (!opaqueMesh && !transparentMesh) {
-      // nothing to add
+      // Nothing to render for this chunk.
+      this.removeChunkMesh(key);
       return;
     }
-    
+
     // Parse chunk coordinates from key for positioning
     const [cxStr, cyStr, czStr] = key.split(',');
     const cx = parseInt(cxStr, 10);
     const cy = parseInt(cyStr, 10);
     const cz = parseInt(czStr, 10);
-    
-    // Position group at chunk world coordinates (meshes stay local at 0,0,0)
-    // Each chunk is CHUNK_SIZE units in size
+
     group.position.set(
       cx * CHUNK_SIZE.x,
       cy * CHUNK_SIZE.y,
       cz * CHUNK_SIZE.z
     );
-    
+
     if (opaqueMesh) { group.add(opaqueMesh); }
     if (transparentMesh) { group.add(transparentMesh); }
-    // Ensure local positions are zero within the group
-    if (opaqueMesh) opaqueMesh.position.set(0,0,0);
-    if (transparentMesh) transparentMesh.position.set(0,0,0);
-    
-    // Add to scene
-    this.scene.add(group);
-    
-    // Store references
-    // Store primary mesh reference (prefer opaque)
-    this.chunkMeshes.set(key, opaqueMesh ?? transparentMesh!);
-    this.chunkGroups.set(key, group);
-    
+    if (opaqueMesh) opaqueMesh.position.set(0, 0, 0);
+    if (transparentMesh) transparentMesh.position.set(0, 0, 0);
+
+    // Store references (prefer opaque mesh)
+    if (opaqueMesh) {
+      this.chunkMeshes.set(key, opaqueMesh);
+    } else if (transparentMesh) {
+      this.chunkMeshes.set(key, transparentMesh);
+    }
+
     this.emit('MESH_CREATED', { key, mesh: (opaqueMesh ?? transparentMesh)! });
-    
-    // console.log(`[ChunkRenderer] Created mesh for chunk ${key} with ${positions.length / 3} vertices`);
   }
   
   /**
