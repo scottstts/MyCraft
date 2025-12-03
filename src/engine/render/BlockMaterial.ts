@@ -135,8 +135,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           // Stable world-space bias based on world-units-per-texel for this cascade
           float worldTexel = shadowCascadeSize[ci] / max(1.0, shadowResolution);
           float biasWorld = biasNorm * worldTexel;
-          // Apply world-space offsets: push along normal (slope) and towards light (directional)
-          vec3 receiverPos = worldPos - sunDir * biasWorld;
+          
+          // Apply slope-scaled bias: surfaces facing away from light need more bias
+          float slopeFactor = 1.0 - max(dot(normal, sunDir), 0.0);
+          float slopeBias = biasWorld * (1.0 + slopeFactor * 2.0);
+          
+          // Push receiver position towards light to avoid self-shadowing
+          vec3 receiverPos = worldPos + sunDir * slopeBias + normal * (biasWorld * 0.5);
           vec4 sc = getShadowCoord(ci, receiverPos);
           sc.xyz /= sc.w;
           sc = sc * 0.5 + 0.5;
@@ -146,7 +151,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           float uvPerWorld = 1.0 / max(shadowCascadeSize[ci], 1e-3);
           float base = shadowSoftness; // interpret softness as world units
           float texelSize = max(base * uvPerWorld, 1.0 / shadowResolution);
-          float receiver = sc.z; // bias applied in world-space above
+          
+          // Add small constant bias to receiver depth to prevent z-fighting
+          float depthBias = 0.001 + 0.002 * slopeFactor;
+          float receiver = sc.z - depthBias;
 
           // Poisson disk
           poisson[0] = vec2(-0.613392, 0.617481);
@@ -170,17 +178,19 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           for (int i = 0; i < POISSON_COUNT; i++) {
             vec2 o = rot * poisson[i] * searchRadius;
             float d = sampleShadowMap(ci, sc.xy + o);
-            if (d < receiver) { blockerSum += d; blockerCount += 1.0; }
+            // Blocker is anything closer to the light than receiver
+            if (d < receiver - depthBias) { blockerSum += d; blockerCount += 1.0; }
           }
           float avgBlocker = blockerCount > 0.0 ? (blockerSum / blockerCount) : receiver;
-          float penumbra = blockerCount > 0.0 ? clamp((receiver - avgBlocker) / max(avgBlocker, 1e-3), 0.0, 1.0) : 0.0;
+          float penumbra = blockerCount > 0.0 ? clamp((receiver - avgBlocker) / max(avgBlocker, 0.01), 0.0, 1.0) : 0.0;
 
           float radius = texelSize * (2.5 + 12.0 * penumbra);
           float shadow = 0.0;
           for (int i = 0; i < POISSON_COUNT; i++) {
             vec2 o = rot * poisson[i] * radius;
             float sd = sampleShadowMap(ci, sc.xy + o);
-            shadow += receiver <= sd ? 1.0 : 0.0;
+            // Fragment is lit if its depth is less than or equal to shadow map depth
+            shadow += (receiver <= sd + depthBias) ? 1.0 : 0.0;
           }
           shadow /= float(POISSON_COUNT);
           return shadow;

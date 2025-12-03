@@ -66,7 +66,7 @@ export class SSAOPass extends ShaderPass {
           vec3 pw = reconstructWorldPos(current);
           if (pw.y < waterLevel - 0.1) return 1.0;
           
-          // Mild flatness gating to avoid AO on perfectly flat areas only
+          // Compute local depth gradients to detect flat surfaces
           float px = 1.5 / min(resolution.x, resolution.y);
           float d1 = readDepth(clamp(uv + vec2(px, 0.0), vec2(0.0), vec2(1.0)));
           float d2 = readDepth(clamp(uv + vec2(-px, 0.0), vec2(0.0), vec2(1.0)));
@@ -77,6 +77,26 @@ export class SSAOPass extends ShaderPass {
           float dmin = min(min(d1,d2), min(d3,d4));
           float dmax = max(max(d1,d2), max(d3,d4));
           float drange = dmax - dmin;
+          
+          // Compute surface normal from depth to detect when looking down at flat surfaces
+          float dzdx = (d1 - d2) / (2.0 * px);
+          float dzdy = (d3 - d4) / (2.0 * px);
+          // Estimate view-space normal Z component - flat horizontal surface seen from above has high Z
+          float normalZ = 1.0 / sqrt(1.0 + dzdx*dzdx + dzdy*dzdy);
+          // When looking down at a flat surface, normalZ approaches 1.0
+          // Reduce SSAO intensity for such surfaces to prevent false darkening
+          float flatSurfaceFactor = smoothstep(0.95, 0.99, normalZ);
+          
+          // Also detect if we're looking mostly downward based on gradient magnitudes
+          // High gradient magnitude relative to depth suggests we're looking at a steep angle
+          float gradMag = sqrt(dzdx*dzdx + dzdy*dzdy);
+          float depthNorm = current / cameraFar;
+          // If gradient is very small relative to depth, surface is likely flat and viewed from above
+          float lookingDownFactor = smoothstep(0.1, 0.02, gradMag / max(depthNorm * 100.0, 1.0));
+          
+          // Combine factors to reduce SSAO when looking down at flat terrain
+          float flatReduction = max(flatSurfaceFactor, lookingDownFactor * 0.7);
+          
           float eps = mix(0.01, 0.25, clamp(current / cameraFar, 0.0, 1.0));
           float edgeMask = smoothstep(eps * 0.25, eps, drange);
 
@@ -94,6 +114,10 @@ export class SSAOPass extends ShaderPass {
           float depthScale = clamp(current / cameraFar, 0.0, 1.0);
           float maxDelta = mix(2.0, 20.0, depthScale);
           float thickness = mix(0.01, 0.15, depthScale);
+          
+          // Increase thickness tolerance when looking at flat surfaces to reduce false occlusion
+          thickness *= (1.0 + flatReduction * 3.0);
+          
           for (int i = 0; i < 16; i++){
             float t = (float(i) + 0.5) / 16.0;
             float r = mix(0.25, 1.0, t);
@@ -114,6 +138,10 @@ export class SSAOPass extends ShaderPass {
           // Normalize by number of valid samples to avoid artifacts when
           // background samples dominate (common near the horizon over water).
           occlusion = (occlusion / max(1.0, valid)) * ssaoIntensity * (0.75 + 0.25 * edgeMask);
+          
+          // Apply flat surface reduction to prevent darkening when looking down
+          occlusion *= (1.0 - flatReduction * 0.8);
+          
           // Also fade AO as we approach the far plane (hidden by fog anyway)
           // Fade earlier so far-field planes (ocean/sea-bed) never accumulate AO
           float farFade = smoothstep(cameraFar * 0.30, cameraFar * 0.65, current);

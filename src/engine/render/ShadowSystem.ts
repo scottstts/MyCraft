@@ -198,10 +198,13 @@ export class ShadowSystem {
       const centerWorld = new THREE.Vector3().copy(cam.position);
 
       // Build light view from sun direction, targeting the stable center
-      const lightPos = centerWorld.clone().sub(lightDir.clone().multiplyScalar(200));
+      // Increase distance from center to ensure tall objects (trees) are captured
+      const lightDistance = Math.max(300, this.settings.shadowDistance * 1.5);
+      const lightPos = centerWorld.clone().sub(lightDir.clone().multiplyScalar(lightDistance));
       const lightView = new THREE.Matrix4().lookAt(lightPos, centerWorld, up);
 
       // Transform corners to light space and compute min/max for Z bounds
+      // Also include points above the camera to capture tree canopies
       const min = new THREE.Vector3(+Infinity, +Infinity, +Infinity);
       const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
       for (const c of corners) {
@@ -209,6 +212,13 @@ export class ShadowSystem {
         min.min(ls);
         max.max(ls);
       }
+      
+      // Extend bounds upward to capture shadow casters above the view frustum (trees, etc.)
+      // Add vertical padding of ~50 units (typical tree height) above camera
+      const aboveCamera = centerWorld.clone().add(new THREE.Vector3(0, 50, 0));
+      const aboveCameraLS = aboveCamera.clone().applyMatrix4(lightView);
+      min.min(aboveCameraLS);
+      max.max(aboveCameraLS);
 
       // Compute orthographic XY region
       let half: number;
@@ -269,9 +279,9 @@ export class ShadowSystem {
       // For stable path, bounds already set symmetric; legacy path set above
 
       // Depth range in light view: objects in front have negative z
-      // Use positive near/far distances; include a small margin only on far
-      const zNear = Math.max(0.1, -max.z);
-      const zFar = Math.max(zNear + 1.0, -min.z + 25.0);
+      // Use positive near/far distances; include generous margins to capture all shadow casters
+      const zNear = Math.max(0.1, -max.z - 50.0); // Extend near plane back to catch tall objects
+      const zFar = Math.max(zNear + 10.0, -min.z + 100.0); // Extend far plane for ground coverage
       camera.near = zNear;
       camera.far = zFar;
       camera.updateProjectionMatrix();
