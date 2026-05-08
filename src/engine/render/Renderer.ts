@@ -7,6 +7,16 @@
 import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 
+const MAX_RENDER_PIXELS = 1_650_000;
+const MAX_PIXEL_RATIO = 1.5;
+const MIN_PIXEL_RATIO = 1;
+
+type CanvasSyncState = {
+  width: number;
+  height: number;
+  dpr: number;
+};
+
 // Renderer wrapper that prefers WebGPU when available, falls back to WebGL.
 export class Renderer {
   private renderer: THREE.WebGLRenderer | WebGPURenderer;
@@ -69,15 +79,21 @@ export class Renderer {
     }
   }
 
-  private syncCanvasSize(canvas: HTMLCanvasElement) {
-    // Cap DPR to avoid massive render targets on 4K+ screens.
-    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-    const width = Math.max(1, Math.floor(canvas.clientWidth * dpr));
-    const height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
-    if (canvas.width !== width) canvas.width = width;
-    if (canvas.height !== height) canvas.height = height;
+  private syncCanvasSize(canvas: HTMLCanvasElement): CanvasSyncState {
+    const width = Math.max(1, canvas.clientWidth || window.innerWidth || 1);
+    const height = Math.max(1, canvas.clientHeight || window.innerHeight || 1);
+    const cssPixels = Math.max(1, width * height);
+    const budgetRatio = Math.sqrt(MAX_RENDER_PIXELS / cssPixels);
+    const deviceRatio = window.devicePixelRatio || 1;
+    const dpr = Math.max(
+      MIN_PIXEL_RATIO,
+      Math.min(deviceRatio, MAX_PIXEL_RATIO, budgetRatio)
+    );
+
     this.renderer.setPixelRatio(dpr);
-    this.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+    this.renderer.setSize(width, height, false);
+
+    return { width, height, dpr };
   }
 
   setSize(width: number, height: number): void {
@@ -90,9 +106,13 @@ export class Renderer {
     return { width: size.x, height: size.y };
   }
 
-  onResize(): void {
+  getPixelRatio(): number {
+    return this.renderer.getPixelRatio();
+  }
+
+  onResize(): CanvasSyncState {
     const canvas = this.renderer.domElement;
-    this.syncCanvasSize(canvas);
+    return this.syncCanvasSize(canvas);
   }
 
   render(scene: THREE.Scene, camera: THREE.Camera): void {

@@ -30,16 +30,18 @@ export class Composer {
     this.renderer = renderer
     this.scene = scene
 
+    const effective = this.getEffectiveSize(width, height)
+
     // Separate depth target to avoid feedback loops
     // Use higher-precision depth to reduce banding in fog: 24-bit depth + 8-bit stencil
-    this.depthTarget = new THREE.WebGLRenderTarget(width, height, {
+    this.depthTarget = new THREE.WebGLRenderTarget(effective.width, effective.height, {
       minFilter: THREE.NearestFilter,
       magFilter: THREE.NearestFilter,
       format: THREE.RGBAFormat,
       depthBuffer: true,
       stencilBuffer: true,
     })
-    const depthTex = new THREE.DepthTexture(width, height, THREE.UnsignedInt248Type)
+    const depthTex = new THREE.DepthTexture(effective.width, effective.height, THREE.UnsignedInt248Type)
     depthTex.format = THREE.DepthStencilFormat
     this.depthTarget.depthTexture = depthTex
 
@@ -48,12 +50,12 @@ export class Composer {
 
     this.ssao = new SSAOPass()
     this.ssao.setDepthTexture(this.depthTarget.depthTexture)
-    this.ssao.setSize(width, height)
+    this.ssao.setSize(effective.width, effective.height)
     this.composer.addPass(this.ssao)
 
     this.vol = new VolumetricLightingPass()
     this.vol.setDepthTexture(this.depthTarget.depthTexture)
-    this.vol.setSize(width, height)
+    this.vol.setSize(effective.width, effective.height)
     this.composer.addPass(this.vol)
 
     this.bloom = new BloomWrapperPass(width, height)
@@ -62,7 +64,7 @@ export class Composer {
     // Lens flare (additive, before fog)
     this.lens = new LensFlarePass()
     this.lens.setDepthTexture(this.depthTarget.depthTexture)
-    this.lens.setSize(width, height)
+    this.lens.setSize(effective.width, effective.height)
     this.composer.addPass(this.lens)
 
     this.fog = new FogPass()
@@ -70,19 +72,40 @@ export class Composer {
     this.composer.addPass(this.fog)
   }
 
+  private getEffectiveSize(width: number, height: number) {
+    const pixelRatio = this.renderer.getPixelRatio()
+    return {
+      width: Math.max(1, Math.floor(width * pixelRatio)),
+      height: Math.max(1, Math.floor(height * pixelRatio)),
+    }
+  }
+
+  setPixelRatio(pixelRatio: number) {
+    this.composer.setPixelRatio(pixelRatio)
+    const size = this.renderer.getSize(new THREE.Vector2())
+    const effective = this.getEffectiveSize(size.x, size.y)
+    this.depthTarget.setSize(effective.width, effective.height)
+    if (this.depthTarget.depthTexture) {
+      this.depthTarget.depthTexture.image.width = effective.width
+      this.depthTarget.depthTexture.image.height = effective.height
+      this.depthTarget.depthTexture.needsUpdate = true
+    }
+  }
+
   setSize(w: number, h: number) {
-    this.depthTarget.setSize(w, h)
+    const effective = this.getEffectiveSize(w, h)
+    this.depthTarget.setSize(effective.width, effective.height)
     // Ensure attached depth texture tracks the new size
     if (this.depthTarget.depthTexture) {
-      this.depthTarget.depthTexture.image.width = w
-      this.depthTarget.depthTexture.image.height = h
+      this.depthTarget.depthTexture.image.width = effective.width
+      this.depthTarget.depthTexture.image.height = effective.height
       this.depthTarget.depthTexture.needsUpdate = true
     }
     this.composer.setSize(w, h)
-    this.ssao.setSize(w, h)
-    this.vol.setSize(w, h)
-    this.bloom.setSize(w, h)
-    this.lens.setSize(w, h)
+    this.ssao.setSize(effective.width, effective.height)
+    this.vol.setSize(effective.width, effective.height)
+    this.bloom.setSize(effective.width, effective.height)
+    this.lens.setSize(effective.width, effective.height)
   }
   update(camera: THREE.PerspectiveCamera, sunDirWorld: THREE.Vector3, sunColor?: THREE.Color) {
     // Render depth prepass into separate target to avoid feedback

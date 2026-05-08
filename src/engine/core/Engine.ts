@@ -797,15 +797,16 @@ async function start(canvas: HTMLCanvasElement) {
   // Handle window resize
   const handleResize = () => {
     if (renderer && camera && canvas) {
-      renderer.onResize();
-      camera.aspect = canvas.clientWidth / canvas.clientHeight;
+      const size = renderer.onResize();
+      camera.aspect = size.width / size.height;
       camera.updateProjectionMatrix();
       
       // Update post-processor size
       if (composer) {
-        composer.setSize(canvas.clientWidth, canvas.clientHeight);
+        composer.setPixelRatio(size.dpr);
+        composer.setSize(size.width, size.height);
       } else if (postProcessor) {
-        postProcessor.setSize(canvas.clientWidth, canvas.clientHeight);
+        postProcessor.setSize(size.width, size.height);
       }
     }
   };
