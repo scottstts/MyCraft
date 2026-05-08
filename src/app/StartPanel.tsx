@@ -278,7 +278,7 @@ export function StartPanel() {
       <div style={{
         position: 'absolute',
         inset: 0,
-        background: 'linear-gradient(135deg, rgba(26,31,46,0.85) 0%, rgba(15,20,25,0.9) 100%)',
+        background: 'rgba(8, 13, 18, 0.76)',
         backdropFilter: 'blur(2px)'
       }} />
       <div style={{ 
@@ -287,9 +287,9 @@ export function StartPanel() {
         margin: '0 16px',
         padding: 'clamp(20px, 5vw, 32px)', 
         borderRadius: 16, 
-        background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))', 
-        border: '1px solid rgba(255,255,255,0.08)', 
-        boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.4)',
+        background: 'rgba(15, 23, 32, 0.94)', 
+        border: '1px solid rgba(148,163,184,0.16)', 
+        boxShadow: '0 24px 60px rgba(0,0,0,0.48)',
         backdropFilter: 'blur(20px)',
         position: 'relative',
         zIndex: 1,
@@ -308,11 +308,8 @@ export function StartPanel() {
           <div style={{ 
             fontSize: 'clamp(24px, 6vw, 28px)', 
             fontWeight: 800, 
-            letterSpacing: -0.5,
-            background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text'
+            letterSpacing: 0,
+            color: '#f8fafc'
           }}>
             MyCraft
           </div>
@@ -375,8 +372,8 @@ export function StartPanel() {
                 minWidth: 'clamp(240px, 70vw, 320px)',
                 maxWidth: 'min(90vw, 320px)',
                 padding: 'clamp(12px, 3vw, 16px)',
-                background: 'linear-gradient(145deg, rgba(26,31,46,0.98), rgba(15,20,25,0.98))',
-                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(12, 18, 26, 0.98)',
+                border: '1px solid rgba(148,163,184,0.18)',
                 borderRadius: 'clamp(8px, 2vw, 12px)',
                 boxShadow: '0 12px 32px rgba(0,0,0,0.6), 0 4px 16px rgba(0,0,0,0.4)',
                 backdropFilter: 'blur(20px)',
@@ -412,7 +409,7 @@ export function StartPanel() {
                       <kbd style={{
                         width: '100%',
                         height: '100%',
-                        background: 'linear-gradient(145deg, #4b5563, #374151)',
+                        background: '#1f2937',
                         color: '#f3f4f6',
                         borderRadius: 'clamp(4px, 1vw, 6px)',
                         fontSize: 'clamp(10px, 2.2vw, 12px)',
@@ -431,7 +428,7 @@ export function StartPanel() {
                       <kbd style={{
                         width: '100%',
                         height: '100%',
-                        background: 'linear-gradient(145deg, #4b5563, #374151)',
+                        background: '#1f2937',
                         color: '#f3f4f6',
                         borderRadius: 'clamp(4px, 1vw, 6px)',
                         fontSize: 'clamp(10px, 2.2vw, 12px)',
@@ -448,7 +445,7 @@ export function StartPanel() {
                       <kbd style={{
                         width: '100%',
                         height: '100%',
-                        background: 'linear-gradient(145deg, #4b5563, #374151)',
+                        background: '#1f2937',
                         color: '#f3f4f6',
                         borderRadius: 'clamp(4px, 1vw, 6px)',
                         fontSize: 'clamp(10px, 2.2vw, 12px)',
@@ -465,7 +462,7 @@ export function StartPanel() {
                       <kbd style={{
                         width: '100%',
                         height: '100%',
-                        background: 'linear-gradient(145deg, #4b5563, #374151)',
+                        background: '#1f2937',
                         color: '#f3f4f6',
                         borderRadius: 'clamp(4px, 1vw, 6px)',
                         fontSize: 'clamp(10px, 2.2vw, 12px)',
@@ -484,7 +481,7 @@ export function StartPanel() {
                     <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Sprint</span>
                     <kbd style={{
                       padding: '0 clamp(16px, 4vw, 20px)',
-                      background: 'linear-gradient(145deg, #4b5563, #374151)',
+                      background: '#1f2937',
                       color: '#f3f4f6',
                       borderRadius: 'clamp(4px, 1vw, 6px)',
                       fontSize: 'clamp(10px, 2.2vw, 12px)',
@@ -503,7 +500,7 @@ export function StartPanel() {
                     <span style={{ fontSize: 'clamp(12px, 2.8vw, 13px)', color: '#cbd5e1' }}>Jump / Surface</span>
                     <kbd style={{
                       padding: '0 clamp(28px, 7vw, 36px)',
-                      background: 'linear-gradient(145deg, #4b5563, #374151)',
+                      background: '#1f2937',
                       color: '#f3f4f6',
                       borderRadius: 'clamp(4px, 1vw, 6px)',
                       fontSize: 'clamp(10px, 2.2vw, 12px)',
@@ -525,7 +522,7 @@ export function StartPanel() {
                       position: 'relative',
                       width: 'clamp(50px, 12vw, 60px)',
                       height: 'clamp(35px, 8vw, 42px)',
-                      background: 'linear-gradient(145deg, #52525b, #3f3f46)',
+                      background: '#2a3442',
                       borderRadius: 'clamp(15px, 4vw, 18px) clamp(15px, 4vw, 18px) clamp(8px, 2vw, 10px) clamp(8px, 2vw, 10px)',
                       border: '1.5px solid rgba(255,255,255,0.2)',
                       boxShadow: '0 3px 12px rgba(0,0,0,0.5), inset 0 1px 3px rgba(255,255,255,0.15)',
@@ -541,10 +538,10 @@ export function StartPanel() {
                         top: '15%',
                         width: '35%',
                         height: '50%',
-                        background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+                        background: '#2dd4bf',
                         borderRadius: 'clamp(6px, 1.5vw, 8px) clamp(6px, 1.5vw, 8px) clamp(2px, 0.5vw, 3px) clamp(2px, 0.5vw, 3px)',
-                        border: '2px solid rgba(79,172,254,0.6)',
-                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 0 8px rgba(79,172,254,0.4)'
+                        border: '2px solid rgba(94,234,212,0.7)',
+                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.24)'
                       }} />
                       {/* Right mouse button - normal */}
                       <div style={{
@@ -553,7 +550,7 @@ export function StartPanel() {
                         top: '15%',
                         width: '35%',
                         height: '50%',
-                        background: 'linear-gradient(145deg, #6b7280, #52525b)',
+                        background: '#3d4654',
                         borderRadius: 'clamp(6px, 1.5vw, 8px) clamp(6px, 1.5vw, 8px) clamp(2px, 0.5vw, 3px) clamp(2px, 0.5vw, 3px)',
                         border: '1px solid rgba(255,255,255,0.15)',
                         boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(255,255,255,0.1)'
@@ -565,7 +562,7 @@ export function StartPanel() {
                         top: '15%',
                         width: '12%',
                         height: '35%',
-                        background: 'linear-gradient(145deg, #71717a, #52525b)',
+                        background: '#576070',
                         borderRadius: 'clamp(1px, 0.3vw, 2px)',
                         transform: 'translateX(-50%)',
                         border: '1px solid rgba(255,255,255,0.1)',
@@ -579,7 +576,7 @@ export function StartPanel() {
                       position: 'relative',
                       width: 'clamp(50px, 12vw, 60px)',
                       height: 'clamp(35px, 8vw, 42px)',
-                      background: 'linear-gradient(145deg, #52525b, #3f3f46)',
+                      background: '#2a3442',
                       borderRadius: 'clamp(15px, 4vw, 18px) clamp(15px, 4vw, 18px) clamp(8px, 2vw, 10px) clamp(8px, 2vw, 10px)',
                       border: '1.5px solid rgba(255,255,255,0.2)',
                       boxShadow: '0 3px 12px rgba(0,0,0,0.5), inset 0 1px 3px rgba(255,255,255,0.15)',
@@ -595,7 +592,7 @@ export function StartPanel() {
                         top: '15%',
                         width: '35%',
                         height: '50%',
-                        background: 'linear-gradient(145deg, #6b7280, #52525b)',
+                        background: '#3d4654',
                         borderRadius: 'clamp(6px, 1.5vw, 8px) clamp(6px, 1.5vw, 8px) clamp(2px, 0.5vw, 3px) clamp(2px, 0.5vw, 3px)',
                         border: '1px solid rgba(255,255,255,0.15)',
                         boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(255,255,255,0.1)'
@@ -607,10 +604,10 @@ export function StartPanel() {
                         top: '15%',
                         width: '35%',
                         height: '50%',
-                        background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+                        background: '#2dd4bf',
                         borderRadius: 'clamp(6px, 1.5vw, 8px) clamp(6px, 1.5vw, 8px) clamp(2px, 0.5vw, 3px) clamp(2px, 0.5vw, 3px)',
-                        border: '2px solid rgba(79,172,254,0.6)',
-                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3), 0 0 8px rgba(79,172,254,0.4)'
+                        border: '2px solid rgba(94,234,212,0.7)',
+                        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.24)'
                       }} />
                       {/* Mouse wheel */}
                       <div style={{
@@ -619,7 +616,7 @@ export function StartPanel() {
                         top: '15%',
                         width: '12%',
                         height: '35%',
-                        background: 'linear-gradient(145deg, #71717a, #52525b)',
+                        background: '#576070',
                         borderRadius: 'clamp(1px, 0.3vw, 2px)',
                         transform: 'translateX(-50%)',
                         border: '1px solid rgba(255,255,255,0.1)',
@@ -650,7 +647,7 @@ export function StartPanel() {
                 style={{ 
                   flex: 1, 
                   padding: 'clamp(12px, 3vw, 14px) 16px', 
-                  background: 'linear-gradient(145deg, #1e2532, #151b26)', 
+                  background: '#111827', 
                   color: '#f1f5f9', 
                   border: '1px solid rgba(148,163,184,0.2)', 
                   borderRadius: 12,
@@ -663,11 +660,11 @@ export function StartPanel() {
                 }}
                 onMouseOver={(e) => {
                   e.currentTarget.style.borderColor = 'rgba(148,163,184,0.4)'
-                  e.currentTarget.style.background = 'linear-gradient(145deg, #232a3a, #1a212e)'
+                  e.currentTarget.style.background = '#182332'
                 }}
                 onMouseOut={(e) => {
                   e.currentTarget.style.borderColor = 'rgba(148,163,184,0.2)'
-                  e.currentTarget.style.background = 'linear-gradient(145deg, #1e2532, #151b26)'
+                  e.currentTarget.style.background = '#111827'
                 }}
               >
                 {CHUNK_COUNT_OPTIONS.map((opt) => (
@@ -704,7 +701,7 @@ export function StartPanel() {
                 style={{ 
                   flex: 1, 
                   padding: 'clamp(12px, 3vw, 14px) 16px', 
-                  background: 'linear-gradient(145deg, #1e2532, #151b26)', 
+                  background: '#111827', 
                   color: '#f1f5f9', 
                   border: '1px solid rgba(148,163,184,0.2)', 
                   borderRadius: 12,
@@ -717,11 +714,11 @@ export function StartPanel() {
                 }}
                 onMouseOver={(e) => {
                   e.currentTarget.style.borderColor = 'rgba(148,163,184,0.4)'
-                  e.currentTarget.style.background = 'linear-gradient(145deg, #232a3a, #1a212e)'
+                  e.currentTarget.style.background = '#182332'
                 }}
                 onMouseOut={(e) => {
                   e.currentTarget.style.borderColor = 'rgba(148,163,184,0.2)'
-                  e.currentTarget.style.background = 'linear-gradient(145deg, #1e2532, #151b26)'
+                  e.currentTarget.style.background = '#111827'
                 }}
               >
                 {CHUNK_SIZE_OPTIONS.map((opt) => (
@@ -755,16 +752,16 @@ export function StartPanel() {
             }}
             style={{ 
               padding: 'clamp(12px, 3vw, 16px) clamp(20px, 5vw, 24px)', 
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 
-              color: '#fff', 
-              border: 'none', 
+              background: '#2dd4bf', 
+              color: '#061311', 
+              border: '1px solid rgba(94,234,212,0.5)', 
               borderRadius: 12, 
               cursor: 'pointer', 
               fontWeight: 700,
               fontSize: 'clamp(14px, 3.5vw, 16px)',
               letterSpacing: 0.5,
               textTransform: 'uppercase',
-              boxShadow: '0 8px 24px rgba(102,126,234,0.4), 0 4px 12px rgba(118,75,162,0.3)',
+              boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
               outline: 'none',
               position: 'relative',
@@ -773,11 +770,13 @@ export function StartPanel() {
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 12px 32px rgba(102,126,234,0.5), 0 6px 16px rgba(118,75,162,0.4)'
+              e.currentTarget.style.boxShadow = '0 14px 30px rgba(0,0,0,0.38)'
+              e.currentTarget.style.background = '#5eead4'
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(102,126,234,0.4), 0 4px 12px rgba(118,75,162,0.3)'
+              e.currentTarget.style.boxShadow = '0 10px 24px rgba(0,0,0,0.32)'
+              e.currentTarget.style.background = '#2dd4bf'
             }}
             onMouseDown={(e) => {
               e.currentTarget.style.transform = 'translateY(0) scale(0.98)'
@@ -803,12 +802,12 @@ export function StartPanel() {
               position: 'absolute',
               top: -8,
               left: 16,
-              background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+              background: '#141f2a',
               padding: '4px 12px',
               borderRadius: 8,
               fontSize: 11,
               fontWeight: 600,
-              color: '#f5576c',
+              color: '#cbd5e1',
               letterSpacing: 0.5,
               border: '1px solid rgba(255,255,255,0.06)'
             }}>
@@ -827,16 +826,16 @@ export function StartPanel() {
             onClick={handleLoadWorld}
             style={{ 
               padding: 'clamp(12px, 3vw, 16px) clamp(20px, 5vw, 24px)', 
-              background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', 
-              color: '#fff', 
-              border: 'none', 
+              background: '#1f2937', 
+              color: '#f8fafc', 
+              border: '1px solid rgba(148,163,184,0.22)', 
               borderRadius: 12, 
               cursor: 'pointer', 
               fontWeight: 700,
               fontSize: 'clamp(14px, 3.5vw, 16px)',
               letterSpacing: 0.5,
               textTransform: 'uppercase',
-              boxShadow: '0 8px 24px rgba(240,147,251,0.4), 0 4px 12px rgba(245,87,108,0.3)',
+              boxShadow: '0 10px 24px rgba(0,0,0,0.28)',
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
               outline: 'none',
               position: 'relative',
@@ -845,11 +844,13 @@ export function StartPanel() {
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 12px 32px rgba(240,147,251,0.5), 0 6px 16px rgba(245,87,108,0.4)'
+              e.currentTarget.style.boxShadow = '0 14px 30px rgba(0,0,0,0.34)'
+              e.currentTarget.style.background = '#253244'
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(240,147,251,0.4), 0 4px 12px rgba(245,87,108,0.3)'
+              e.currentTarget.style.boxShadow = '0 10px 24px rgba(0,0,0,0.28)'
+              e.currentTarget.style.background = '#1f2937'
             }}
             onMouseDown={(e) => {
               e.currentTarget.style.transform = 'translateY(0) scale(0.98)'

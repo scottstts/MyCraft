@@ -125,8 +125,8 @@ export const AudioPanel: React.FC = () => {
       minWidth: 0,
       boxSizing: 'border-box',
       overflow: 'hidden',
-      background: 'linear-gradient(90deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
-      border: '1px solid rgba(255,255,255,0.06)',
+      background: 'rgba(15, 23, 32, 0.94)',
+      border: '1px solid rgba(148,163,184,0.16)',
       borderRadius: '12px',
       padding: '8px 12px',
       color: '#ffffff',
@@ -135,20 +135,17 @@ export const AudioPanel: React.FC = () => {
       zIndex: 1001,
       pointerEvents: 'auto',
       backdropFilter: 'blur(24px)',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.3)'
+      boxShadow: '0 8px 20px rgba(0,0,0,0.28)'
     }}>
       {/* Player */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
-        {/* Track name (gradient text, no pill) */}
+        {/* Track name */}
         <div style={{
           alignSelf: 'flex-start',
           fontSize: 13,
           fontWeight: 800,
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text',
-          letterSpacing: -0.2,
+          color: '#f8fafc',
+          letterSpacing: 0,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -176,7 +173,7 @@ export const AudioPanel: React.FC = () => {
           <div style={{
             position: 'absolute', left: 0, top: 0, bottom: 0,
             width: `${duration > 0 ? (Math.min(1, elapsed / duration) * 100) : 0}%`,
-            background: 'linear-gradient(90deg, rgba(148,163,184,0.9), rgba(99,102,241,0.9))', borderRadius: '6px'
+            background: '#2dd4bf', borderRadius: '6px'
           }} />
         </div>
 
@@ -273,7 +270,7 @@ export const AudioPanel: React.FC = () => {
             <div style={{
               position: 'absolute', left: 0, top: 0, bottom: 0,
               width: `${volume * 100}%`,
-              background: 'linear-gradient(90deg, rgba(148,163,184,0.7), rgba(99,102,241,0.7))', borderRadius: '4px'
+              background: '#2dd4bf', borderRadius: '4px'
             }} />
           </div>
           <span style={{ fontSize: '11px', color: '#94a3b8', minWidth: '28px', textAlign: 'right' }}>

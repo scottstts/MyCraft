@@ -52,9 +52,9 @@ export function SaveWorldButton() {
       }}
       style={{
         padding: '8px 12px',
-        background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+        background: 'rgba(15, 23, 32, 0.94)',
         color: '#f8f9fa',
-        border: '1px solid rgba(255,255,255,0.1)',
+        border: '1px solid rgba(148,163,184,0.16)',
         borderRadius: '8px',
         cursor: 'pointer',
         fontSize: '12px',
@@ -63,7 +63,7 @@ export function SaveWorldButton() {
         letterSpacing: 0.3,
         pointerEvents: 'auto',
         backdropFilter: 'blur(10px)',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+        boxShadow: '0 8px 20px rgba(0,0,0,0.28)',
         transition: 'all 0.2s ease',
         display: 'flex',
         alignItems: 'center',
@@ -71,15 +71,15 @@ export function SaveWorldButton() {
       }}
       onMouseOver={(e) => {
         e.currentTarget.style.transform = 'translateY(-2px)'
-        e.currentTarget.style.boxShadow = '0 8px 32px rgba(147,51,234,0.4), 0 4px 16px rgba(0,0,0,0.4)'
-        e.currentTarget.style.borderColor = 'rgba(147,51,234,0.4)'
-        e.currentTarget.style.background = 'linear-gradient(145deg, rgba(42,49,59,0.98), rgba(32,37,45,0.98))'
+        e.currentTarget.style.boxShadow = '0 12px 26px rgba(0,0,0,0.34)'
+        e.currentTarget.style.borderColor = 'rgba(94,234,212,0.38)'
+        e.currentTarget.style.background = 'rgba(20, 31, 43, 0.98)'
       }}
       onMouseOut={(e) => {
         e.currentTarget.style.transform = 'translateY(0)'
-        e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.3)'
-        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
-        e.currentTarget.style.background = 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))'
+        e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.28)'
+        e.currentTarget.style.borderColor = 'rgba(148,163,184,0.16)'
+        e.currentTarget.style.background = 'rgba(15, 23, 32, 0.94)'
       }}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', flexShrink: 0 }}>

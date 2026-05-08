@@ -23,16 +23,16 @@ export function LoadingOverlay() {
         alignItems: 'center',
         gap: '16px',
         padding: '32px',
-        background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'rgba(15, 23, 32, 0.96)',
+        border: '1px solid rgba(148,163,184,0.16)',
         borderRadius: '16px',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.4)'
+        boxShadow: '0 24px 60px rgba(0,0,0,0.48)'
       }}>
         <div style={{
           width: '48px',
           height: '48px',
           border: '4px solid rgba(255,255,255,0.1)',
-          borderTop: '4px solid #4facfe',
+          borderTop: '4px solid #2dd4bf',
           borderRadius: '50%',
           animation: 'spin 1s linear infinite'
         }} />

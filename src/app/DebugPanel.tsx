@@ -194,9 +194,9 @@ export const DebugPanel: React.FC = () => {
           onClick={() => { setAudioVisible(false); setDebugVisible(true) }}
           style={{
             padding: '8px 12px',
-            background: 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+            background: 'rgba(15, 23, 32, 0.94)',
             color: '#f8f9fa',
-            border: '1px solid rgba(255,255,255,0.1)',
+            border: '1px solid rgba(148,163,184,0.16)',
             borderRadius: '8px',
             cursor: 'pointer',
             fontSize: '12px',
@@ -205,7 +205,7 @@ export const DebugPanel: React.FC = () => {
             letterSpacing: 0.3,
             pointerEvents: 'auto',
             backdropFilter: 'blur(10px)',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+            boxShadow: '0 8px 20px rgba(0,0,0,0.28)',
             transition: 'all 0.2s ease',
             display: 'flex',
             alignItems: 'center',
@@ -213,15 +213,15 @@ export const DebugPanel: React.FC = () => {
           }}
           onMouseOver={(e) => {
             e.currentTarget.style.transform = 'translateY(-2px)'
-            e.currentTarget.style.boxShadow = '0 8px 32px rgba(79,172,254,0.4), 0 4px 16px rgba(0,0,0,0.4)'
-            e.currentTarget.style.borderColor = 'rgba(79,172,254,0.4)'
-            e.currentTarget.style.background = 'linear-gradient(145deg, rgba(42,49,59,0.98), rgba(32,37,45,0.98))'
+            e.currentTarget.style.boxShadow = '0 12px 26px rgba(0,0,0,0.34)'
+            e.currentTarget.style.borderColor = 'rgba(94,234,212,0.38)'
+            e.currentTarget.style.background = 'rgba(20, 31, 43, 0.98)'
           }}
           onMouseOut={(e) => {
             e.currentTarget.style.transform = 'translateY(0)'
-            e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.3)'
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
-            e.currentTarget.style.background = 'linear-gradient(145deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))'
+            e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.28)'
+            e.currentTarget.style.borderColor = 'rgba(148,163,184,0.16)'
+            e.currentTarget.style.background = 'rgba(15, 23, 32, 0.94)'
           }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', flexShrink: 0 }}>
@@ -290,8 +290,8 @@ export const DebugPanel: React.FC = () => {
       top: '52px',
       left: '12px',
       width: '320px',
-      background: 'linear-gradient(145deg, rgba(32,39,49,0.98), rgba(22,27,35,0.98))',
-      border: '1px solid rgba(255,255,255,0.08)',
+      background: 'rgba(15, 23, 32, 0.98)',
+      border: '1px solid rgba(148,163,184,0.16)',
       borderRadius: '16px',
       padding: '20px',
       color: '#f8f9fa',
@@ -301,7 +301,7 @@ export const DebugPanel: React.FC = () => {
       maxHeight: '80vh',
       overflowY: 'auto',
       backdropFilter: 'blur(20px)',
-      boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.4)',
+      boxShadow: '0 24px 60px rgba(0,0,0,0.48)',
     }}>
       <div style={{ 
         display: 'flex', 
@@ -312,23 +312,20 @@ export const DebugPanel: React.FC = () => {
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         position: 'sticky',
         top: 0,
-        background: 'linear-gradient(145deg, rgba(32,39,49,0.98), rgba(22,27,35,0.98))',
+        background: 'rgba(15, 23, 32, 0.98)',
         zIndex: 1
       }}>
         <h3 style={{ 
           margin: 0, 
           fontSize: '18px', 
           fontWeight: 700,
-          background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text'
+          color: '#f8fafc'
         }}>Settings</h3>
         <button
           onClick={() => setDebugVisible(false)}
           style={{
-            background: 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))',
-            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(148,163,184,0.10)',
+            border: '1px solid rgba(148,163,184,0.16)',
             color: '#f8f9fa',
             cursor: 'pointer',
             padding: '8px 10px',
@@ -339,12 +336,12 @@ export const DebugPanel: React.FC = () => {
             outline: 'none'
           }}
           onMouseOver={(e) => {
-            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.08))'
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'
+            e.currentTarget.style.background = 'rgba(148,163,184,0.16)'
+            e.currentTarget.style.borderColor = 'rgba(148,163,184,0.26)'
           }}
           onMouseOut={(e) => {
-            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))'
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+            e.currentTarget.style.background = 'rgba(148,163,184,0.10)'
+            e.currentTarget.style.borderColor = 'rgba(148,163,184,0.16)'
           }}
         >
           ✕

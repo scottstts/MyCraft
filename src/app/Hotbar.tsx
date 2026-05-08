@@ -46,7 +46,7 @@ export function Hotbar() {
             {icon && (
               <img src={icon} alt="" style={{ width: 32, height: 32, imageRendering: 'pixelated', position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }} />
             )}
-            <div style={{ position: 'absolute', left: 2, top: 1, fontSize: 10, color: '#ffd700', textShadow: '1px 1px 0 #000', fontWeight: 'bold' }}>{idx + 1}</div>
+            <div style={{ position: 'absolute', left: 2, top: 1, fontSize: 10, color: '#d8b35e', textShadow: '1px 1px 0 #000', fontWeight: 'bold' }}>{idx + 1}</div>
             {slot.count > 0 && (
               <div style={{ position: 'absolute', right: 2, bottom: 0, fontSize: 10, color: '#fff', textShadow: '1px 1px 0 #000' }}>{slot.count}</div>
             )}
@@ -112,9 +112,9 @@ export function TopRightWidget() {
       alignItems: 'center',
       gap: '8px',
       padding: '8px 12px',
-      background: 'linear-gradient(90deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))',
+      background: 'rgba(15, 23, 32, 0.94)',
       color: '#f8f9fa',
-      border: '1px solid rgba(255,255,255,0.1)',
+      border: '1px solid rgba(148,163,184,0.16)',
       borderRadius: '8px',
       fontSize: '12px',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -122,7 +122,7 @@ export function TopRightWidget() {
       letterSpacing: 0.3,
       pointerEvents: 'none',
       backdropFilter: 'blur(10px)',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+      boxShadow: '0 8px 20px rgba(0,0,0,0.28)',
       zIndex: 1001
     }}>
       {/* Pause hint */}
@@ -132,7 +132,7 @@ export function TopRightWidget() {
       <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.2)' }} />
       
       {/* FPS display */}
-      <span style={{ color: '#4ade80', fontWeight: 700, minWidth: '48px', textAlign: 'center' }}>{fps} fps</span>
+      <span style={{ color: '#2dd4bf', fontWeight: 700, minWidth: '48px', textAlign: 'center' }}>{fps} fps</span>
       
       {/* Separator */}
       <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.2)' }} />
@@ -213,11 +213,11 @@ export function PauseMenu() {
       <div style={{ 
         width: 420, 
         padding: 32, 
-        background: 'linear-gradient(90deg, rgba(32,39,49,0.95), rgba(22,27,35,0.95))', 
+        background: 'rgba(15, 23, 32, 0.96)', 
         borderRadius: 16, 
         color: '#f8f9fa', 
-        boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 8px 32px rgba(0,0,0,0.4)', 
-        border: '1px solid rgba(255,255,255,0.08)'
+        boxShadow: '0 24px 60px rgba(0,0,0,0.48)', 
+        border: '1px solid rgba(148,163,184,0.16)'
       }}>
         <div style={{ 
           display: 'flex', 
@@ -230,11 +230,8 @@ export function PauseMenu() {
           <div style={{ 
             fontSize: 28, 
             fontWeight: 800, 
-            letterSpacing: -0.5,
-            background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text'
+            letterSpacing: 0,
+            color: '#f8fafc'
           }}>
             Game Paused
           </div>
@@ -245,26 +242,28 @@ export function PauseMenu() {
             style={{ 
               flex: 1, 
               padding: '16px 24px', 
-              background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)', 
-              color: '#fff', 
-              border: 'none', 
+              background: '#2dd4bf', 
+              color: '#061311', 
+              border: '1px solid rgba(94,234,212,0.5)', 
               borderRadius: 12, 
               cursor: 'pointer', 
               fontWeight: 700,
               fontSize: 14,
               letterSpacing: 0.5,
               textTransform: 'uppercase',
-              boxShadow: '0 8px 24px rgba(79,172,254,0.4)',
+              boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
               outline: 'none'
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 12px 32px rgba(79,172,254,0.5)'
+              e.currentTarget.style.boxShadow = '0 14px 30px rgba(0,0,0,0.38)'
+              e.currentTarget.style.background = '#5eead4'
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(79,172,254,0.4)'
+              e.currentTarget.style.boxShadow = '0 10px 24px rgba(0,0,0,0.32)'
+              e.currentTarget.style.background = '#2dd4bf'
             }}
           >
             Resume
@@ -316,26 +315,28 @@ export function PauseMenu() {
             style={{ 
               flex: 1, 
               padding: '16px 24px', 
-              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', 
-              color: '#fff', 
-              border: 'none', 
+              background: '#10b981', 
+              color: '#04130e', 
+              border: '1px solid rgba(52,211,153,0.45)', 
               borderRadius: 12, 
               cursor: 'pointer', 
               fontWeight: 700,
               fontSize: 14,
               letterSpacing: 0.5,
               textTransform: 'uppercase',
-              boxShadow: '0 8px 24px rgba(16,185,129,0.4)',
+              boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
               outline: 'none'
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 12px 32px rgba(16,185,129,0.5)'
+              e.currentTarget.style.boxShadow = '0 14px 30px rgba(0,0,0,0.38)'
+              e.currentTarget.style.background = '#34d399'
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(16,185,129,0.4)'
+              e.currentTarget.style.boxShadow = '0 10px 24px rgba(0,0,0,0.32)'
+              e.currentTarget.style.background = '#10b981'
             }}
           >
             Save
@@ -345,26 +346,28 @@ export function PauseMenu() {
             style={{ 
               flex: 1, 
               padding: '16px 24px', 
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 
-              color: '#fff', 
-              border: 'none', 
+              background: '#1f2937', 
+              color: '#f8fafc', 
+              border: '1px solid rgba(148,163,184,0.22)', 
               borderRadius: 12, 
               cursor: 'pointer', 
               fontWeight: 700,
               fontSize: 14,
               letterSpacing: 0.5,
               textTransform: 'uppercase',
-              boxShadow: '0 8px 24px rgba(102,126,234,0.4)',
+              boxShadow: '0 10px 24px rgba(0,0,0,0.28)',
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
               outline: 'none'
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 12px 32px rgba(102,126,234,0.5)'
+              e.currentTarget.style.boxShadow = '0 14px 30px rgba(0,0,0,0.34)'
+              e.currentTarget.style.background = '#253244'
             }}
             onMouseOut={(e) => {
               e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(102,126,234,0.4)'
+              e.currentTarget.style.boxShadow = '0 10px 24px rgba(0,0,0,0.28)'
+              e.currentTarget.style.background = '#1f2937'
             }}
           >
             Restart
