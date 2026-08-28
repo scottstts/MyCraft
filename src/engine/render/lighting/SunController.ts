@@ -41,11 +41,20 @@ const DEFAULT_SHADOW_SETTINGS: ShadowSettings = {
   // small negative value keeps coplanar voxel receivers on the lit side of
   // the comparison without creating a visible gap at contact points.
   bias: -0.0001,
-  normalBias: 0.02,
+  // The world-space normal offset is intentionally kept below one voxel. A
+  // larger value makes a receiver move in light-space as the sun changes
+  // elevation, which visibly pans/grows a contact shadow even when the
+  // caster/receiver geometry has not changed.
+  normalBias: 0.005,
   intensity: 1.0,
 };
 
 const TWO_PI = Math.PI * 2;
+// VSM's native blur has a one-texel radius by default. Let the committed
+// projection move by that full filtered footprint before rebuilding it, so a
+// rotating light does not feed a new depth rasterization into the blur every
+// simulation frame.
+const SHADOW_REFRESH_TEXELS = 2;
 
 export class SunController {
   readonly sun: THREE.DirectionalLight;
@@ -68,6 +77,11 @@ export class SunController {
   };
   private shadowFocus = new THREE.Vector3(0, 48, 0);
   private shadowDirty = true;
+  // Direction used by the last rendered native shadow projection. The
+  // directional light itself remains smooth, but the shadow map is not
+  // rebuilt for sub-texel angular motion: a rotating light-space rasterizer
+  // would otherwise change the filtered depth distribution every frame.
+  private shadowSunDirection = new THREE.Vector3();
   private readonly east = new THREE.Vector3(Math.cos(Math.PI * 0.25), 0, Math.sin(Math.PI * 0.25));
   private readonly up = new THREE.Vector3(0, 1, 0);
 
@@ -111,9 +125,9 @@ export class SunController {
   setTime(t: number): void {
     // clamp-wrap
     this.t = ((t % 1) + 1) % 1;
-    // A direct user edit should update the shadow immediately using the same
-    // smooth direction as the running cycle.
-    this.recomputeLighting();
+    // A direct user edit must update the shadow immediately, even when the
+    // edit is smaller than the running cycle's shadow refresh threshold.
+    this.recomputeLighting(true);
   }
 
   pause(p: boolean): void {
@@ -160,7 +174,8 @@ export class SunController {
       (this.shadowBounds.minY + this.shadowBounds.maxY) * 0.5,
       (this.shadowBounds.minZ + this.shadowBounds.maxZ) * 0.5,
     );
-    this.updateShadowTransform();
+    this.updateShadowTransform(this.sunDir);
+    this.shadowSunDirection.copy(this.sunDir);
     this.markShadowNeedsUpdate();
   }
 
@@ -186,8 +201,8 @@ export class SunController {
     // runtime resolution change is applied on the next shadow render.
     if (previous.resolution !== this.shadowSettings.resolution) {
       this.sun.shadow.map?.dispose();
-      // VSM uses a second render target for its separable blur. It must be
-      // recreated at the same resolution as the primary map.
+      // VSM owns a secondary target for its separable blur; dispose both
+      // targets so a runtime resolution change is applied on the next render.
       this.sun.shadow.mapPass?.dispose();
       this.sun.shadow.map = null;
       this.sun.shadow.mapPass = null;
@@ -202,7 +217,8 @@ export class SunController {
       previous.normalBias !== this.shadowSettings.normalBias ||
       previous.intensity !== this.shadowSettings.intensity;
     if (changed) {
-      this.updateShadowTransform();
+      this.updateShadowTransform(this.sunDir);
+      this.shadowSunDirection.copy(this.sunDir);
       this.markShadowNeedsUpdate();
     }
   }
@@ -218,6 +234,11 @@ export class SunController {
   consumeShadowDirty(): boolean {
     const dirty = this.shadowDirty;
     this.shadowDirty = false;
+    // The engine consumes this immediately before the native render. A map
+    // invalidated by chunk changes is therefore rendered from the light's
+    // current smooth direction; keep the refresh reference in sync with that
+    // committed map even when the direction itself did not cross the budget.
+    if (dirty) this.shadowSunDirection.copy(this.sunDir);
     return dirty;
   }
 
@@ -229,7 +250,7 @@ export class SunController {
     this.hemi.parent?.remove(this.hemi);
   }
 
-  private recomputeLighting(): void {
+  private recomputeLighting(forceShadowUpdate = false): void {
     // Parametric sun path: rotate in the plane spanned by world up and an east vector
     // t in [0,1) -> theta in [0, 2π); theta=π/2 ≈ zenith (default initialTime=0.25)
     const theta = this.t * TWO_PI;
@@ -237,12 +258,22 @@ export class SunController {
     // Sun direction on the unit circle in the east-up plane
     this.sunDir.copy(this.east).multiplyScalar(Math.cos(theta)).addScaledVector(this.up, Math.sin(theta)).normalize();
 
-    // The shadow projection must use the same smooth direction as the
-    // authored lighting. Holding a quantized direction creates a different
-    // light for the shadow map and makes the projected shadow jump several
-    // texels whenever the quantization boundary is crossed.
-    this.updateShadowTransform(this.sunDir);
-    this.markShadowNeedsUpdate();
+    // Keep the actual directional light smooth for the authored lighting.
+    // Its shadow projection is refreshed only after the current direction has
+    // moved far enough to represent one shadow-map texel at the edge of the
+    // fixed finite world. This is an update budget, not a second light: the
+    // native map intentionally remains stable between refreshes.
+    this.updateLightPosition(this.sunDir);
+    const shadowAngle = this.getShadowTexelAngularStep();
+    const directionChanged =
+      forceShadowUpdate ||
+      this.shadowSunDirection.lengthSq() === 0 ||
+      this.shadowSunDirection.dot(this.sunDir) < Math.cos(shadowAngle);
+    if (directionChanged) {
+      this.shadowSunDirection.copy(this.sunDir);
+      this.updateShadowProjection();
+      this.markShadowNeedsUpdate();
+    }
 
     this.sun.target.updateMatrixWorld();
 
@@ -268,17 +299,26 @@ export class SunController {
   private updateShadowTransform(direction: THREE.Vector3 = this.sunDir): void {
     this.sun.target.position.copy(this.shadowFocus);
 
-    const spanX = this.shadowBounds.maxX - this.shadowBounds.minX;
-    const spanY = this.shadowBounds.maxY - this.shadowBounds.minY;
-    const spanZ = this.shadowBounds.maxZ - this.shadowBounds.minZ;
-    // A bounding sphere projected onto the light's two orthographic axes is
-    // conservative for every sun azimuth/elevation, including low sun.
-    const extent = Math.max(8, 0.5 * Math.sqrt(spanX * spanX + spanY * spanY + spanZ * spanZ) + 8);
+    this.updateLightPosition(direction);
+    this.updateShadowProjection();
+  }
+
+  private updateLightPosition(direction: THREE.Vector3): void {
+    this.sun.target.position.copy(this.shadowFocus);
+
+    const extent = this.getShadowExtent();
     const lightDistance = Math.max(200, this.shadowSettings.shadowDistance, extent + 32);
 
     this.sun.position.copy(this.shadowFocus).addScaledVector(direction, lightDistance);
     this.sun.updateMatrixWorld();
     this.sun.target.updateMatrixWorld();
+  }
+
+  private updateShadowProjection(): void {
+    // A bounding sphere projected onto the light's two orthographic axes is
+    // conservative for every sun azimuth/elevation, including low sun.
+    const extent = this.getShadowExtent();
+    const lightDistance = Math.max(200, this.shadowSettings.shadowDistance, extent + 32);
 
     if (!this.shadowsSupported) return;
 
@@ -294,6 +334,24 @@ export class SunController {
     shadowCamera.near = Math.max(0.1, lightDistance - extent - 8);
     shadowCamera.far = lightDistance + extent + 8;
     shadowCamera.updateProjectionMatrix();
+  }
+
+  private getShadowExtent(): number {
+    const spanX = this.shadowBounds.maxX - this.shadowBounds.minX;
+    const spanY = this.shadowBounds.maxY - this.shadowBounds.minY;
+    const spanZ = this.shadowBounds.maxZ - this.shadowBounds.minZ;
+    return Math.max(8, 0.5 * Math.sqrt(spanX * spanX + spanY * spanY + spanZ * spanZ) + 8);
+  }
+
+  private getShadowTexelAngularStep(): number {
+    // A point at the edge of the conservative sphere moves by approximately
+    // extent * angle under a small light rotation. The configured filtered
+    // movement budget is
+    // (2 * extent) / resolution world units, so the corresponding angular
+    // threshold is 2 * SHADOW_REFRESH_TEXELS / resolution. The VSM blur then
+    // hides the transition instead of exposing a new depth rasterization every
+    // frame.
+    return (2 * SHADOW_REFRESH_TEXELS) / Math.max(256, this.shadowSettings.resolution);
   }
 }
 

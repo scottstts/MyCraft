@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { SunController } from '../src/engine/render/lighting/SunController';
 import { BlockMaterial } from '../src/engine/render/BlockMaterial';
+import { NATIVE_WEBGL_SHADOW_MAP_TYPE } from '../src/engine/render/Renderer';
 
 describe('native WebGL shadow stability', () => {
-  it('keeps the native shadow projection synchronized with smooth sun motion', () => {
+  it('uses the stripe-safe native VSM filter', () => {
+    expect(NATIVE_WEBGL_SHADOW_MAP_TYPE).toBe(THREE.VSMShadowMap);
+  });
+
+  it('keeps the sun smooth while refreshing the native map on a texel budget', () => {
     const scene = new THREE.Scene();
     const controller = new SunController(scene, {
       initialTime: 0,
@@ -16,6 +21,11 @@ describe('native WebGL shadow stability', () => {
     expect(controller.consumeShadowDirty()).toBe(true);
 
     const previousLightPosition = controller.sun.position.clone();
+    for (let i = 0; i < 6; i++) {
+      controller.update(1 / 120);
+      expect(controller.consumeShadowDirty()).toBe(false);
+    }
+    expect(controller.sun.position.distanceTo(previousLightPosition)).toBeGreaterThan(0);
     controller.update(1 / 120);
     expect(controller.consumeShadowDirty()).toBe(true);
     expect(controller.consumeShadowDirty()).toBe(false);
@@ -25,7 +35,6 @@ describe('native WebGL shadow stability', () => {
       .sub(controller.sun.target.position)
       .normalize();
     expect(shadowDirection.dot(controller.getSunDirection())).toBeGreaterThan(1 - 1e-10);
-    expect(controller.sun.position.distanceTo(previousLightPosition)).toBeGreaterThan(0);
 
     controller.dispose();
   });
@@ -47,6 +56,14 @@ describe('native WebGL shadow stability', () => {
   it('casts voxel shadows from outward faces', () => {
     const material = new BlockMaterial(new THREE.Texture(), null, undefined, { tileSize: 16, atlasSize: 11 });
     expect(material.shadowSide).toBe(THREE.DoubleSide);
+    material.dispose();
+  });
+
+  it('encodes an SSAO mask that does not use the shadowed direct term', () => {
+    const material = new BlockMaterial(new THREE.Texture(), null, undefined, { tileSize: 16, atlasSize: 11 });
+    expect(material.fragmentShader).toContain('shadowIndependentTotal');
+    expect(material.fragmentShader).toContain('unshadowedDiffuse');
+    expect(material.fragmentShader).not.toContain('float totalLuma = dot(max(total, vec3(0.0))');
     material.dispose();
   });
 

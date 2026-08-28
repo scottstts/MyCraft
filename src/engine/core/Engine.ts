@@ -6,7 +6,7 @@
  */
 
 import * as THREE from 'three';
-import { Renderer } from '../render/Renderer';
+import { NATIVE_WEBGL_SHADOW_MAP_TYPE, Renderer } from '../render/Renderer';
 import { createScene, createCamera } from '../render/SceneBuilder';
 import { World } from '../world/World';
 import type { ChunkPipelineEvents } from '../world/ChunkPipeline';
@@ -647,7 +647,7 @@ async function start(canvas: HTMLCanvasElement) {
     shadowDistance: 300,
     softness: 1.0,
     bias: -0.0001,
-    normalBias: 0.02,
+    normalBias: 0.005,
     intensity: 1.0,
   });
 
@@ -947,7 +947,7 @@ function updateShadowSettings(settings: ShadowSettings) {
   const shadowSettings = sunController.getShadowSettings();
   glRenderer.shadowMap.enabled = shadowSettings.enabled;
   glRenderer.shadowMap.autoUpdate = false;
-  glRenderer.shadowMap.type = THREE.VSMShadowMap;
+  glRenderer.shadowMap.type = NATIVE_WEBGL_SHADOW_MAP_TYPE;
 }
 
 // Global function for UI to update graphics settings (time of day, exposure, etc.)

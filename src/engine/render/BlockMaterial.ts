@@ -212,15 +212,17 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 sunDir = normalize(sunDirection);
           float sunDot = max(dot(normal, sunDir), 0.0);
           
-          // Use Three.js's native directional shadow mask. It is applied only
-          // to direct sun diffuse; AO, environment reflection, and the
-          // existing post-process passes remain independent of cast shadows.
+          // Use Three.js's native directional shadow mask only for direct sun
+          // diffuse. The post-process SSAO mask is derived below from the
+          // unshadowed lighting, so shadow coverage cannot amplify screen-space
+          // AO at cube edges.
           float shadowFactor = getShadowMask();
           
           // Apply shadow to diffuse lighting
           // Crisper sun diffuse for stronger, clearer shadows
           float wrappedDiffuse = sunDot;
-          vec3 diffuse = sunColor * wrappedDiffuse * shadowFactor * clamp(dayLight, 0.0, 1.0);
+          vec3 unshadowedDiffuse = sunColor * wrappedDiffuse * clamp(dayLight, 0.0, 1.0);
+          vec3 diffuse = unshadowedDiffuse * shadowFactor;
           
           // Fresnel rim lighting
           float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 2.0);
@@ -242,8 +244,12 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 indirect = ambient + fresnelColor + reflection;
           vec3 total = indirect + diffuse + subsurface;
           float indirectLuma = dot(max(indirect, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
-          float totalLuma = dot(max(total, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
-          float indirectMask = clamp(indirectLuma / max(totalLuma, 1e-4), 0.0, 1.0);
+          // This mask is consumed by SSAOPass through the opaque alpha
+          // channel. Use the unshadowed direct contribution as its reference
+          // so it remains invariant when the native shadow comparison moves.
+          vec3 shadowIndependentTotal = indirect + unshadowedDiffuse + subsurface;
+          float shadowIndependentLuma = dot(max(shadowIndependentTotal, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
+          float indirectMask = clamp(indirectLuma / max(shadowIndependentLuma, 1e-4), 0.0, 1.0);
           return vec4(total, indirectMask);
       }
 

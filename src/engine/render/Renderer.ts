@@ -11,6 +11,12 @@ const MAX_RENDER_PIXELS = 1_650_000;
 const MAX_PIXEL_RATIO = 1.5;
 const MIN_PIXEL_RATIO = 1;
 
+// Keep the WebGL shadow filter in one place so runtime settings cannot switch
+// the renderer back to a different filter than the initial renderer setup.
+// VSM is the stripe-free native path for the large, open voxel surfaces: its
+// filtered moments avoid the nearest-depth comparison bands exposed by PCF.
+export const NATIVE_WEBGL_SHADOW_MAP_TYPE = THREE.VSMShadowMap;
+
 type CanvasSyncState = {
   width: number;
   height: number;
@@ -72,18 +78,13 @@ export class Renderer {
     }
 
     // Native WebGL shadows are configured here. The engine marks the single
-    // sun shadow dirty when its direction or caster set changes, so the map
-    // is rendered once and reused by the color/depth passes in a frame.
+    // sun shadow dirty when its committed projection or caster set changes,
+    // so the map is rendered once and reused by the color/depth passes.
     if (!this.isWebGPU) {
       const gl = this.renderer as THREE.WebGLRenderer;
       gl.shadowMap.enabled = true;
       gl.shadowMap.autoUpdate = false;
-      // Use Three's native variance shadow map. It keeps the shadow lookup in
-      // the built-in lighting chunks while filtering the depth distribution
-      // before the receiver comparison, avoiding the visible nearest-texel
-      // mosaic produced by PCF on the large voxel faces. LightShadow.radius
-      // remains the native VSM blur radius.
-      gl.shadowMap.type = THREE.VSMShadowMap;
+      gl.shadowMap.type = NATIVE_WEBGL_SHADOW_MAP_TYPE;
     }
   }
 

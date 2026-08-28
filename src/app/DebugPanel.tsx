@@ -60,7 +60,7 @@ export const DebugPanel: React.FC = () => {
     shadowSoftness: 1.0,
     shadowIntensity: 1.0,
     shadowBias: -0.0001,
-    shadowNormalBias: 0.02,
+    shadowNormalBias: 0.005,
     fogEnabled: true,
     fogBaseDensity: 0.002,
     fogMaxDistance: 600,
@@ -133,7 +133,8 @@ export const DebugPanel: React.FC = () => {
       }
       // The engine owns the live day/night state. Only initialize the
       // renderer setting here; writing the panel's initial time back after a
-      // one-second delay would jump the sun and invalidate a stable shadow map.
+      // one-second delay would jump the sun and force an avoidable shadow-map
+      // rebuild during initialization.
       (window as WindowWithEngineGlobals).updateGraphicsSettings?.({
         renderer: { exposure: settings.exposure }
       });

@@ -460,11 +460,27 @@ function addFaceQuad(
     ao.push(aoFactor * (isSolid ? 0.7 : 1.0));
   }
   
-  // Add indices for two triangles
-  indices.push(
-    vertexOffset,     vertexOffset + 1, vertexOffset + 2,  // Triangle 1
-    vertexOffset,     vertexOffset + 2, vertexOffset + 3   // Triangle 2
-  );
+  // Select the diagonal from the four actual corner AO values. A fixed
+  // diagonal turns a difference between opposite corners into a visible
+  // triangular patch on an otherwise planar voxel face. Choosing the
+  // diagonal whose opposite-corner pair carries the greater AO sum keeps
+  // the interpolation on the less conspicuous side while preserving the
+  // authored per-corner occlusion.
+  const ao0 = ao[vertexOffset];
+  const ao1 = ao[vertexOffset + 1];
+  const ao2 = ao[vertexOffset + 2];
+  const ao3 = ao[vertexOffset + 3];
+  if (ao0 + ao2 > ao1 + ao3) {
+    indices.push(
+      vertexOffset,     vertexOffset + 1, vertexOffset + 2,
+      vertexOffset,     vertexOffset + 2, vertexOffset + 3,
+    );
+  } else {
+    indices.push(
+      vertexOffset,     vertexOffset + 1, vertexOffset + 3,
+      vertexOffset + 1, vertexOffset + 2, vertexOffset + 3,
+    );
+  }
 }
 
 function getFaceUV(block: BlockDef, faceName: string): [number, number] {
