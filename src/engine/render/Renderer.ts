@@ -78,10 +78,12 @@ export class Renderer {
       const gl = this.renderer as THREE.WebGLRenderer;
       gl.shadowMap.enabled = true;
       gl.shadowMap.autoUpdate = false;
-      // PCFShadowMap honors LightShadow.radius. PCFSoftShadowMap's kernel is
-      // screen/texel dependent and ignores that control, making it harder to
-      // keep this pixel-art scene's shadow edge predictable.
-      gl.shadowMap.type = THREE.PCFShadowMap;
+      // Use Three's native variance shadow map. It keeps the shadow lookup in
+      // the built-in lighting chunks while filtering the depth distribution
+      // before the receiver comparison, avoiding the visible nearest-texel
+      // mosaic produced by PCF on the large voxel faces. LightShadow.radius
+      // remains the native VSM blur radius.
+      gl.shadowMap.type = THREE.VSMShadowMap;
     }
   }
 

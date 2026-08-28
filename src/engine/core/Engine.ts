@@ -947,7 +947,7 @@ function updateShadowSettings(settings: ShadowSettings) {
   const shadowSettings = sunController.getShadowSettings();
   glRenderer.shadowMap.enabled = shadowSettings.enabled;
   glRenderer.shadowMap.autoUpdate = false;
-  glRenderer.shadowMap.type = THREE.PCFShadowMap;
+  glRenderer.shadowMap.type = THREE.VSMShadowMap;
 }
 
 // Global function for UI to update graphics settings (time of day, exposure, etc.)

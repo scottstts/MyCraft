@@ -4,7 +4,7 @@ import { SunController } from '../src/engine/render/lighting/SunController';
 import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 
 describe('native WebGL shadow stability', () => {
-  it('does not dirty the shadow map for sub-texel sun motion', () => {
+  it('keeps the native shadow projection synchronized with smooth sun motion', () => {
     const scene = new THREE.Scene();
     const controller = new SunController(scene, {
       initialTime: 0,
@@ -15,16 +15,17 @@ describe('native WebGL shadow stability', () => {
     controller.setShadowBounds({ minX: -48, maxX: 96, minZ: -48, maxZ: 96, minY: 0, maxY: 96 });
     expect(controller.consumeShadowDirty()).toBe(true);
 
-    // At the default map resolution, a 120 Hz frame is below the
-    // controller's angular shadow step and must reuse the existing map.
+    const previousLightPosition = controller.sun.position.clone();
     controller.update(1 / 120);
-    expect(controller.consumeShadowDirty()).toBe(false);
-
-    // A larger accumulated movement crosses one quantized step and requests
-    // exactly one refreshed native map.
-    controller.update(1 / 30);
     expect(controller.consumeShadowDirty()).toBe(true);
     expect(controller.consumeShadowDirty()).toBe(false);
+
+    const shadowDirection = controller.sun.position
+      .clone()
+      .sub(controller.sun.target.position)
+      .normalize();
+    expect(shadowDirection.dot(controller.getSunDirection())).toBeGreaterThan(1 - 1e-10);
+    expect(controller.sun.position.distanceTo(previousLightPosition)).toBeGreaterThan(0);
 
     controller.dispose();
   });
@@ -45,7 +46,7 @@ describe('native WebGL shadow stability', () => {
 
   it('casts voxel shadows from outward faces', () => {
     const material = new BlockMaterial(new THREE.Texture(), null, undefined, { tileSize: 16, atlasSize: 11 });
-    expect(material.shadowSide).toBe(THREE.FrontSide);
+    expect(material.shadowSide).toBe(THREE.DoubleSide);
     material.dispose();
   });
 

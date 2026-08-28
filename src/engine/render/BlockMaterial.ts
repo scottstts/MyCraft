@@ -325,13 +325,12 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       ]),
       defines: envMap ? { USE_ENVMAP: true } : {},
       side: THREE.FrontSide,
-      // Chunk geometry is an authored voxel surface with exposed outward
-      // faces. Three's default native shadow policy flips FrontSide to
-      // BackSide for acne avoidance, which makes ledges and tree blocks cast
-      // from their far faces and distorts their silhouettes. Use the actual
-      // outward faces; ChunkRenderer's native depth-only caster material adds
-      // the small packed-depth separation needed for acne-free comparisons.
-      shadowSide: THREE.FrontSide,
+      // The chunk mesher emits only exposed faces; it is an open voxel shell,
+      // not a closed manifold. Let the native shadow pass capture either
+      // winding so a sun-facing top/side face can still occlude the ground.
+      // This affects the shadow caster only; the visible material remains
+      // FrontSide so its authored lighting and silhouette are unchanged.
+      shadowSide: THREE.DoubleSide,
       transparent: false,
       lights: true,
     });

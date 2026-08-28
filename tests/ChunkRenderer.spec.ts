@@ -16,7 +16,7 @@ function makeBuffers(positions: number[]): MeshBuffers {
 }
 
 describe('native voxel shadow caster setup', () => {
-  it('uses a depth-only polygon offset while preserving the voxel shadow silhouette', () => {
+  it('uses Three.js renderer-owned depth casting while preserving voxel shadow flags', () => {
     const scene = new THREE.Scene();
     const opaqueMaterial = new THREE.MeshBasicMaterial();
     const transparentMaterial = new THREE.MeshBasicMaterial();
@@ -39,19 +39,10 @@ describe('native voxel shadow caster setup', () => {
     expect(mesh?.castShadow).toBe(true);
     expect(mesh?.receiveShadow).toBe(true);
 
-    const depthMaterial = mesh?.customDepthMaterial;
-    expect(depthMaterial).toBeInstanceOf(THREE.MeshDepthMaterial);
-    const typedDepthMaterial = depthMaterial as THREE.MeshDepthMaterial;
-    expect(typedDepthMaterial.depthPacking).toBe(THREE.RGBADepthPacking);
-
-    const shaderParameters = {
-      vertexShader: 'void main() { vHighPrecisionZW = gl_Position.zw; }',
-      fragmentShader: '',
-      uniforms: {},
-    } as unknown as Parameters<THREE.Material['onBeforeCompile']>[0];
-    typedDepthMaterial.onBeforeCompile(shaderParameters, null as unknown as THREE.WebGLRenderer);
-    expect(shaderParameters.vertexShader).toContain('gl_Position.z += 0.0004 * gl_Position.w;');
-    expect(shaderParameters.vertexShader).toContain('gl_Position.z -= 0.0004 * gl_Position.w;');
+    // No custom depth material is attached. WebGLShadowMap owns the depth
+    // material and applies the source material's shadowSide policy, keeping
+    // the depth caster and built-in filter on one native path.
+    expect(mesh?.customDepthMaterial).toBeUndefined();
 
     renderer.destroy();
     opaqueMaterial.dispose();
