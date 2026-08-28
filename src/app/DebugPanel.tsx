@@ -59,7 +59,7 @@ export const DebugPanel: React.FC = () => {
     shadowDistance: 300,
     shadowSoftness: 1.0,
     shadowIntensity: 1.0,
-    shadowBias: 0.0005,
+    shadowBias: -0.0001,
     shadowNormalBias: 0.02,
     fogEnabled: true,
     fogBaseDensity: 0.002,
@@ -131,9 +131,10 @@ export const DebugPanel: React.FC = () => {
       } else {
         // console.warn('[DebugPanel] Shadow system not available during initialization');
       }
-      // Initialize time-of-day controls
+      // The engine owns the live day/night state. Only initialize the
+      // renderer setting here; writing the panel's initial time back after a
+      // one-second delay would jump the sun and invalidate a stable shadow map.
       (window as WindowWithEngineGlobals).updateGraphicsSettings?.({
-        timeOfDay: { t: timeOfDay, paused: timePaused, cycleSeconds },
         renderer: { exposure: settings.exposure }
       });
     }, 1000);
@@ -145,10 +146,9 @@ export const DebugPanel: React.FC = () => {
   // Keep clouds state in sync with engine
   useEffect(() => {
     (window as WindowWithEngineGlobals).updateGraphicsSettings?.({
-      timeOfDay: { t: timeOfDay, paused: timePaused, cycleSeconds }, // keep current values
       clouds: { enabled: cloudsEnabled, coverage: cloudsCoverage, density: cloudsDensity }
     })
-  }, [cloudsEnabled, cloudsCoverage, cloudsDensity, timeOfDay, timePaused, cycleSeconds])
+  }, [cloudsEnabled, cloudsCoverage, cloudsDensity])
 
   // Close on click outside when open
   React.useEffect(() => {
@@ -264,7 +264,6 @@ export const DebugPanel: React.FC = () => {
       const updateGraphicsFn = (window as WindowWithEngineGlobals).updateGraphicsSettings;
       if (updateGraphicsFn) {
         updateGraphicsFn({
-          timeOfDay: { t: timeOfDay, paused: timePaused, cycleSeconds },
           renderer: { exposure: newSettings.exposure }
         });
         console.log(`[DebugPanel] Updated graphics settings for exposure`);
@@ -801,7 +800,7 @@ export const DebugPanel: React.FC = () => {
           </div>
           <input
             type="range"
-            min="0"
+            min="-0.002"
             max="0.002"
             step="0.0001"
             value={settings.shadowBias}

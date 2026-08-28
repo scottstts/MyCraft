@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export interface GraphicsSettings {
-  timeOfDay: { t: number; paused: boolean; cycleSeconds: number };
+  timeOfDay?: { t: number; paused: boolean; cycleSeconds: number };
   renderer?: { exposure?: number };
   clouds?: { enabled?: boolean; coverage?: number; density?: number; windDirection?: number; windSpeed?: number };
 }

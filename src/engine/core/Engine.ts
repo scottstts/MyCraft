@@ -646,7 +646,7 @@ async function start(canvas: HTMLCanvasElement) {
     resolution: 2048,
     shadowDistance: 300,
     softness: 1.0,
-    bias: 0.0005,
+    bias: -0.0001,
     normalBias: 0.02,
     intensity: 1.0,
   });
@@ -948,9 +948,6 @@ function updateShadowSettings(settings: ShadowSettings) {
   glRenderer.shadowMap.enabled = shadowSettings.enabled;
   glRenderer.shadowMap.autoUpdate = false;
   glRenderer.shadowMap.type = THREE.PCFShadowMap;
-  if (shadowSettings.enabled) {
-    markNativeShadowMapDirty();
-  }
 }
 
 // Global function for UI to update graphics settings (time of day, exposure, etc.)

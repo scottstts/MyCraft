@@ -37,10 +37,14 @@ const DEFAULT_SHADOW_SETTINGS: ShadowSettings = {
   resolution: 2048,
   shadowDistance: 300,
   softness: 1.0,
-  bias: 0.0005,
+  // Native WebGL shadow comparison adds this value to receiver depth. A
+  // positive value pushes receivers farther from the light and worsens acne.
+  bias: -0.0001,
   normalBias: 0.02,
   intensity: 1.0,
 };
+
+const TWO_PI = Math.PI * 2;
 
 export class SunController {
   readonly sun: THREE.DirectionalLight;
@@ -63,6 +67,14 @@ export class SunController {
   };
   private shadowFocus = new THREE.Vector3(0, 48, 0);
   private shadowDirty = true;
+  // Keep authored lighting smooth, but do not rebuild the native map for
+  // sub-texel angular motion. This is the angular equivalent of snapping a
+  // camera-following shadow projection to its texel grid.
+  private shadowSunDirection = new THREE.Vector3(1, 1, 1).normalize();
+  private shadowTheta = Number.NaN;
+  private readonly east = new THREE.Vector3(Math.cos(Math.PI * 0.25), 0, Math.sin(Math.PI * 0.25));
+  private readonly up = new THREE.Vector3(0, 1, 0);
+  private readonly shadowDirectionCandidate = new THREE.Vector3();
 
   constructor(scene: THREE.Scene, opts: SunControllerOptions = {}) {
     this.cycleSeconds = opts.cycleSeconds ?? 180;
@@ -104,7 +116,9 @@ export class SunController {
   setTime(t: number): void {
     // clamp-wrap
     this.t = ((t % 1) + 1) % 1;
-    this.recomputeLighting();
+    // A direct user edit should update the shadow immediately. The running
+    // cycle uses the quantized path below and therefore remains stable.
+    this.recomputeLighting(true);
   }
 
   pause(p: boolean): void {
@@ -156,7 +170,7 @@ export class SunController {
   }
 
   setShadowSettings(settings: Partial<ShadowSettings>): void {
-    const previousResolution = this.shadowSettings.resolution;
+    const previous = { ...this.shadowSettings };
     if (settings.enabled !== undefined) this.shadowSettings.enabled = !!settings.enabled;
     if (settings.resolution !== undefined) this.shadowSettings.resolution = normalizeShadowResolution(settings.resolution);
     if (settings.shadowDistance !== undefined) this.shadowSettings.shadowDistance = THREE.MathUtils.clamp(settings.shadowDistance, 50, 2000);
@@ -175,13 +189,23 @@ export class SunController {
     // Three creates the native target lazily and does not recreate an
     // existing target just because mapSize changed. Dispose that target so a
     // runtime resolution change is applied on the next shadow render.
-    if (previousResolution !== this.shadowSettings.resolution && this.sun.shadow.map) {
+    if (previous.resolution !== this.shadowSettings.resolution && this.sun.shadow.map) {
       this.sun.shadow.map.dispose();
       this.sun.shadow.map = null;
     }
 
-    this.updateShadowTransform();
-    this.markShadowNeedsUpdate();
+    const changed =
+      previous.enabled !== this.shadowSettings.enabled ||
+      previous.resolution !== this.shadowSettings.resolution ||
+      previous.shadowDistance !== this.shadowSettings.shadowDistance ||
+      previous.softness !== this.shadowSettings.softness ||
+      previous.bias !== this.shadowSettings.bias ||
+      previous.normalBias !== this.shadowSettings.normalBias ||
+      previous.intensity !== this.shadowSettings.intensity;
+    if (changed) {
+      this.updateShadowTransform();
+      this.markShadowNeedsUpdate();
+    }
   }
 
   getShadowSettings(): ShadowSettings {
@@ -206,25 +230,43 @@ export class SunController {
     this.hemi.parent?.remove(this.hemi);
   }
 
-  private recomputeLighting(): void {
+  private recomputeLighting(forceShadowUpdate = false): void {
     // Parametric sun path: rotate in the plane spanned by world up and an east vector
     // t in [0,1) -> theta in [0, 2π); theta=π/2 ≈ zenith (default initialTime=0.25)
-    const theta = this.t * Math.PI * 2;
-
-    // Define horizontal east vector by azimuth; sun moves east->up->west->down
-    const azimuth = Math.PI * 0.25; // 45° rotation around Y
-    const east = new THREE.Vector3(Math.cos(azimuth), 0, Math.sin(azimuth)); // unit
-    const up = new THREE.Vector3(0, 1, 0);
+    const theta = this.t * TWO_PI;
 
     // Sun direction on the unit circle in the east-up plane
-    this.sunDir.copy(east).multiplyScalar(Math.cos(theta)).addScaledVector(up, Math.sin(theta)).normalize();
+    this.sunDir.copy(this.east).multiplyScalar(Math.cos(theta)).addScaledVector(this.up, Math.sin(theta)).normalize();
 
-    // Update the light and native shadow camera using the same fixed target.
-    // Directional-light illumination is unchanged by the finite placement;
-    // the position only gives Three.js a stable frame for its shadow map.
-    this.updateShadowTransform();
+    // Advance the native shadow projection only when the authored sun has
+    // moved by roughly two shadow texels at the edge of the map. An
+    // orthographic map's texel width is 2 * extent / resolution; rotating a
+    // point at radius extent by 4 / resolution moves it by roughly two of
+    // those texels. Re-rendering a PCF depth map at every simulation frame
+    // causes its hard comparisons to crawl/flicker even when the camera is
+    // stationary.
+    const shadowStep = 4 / Math.max(256, this.shadowSettings.resolution);
+    const quantizedTheta = Math.round(theta / shadowStep) * shadowStep;
+    this.shadowDirectionCandidate
+      .copy(this.east)
+      .multiplyScalar(Math.cos(quantizedTheta))
+      .addScaledVector(this.up, Math.sin(quantizedTheta))
+      .normalize();
+
+    const directionChanged =
+      forceShadowUpdate ||
+      !Number.isFinite(this.shadowTheta) ||
+      this.shadowSunDirection.dot(this.shadowDirectionCandidate) < 1 - 1e-10;
+    if (directionChanged) {
+      this.shadowTheta = quantizedTheta;
+      this.shadowSunDirection.copy(this.shadowDirectionCandidate);
+      this.updateShadowTransform(this.shadowSunDirection);
+      this.markShadowNeedsUpdate();
+    }
+
+    // Keep the target's world matrix current even on frames where the
+    // quantized shadow projection is intentionally held.
     this.sun.target.updateMatrixWorld();
-    this.markShadowNeedsUpdate();
 
     // Elevation for color/intensity control (clamped to [0,1] for day metrics)
     const y = Math.sin(theta);
@@ -245,7 +287,7 @@ export class SunController {
     this.hemi.groundColor.setRGB(0.05, 0.05, 0.06);
   }
 
-  private updateShadowTransform(): void {
+  private updateShadowTransform(direction: THREE.Vector3 = this.shadowSunDirection): void {
     this.sun.target.position.copy(this.shadowFocus);
 
     const spanX = this.shadowBounds.maxX - this.shadowBounds.minX;
@@ -256,7 +298,7 @@ export class SunController {
     const extent = Math.max(8, 0.5 * Math.sqrt(spanX * spanX + spanY * spanY + spanZ * spanZ) + 8);
     const lightDistance = Math.max(200, this.shadowSettings.shadowDistance, extent + 32);
 
-    this.sun.position.copy(this.shadowFocus).addScaledVector(this.sunDir, lightDistance);
+    this.sun.position.copy(this.shadowFocus).addScaledVector(direction, lightDistance);
     this.sun.updateMatrixWorld();
     this.sun.target.updateMatrixWorld();
 
