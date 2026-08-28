@@ -92,7 +92,7 @@ export class CloudsLayer {
     });
 
     this.mesh = new THREE.Mesh(geom, this.material);
-    // Ensure clouds never cast/receive shadows into custom maps
+    // Keep the transparent cloud layer out of the native shadow map.
     this.mesh.castShadow = false;
     this.mesh.receiveShadow = false;
     this.mesh.renderOrder = 1;
@@ -111,7 +111,7 @@ export class CloudsLayer {
     this.material.uniforms.uTime.value = (performance.now() - this.start) / 1000;
   }
 
-  // Expose parameters for other systems (e.g., block shading cloud shadows)
+  // Expose parameters for UI/atmosphere controls.
   getCoverage(): number { return this.material.uniforms.uCoverage.value as number }
   getDensity(): number { return this.material.uniforms.uDensity.value as number }
   getAltitude(): number { return this.altitude }

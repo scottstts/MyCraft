@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { SSAO_FRAGMENT_GLSL } from './postprocessing/ssaoShader';
 
 export interface PostProcessorSettings {
   ssaoEnabled: boolean;
@@ -38,7 +39,8 @@ export class SimplePostProcessor {
   private settings: PostProcessorSettings = {
     ssaoEnabled: true,
     ssaoIntensity: 0.3,
-    ssaoRadius: 0.2,
+    // Radius is expressed in world units (blocks/meters), not pixels.
+    ssaoRadius: 1.25,
     bloomEnabled: true,
     bloomStrength: 0.30,
     bloomThreshold: 0.05,
@@ -110,9 +112,10 @@ export class SimplePostProcessor {
         resolution: { value: new THREE.Vector2() },
         cameraNear: { value: 0.1 },
         cameraFar: { value: 1000 },
-        invProjection: { value: new THREE.Matrix4() },
+        invProjectionMatrix: { value: new THREE.Matrix4() },
         invView: { value: new THREE.Matrix4() },
         cameraMatrixWorld: { value: new THREE.Matrix4() },
+        projectionScale: { value: new THREE.Vector2(1, 1) },
         sunDirView: { value: new THREE.Vector3(0.6, 0.8, 0.1).normalize() },
         ssaoEnabled: { value: this.settings.ssaoEnabled },
         ssaoIntensity: { value: this.settings.ssaoIntensity },
@@ -142,14 +145,6 @@ export class SimplePostProcessor {
       `,
       fragmentShader: `
         uniform sampler2D tDiffuse;
-        uniform sampler2D tDepth;
-        uniform vec2 resolution;
-        uniform float cameraNear;
-        uniform float cameraFar;
-        uniform bool ssaoEnabled;
-        uniform float ssaoIntensity;
-        uniform float ssaoRadius;
-        uniform float waterLevel;
         uniform bool bloomEnabled;
         uniform float bloomStrength;
         uniform float bloomThreshold;
@@ -163,41 +158,11 @@ export class SimplePostProcessor {
         uniform bool volumetricsEnabled;
         uniform float volumetricsIntensity;
         uniform int volumetricsSteps;
-        uniform mat4 invProjection;
         uniform mat4 invView;
-        uniform mat4 cameraMatrixWorld;
         uniform vec3 sunDirView;
         
         varying vec2 vUv;
-
-        float readDepth(vec2 coord) {
-          float fragCoordZ = texture2D(tDepth, coord).r;
-          if (fragCoordZ == 1.0) return cameraFar; // Handle background
-          float viewZ = (cameraNear * cameraFar) / ((cameraFar - cameraNear) * fragCoordZ - cameraFar);
-          return -viewZ; // Return positive depth
-        }
-
-        vec3 reconstructViewPosition(vec2 uv, float viewDepth) {
-          // Reconstruct from NDC using inverse projection
-          vec4 ndc = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
-          // Set z from depth in view space
-          // Approximate by placing on near plane ray and scaling by depth
-          vec4 rayClip = vec4(ndc.xy, -1.0, 1.0);
-          vec4 rayView = invProjection * rayClip;
-          rayView /= rayView.w;
-          vec3 dir = normalize(rayView.xyz);
-          return dir * viewDepth;
-        }
-        vec3 reconstructWorldPos(float viewDepth){
-          vec2 ndc = vUv * 2.0 - 1.0;
-          vec4 clip = vec4(ndc, 1.0, 1.0);
-          vec4 viewFar = invProjection * clip; viewFar /= viewFar.w;
-          vec3 dirV = normalize(viewFar.xyz);
-          float t = viewDepth / max(1e-4, -dirV.z);
-          vec3 posV = dirV * t;
-          vec4 posW = cameraMatrixWorld * vec4(posV, 1.0);
-          return posW.xyz;
-        }
+        ${SSAO_FRAGMENT_GLSL}
 
         // Hash for per-pixel random rotation
         float hash12(vec2 p) {
@@ -205,89 +170,12 @@ export class SimplePostProcessor {
           p3 += dot(p3, p3.yzx + 33.33);
           return fract((p3.x + p3.y) * p3.z);
         }
-        // Improved SSAO with rotating kernel and continuous falloff
-        float ssao(vec2 uv, vec3 position, vec3 normal) {
-          if (!ssaoEnabled) return 1.0;
-          float current = readDepth(uv);
-          if (current >= cameraFar * 0.99) return 1.0;
-          // Also skip AO for underwater pixels based on reconstructed world Y
-          vec3 pw = reconstructWorldPos(current);
-          if (pw.y < waterLevel - 0.1) return 1.0;
-          
-          // Compute local depth gradients to detect flat surfaces
-          float px = 1.5 / min(resolution.x, resolution.y);
-          float d1 = readDepth(clamp(uv + vec2(px, 0.0), vec2(0.0), vec2(1.0)));
-          float d2 = readDepth(clamp(uv + vec2(-px, 0.0), vec2(0.0), vec2(1.0)));
-          float d3 = readDepth(clamp(uv + vec2(0.0, px), vec2(0.0), vec2(1.0)));
-          float d4 = readDepth(clamp(uv + vec2(0.0, -px), vec2(0.0), vec2(1.0)));
-          if (d1 >= cameraFar*0.99) d1 = current; if (d2 >= cameraFar*0.99) d2 = current;
-          if (d3 >= cameraFar*0.99) d3 = current; if (d4 >= cameraFar*0.99) d4 = current;
-          float dmin = min(min(d1,d2), min(d3,d4));
-          float dmax = max(max(d1,d2), max(d3,d4));
-          float drange = dmax - dmin;
-          
-          // Compute surface normal from depth to detect when looking down at flat surfaces
-          float dzdx = (d1 - d2) / (2.0 * px);
-          float dzdy = (d3 - d4) / (2.0 * px);
-          // Estimate view-space normal Z component - flat horizontal surface seen from above has high Z
-          float normalZ = 1.0 / sqrt(1.0 + dzdx*dzdx + dzdy*dzdy);
-          // When looking down at a flat surface, normalZ approaches 1.0
-          // Reduce SSAO intensity for such surfaces to prevent false darkening
-          float flatSurfaceFactor = smoothstep(0.95, 0.99, normalZ);
-          
-          // Also detect if we're looking mostly downward based on gradient magnitudes
-          float gradMag = sqrt(dzdx*dzdx + dzdy*dzdy);
-          float depthNorm = current / cameraFar;
-          // If gradient is very small relative to depth, surface is likely flat and viewed from above
-          float lookingDownFactor = smoothstep(0.1, 0.02, gradMag / max(depthNorm * 100.0, 1.0));
-          
-          // Combine factors to reduce SSAO when looking down at flat terrain
-          float flatReduction = max(flatSurfaceFactor, lookingDownFactor * 0.7);
-          
-          float eps = mix(0.01, 0.25, clamp(current / cameraFar, 0.0, 1.0));
-          float edgeMask = smoothstep(eps * 0.25, eps, drange);
 
-          // Screen-space kernel radius (pixels)
-          float baseRadius = ssaoRadius * 200.0;
-          float angle0 = hash12(uv * resolution) * 6.2831853;
-          float cs = cos(angle0), sn = sin(angle0);
-          mat2 rot = mat2(cs, -sn, sn, cs);
-          int samples = 16;
-          float occlusion = 0.0;
-          float valid = 0.0;
-          float depthScale = clamp(current / cameraFar, 0.0, 1.0);
-          float maxDelta = mix(2.0, 20.0, depthScale);
-          float thickness = mix(0.002, 0.08, depthScale);
-          
-          // Increase thickness tolerance when looking at flat surfaces to reduce false occlusion
-          thickness *= (1.0 + flatReduction * 3.0);
-          
-          for (int i=0; i<16; i++) {
-            float t = (float(i)+0.5) / 16.0;
-            float r = mix(0.25, 1.0, t);
-            float a = t * 6.2831853;
-            vec2 dir = vec2(cos(a), sin(a));
-            vec2 o = rot * dir * (baseRadius * r) / resolution;
-            vec2 suv = clamp(uv + o, vec2(0.0), vec2(1.0));
-            float sd = readDepth(suv);
-            if (sd >= cameraFar * 0.99) { continue; }
-            valid += 1.0;
-            float diff = current - sd; // positive when sample is closer
-            if (diff > thickness) {
-              float w = 1.0 - clamp((diff - thickness) / maxDelta, 0.0, 1.0);
-              occlusion += w;
-            }
-          }
-          // Normalize by number of valid samples (avoid horizon artifacts)
-          occlusion = (occlusion / max(1.0, valid)) * ssaoIntensity * (0.75 + 0.25 * edgeMask);
-          
-          // Apply flat surface reduction to prevent darkening when looking down
-          occlusion *= (1.0 - flatReduction * 0.8);
-          
-          // Fade AO near the far plane to avoid a visible seam over water
-          float farFade = smoothstep(cameraFar * 0.30, cameraFar * 0.65, current);
-          occlusion *= (1.0 - farFade);
-          return clamp(1.0 - occlusion * 0.75, 0.5, 1.0);
+        float readDepth(vec2 coord) {
+          float rawDepth = texture2D(tDepth, clamp(coord, vec2(0.0), vec2(1.0))).r;
+          if (rawDepth >= 0.999999) return cameraFar;
+          float viewZ = (cameraNear * cameraFar) / ((cameraFar - cameraNear) * rawDepth - cameraFar);
+          return -viewZ;
         }
 
         // Working bloom effect
@@ -391,17 +279,13 @@ export class SimplePostProcessor {
           // Apply bloom (always process, function handles enable/disable)
           color = bloom(tDiffuse, vUv);
           
-          // Apply SSAO with safety checks
-          if (ssaoEnabled) {
-            float depth = readDepth(vUv);
-            // Only apply SSAO to valid depth values
-            if (depth > cameraNear && depth < cameraFar * 0.99) {
-              vec3 position = vec3(vUv * 2.0 - 1.0, depth);
-              vec3 normal = vec3(0.0, 0.0, 1.0); // Simplified normal
-              float ao = ssao(vUv, position, normal);
-              color *= ao;
-            }
-          }
+          // Apply SSAO only to the indirect component encoded by
+          // BlockMaterial's opaque alpha channel. This keeps direct sun
+          // contrast from being mistaken for ambient visibility.
+          vec4 source = texture2D(tDiffuse, vUv);
+          float indirectMask = clamp(1.0 - source.a, 0.0, 1.0);
+          float ao = mix(1.0, ssaoFactor(vUv), indirectMask);
+          color *= ao;
           
           // Volumetrics (additive)
           float viewDepth = readDepth(vUv);
@@ -441,15 +325,18 @@ export class SimplePostProcessor {
     //   changes: newSettings
     // });
 
-      if (this.quadMaterial) {
-        const uniforms = this.quadMaterial.uniforms as Record<string, { value: unknown }>;
-      
+    if (this.quadMaterial) {
+      const uniforms = this.quadMaterial.uniforms as Record<string, { value: unknown }>;
       if (newSettings.ssaoEnabled !== undefined) {
         uniforms.ssaoEnabled.value = newSettings.ssaoEnabled;
         // console.log('[PostProcessor] SSAO enabled:', newSettings.ssaoEnabled);
       }
-      if (newSettings.ssaoIntensity !== undefined) uniforms.ssaoIntensity.value = newSettings.ssaoIntensity;
-      if (newSettings.ssaoRadius !== undefined) uniforms.ssaoRadius.value = newSettings.ssaoRadius;
+      if (newSettings.ssaoIntensity !== undefined) {
+        uniforms.ssaoIntensity.value = THREE.MathUtils.clamp(newSettings.ssaoIntensity, 0, 1);
+      }
+      if (newSettings.ssaoRadius !== undefined) {
+        uniforms.ssaoRadius.value = Math.max(0.05, newSettings.ssaoRadius);
+      }
       if (newSettings.waterLevel !== undefined) uniforms.waterLevel.value = newSettings.waterLevel;
       if (newSettings.bloomEnabled !== undefined) {
         uniforms.bloomEnabled.value = newSettings.bloomEnabled;
@@ -500,9 +387,13 @@ export class SimplePostProcessor {
       uniforms.cameraFar.value = (this.camera as THREE.PerspectiveCamera).far || 1000;
       // Update matrices for reconstruction and sun dir in view space
       const cam = this.camera as THREE.PerspectiveCamera;
-      (uniforms.invProjection.value as THREE.Matrix4).copy(cam.projectionMatrixInverse);
+      (uniforms.invProjectionMatrix.value as THREE.Matrix4).copy(cam.projectionMatrixInverse);
       (uniforms.invView.value as THREE.Matrix4).copy(cam.matrixWorldInverse);
       (uniforms.cameraMatrixWorld.value as THREE.Matrix4).copy(cam.matrixWorld);
+      (uniforms.projectionScale.value as THREE.Vector2).set(
+        cam.projectionMatrix.elements[0],
+        cam.projectionMatrix.elements[5],
+      );
       (uniforms.sunDirView.value as THREE.Vector3).copy(this.sunDirView);
     }
     

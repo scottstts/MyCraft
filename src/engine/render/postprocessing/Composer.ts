@@ -1,7 +1,6 @@
 /**
- * Composer scaffolding for future migration to EffectComposer
- * Current engine still uses SimplePostProcessor; this wrapper prepares
- * a pipeline of RenderPass -> SSAO -> Volumetrics -> Bloom -> Fog/Color.
+ * WebGL post-processing pipeline built on EffectComposer.
+ * The pass order is RenderPass -> SSAO -> Volumetrics -> Bloom -> Fog/Color.
  */
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'

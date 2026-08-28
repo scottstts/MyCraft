@@ -9,7 +9,8 @@ export class BodyMaterial extends THREE.ShaderMaterial {
       varying vec3 vViewPos;
       void main(){
         vUv = uv;
-        vNormal = normalize(normalMatrix * normal);
+        // Keep the normal in world space to match sunDirection and vWorldPos.
+        vNormal = normalize(mat3(modelMatrix) * normal);
         vec4 worldPos = modelMatrix * vec4(position, 1.0);
         vWorldPos = worldPos.xyz;
         vec4 viewPos = viewMatrix * worldPos;
@@ -48,7 +49,9 @@ export class BodyMaterial extends THREE.ShaderMaterial {
         vec3 diffuse = sunColor * NdotL * clamp(dayLight, 0.0, 1.0);
 
         // Subtle rim to keep silhouette readable
-        vec3 V = normalize(-vViewPos);
+        // N and the lighting direction are world-space, so keep the view
+        // vector in the same space for camera-stable rim lighting.
+        vec3 V = normalize(cameraPosition - vWorldPos);
         float fresnel = pow(1.0 - max(dot(N, V), 0.0), 2.0);
         vec3 rim = vec3(0.8, 0.9, 1.0) * fresnel * 0.08 * clamp(dayLight, 0.0, 1.0);
 
@@ -90,4 +93,3 @@ export class BodyMaterial extends THREE.ShaderMaterial {
     (this.uniforms.alphaCutoff as { value: number }).value = THREE.MathUtils.clamp(c, 0, 1);
   }
 }
-

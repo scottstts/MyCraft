@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { useUIStore } from '../state/ui';
 import type { PostProcessorSettings } from '../engine/render/SimplePostProcessor';
-import type { ShadowSettings } from '../engine/render/ShadowSystem';
+import type { ShadowSettings } from '../engine/render/lighting/SunController';
 import type { GraphicsSettings } from '../engine/render/settings/GraphicsSettings';
 import SaveWorldButton from './SaveWorldButton';
 
@@ -32,8 +32,6 @@ interface PostProcessingSettings {
   shadowIntensity: number;
   shadowBias: number;
   shadowNormalBias: number;
-  shadowBlendFraction: number;
-  shadowBlendMin: number;
   fogEnabled?: boolean;
   fogBaseDensity?: number;
   fogMaxDistance?: number;
@@ -49,7 +47,7 @@ export const DebugPanel: React.FC = () => {
   const [settings, setSettings] = useState<PostProcessingSettings>({
     ssaoEnabled: true,
     ssaoIntensity: 0.35,
-    ssaoRadius: 0.2,
+    ssaoRadius: 1.25,
     bloomEnabled: true,
     bloomStrength: 0.30,
     bloomThreshold: 0.05,
@@ -57,14 +55,12 @@ export const DebugPanel: React.FC = () => {
     contrast: 1.15,
     saturation: 1.1,
     shadowEnabled: true, // Enable shadows by default
-    shadowResolution: 1024,
+    shadowResolution: 2048,
     shadowDistance: 300,
     shadowSoftness: 1.0,
     shadowIntensity: 1.0,
     shadowBias: 0.0005,
     shadowNormalBias: 0.02,
-    shadowBlendFraction: 0.2,
-    shadowBlendMin: 3,
     fogEnabled: true,
     fogBaseDensity: 0.002,
     fogMaxDistance: 600,
@@ -124,14 +120,11 @@ export const DebugPanel: React.FC = () => {
         const shadowSettings = {
           enabled: settings.shadowEnabled,
           resolution: settings.shadowResolution,
-          cascades: 3,
           shadowDistance: settings.shadowDistance,
           softness: settings.shadowSoftness,
           bias: settings.shadowBias,
           normalBias: settings.shadowNormalBias,
           intensity: settings.shadowIntensity,
-          shadowBlendFraction: settings.shadowBlendFraction,
-          shadowBlendMin: settings.shadowBlendMin,
         };
         updateShadowFn(shadowSettings);
         // console.log('[DebugPanel] Applied initial shadow settings');
@@ -254,14 +247,11 @@ export const DebugPanel: React.FC = () => {
       const shadowSettings = {
         enabled: newSettings.shadowEnabled,
         resolution: newSettings.shadowResolution,
-        cascades: 3, // Fixed value for now
         shadowDistance: newSettings.shadowDistance,
         softness: newSettings.shadowSoftness,
         bias: newSettings.shadowBias,
         normalBias: newSettings.shadowNormalBias,
         intensity: newSettings.shadowIntensity,
-        shadowBlendFraction: newSettings.shadowBlendFraction,
-        shadowBlendMin: newSettings.shadowBlendMin,
       };
       updateShadowFn(shadowSettings);
       // console.log(`[DebugPanel] Updated shadow settings:`, shadowSettings);
@@ -539,14 +529,14 @@ export const DebugPanel: React.FC = () => {
             fontWeight: 500,
             color: '#94a3b8'
           }}>
-            <span>Radius</span>
+            <span>Radius (world units)</span>
             <span style={{ color: '#e2e8f0' }}>{settings.ssaoRadius.toFixed(3)}</span>
           </div>
           <input
             type="range"
             min="0.05"
-            max="0.5"
-            step="0.01"
+            max="4"
+            step="0.05"
             value={settings.ssaoRadius}
             onChange={(e) => handleSettingChange('ssaoRadius', parseFloat(e.target.value))}
             disabled={!settings.ssaoEnabled}
@@ -778,82 +768,6 @@ export const DebugPanel: React.FC = () => {
             step="0.05"
             value={settings.shadowIntensity}
             onChange={(e) => handleSettingChange('shadowIntensity', parseFloat(e.target.value))}
-            disabled={!settings.shadowEnabled}
-            style={{ 
-              width: '100%', 
-              height: '4px',
-              borderRadius: '2px',
-              background: 'rgba(255,255,255,0.1)',
-              outline: 'none',
-              cursor: 'pointer'
-            }}
-          />
-        </label>
-
-        <label style={{ 
-          display: 'block', 
-          marginBottom: '12px', 
-          opacity: settings.shadowEnabled ? 1 : 0.5,
-          padding: '8px 12px',
-          borderRadius: '8px',
-          background: 'rgba(255,255,255,0.02)'
-        }}>
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between',
-            marginBottom: '6px',
-            fontSize: '12px',
-            fontWeight: 500,
-            color: '#94a3b8'
-          }}>
-            <span>Blend Fraction</span>
-            <span style={{ color: '#e2e8f0' }}>{settings.shadowBlendFraction.toFixed(2)}</span>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="5"
-            step="0.05"
-            value={settings.shadowBlendFraction}
-            onChange={(e) => handleSettingChange('shadowBlendFraction', parseFloat(e.target.value))}
-            disabled={!settings.shadowEnabled}
-            style={{ 
-              width: '100%', 
-              height: '4px',
-              borderRadius: '2px',
-              background: 'rgba(255,255,255,0.1)',
-              outline: 'none',
-              cursor: 'pointer'
-            }}
-          />
-        </label>
-
-        <label style={{ 
-          display: 'block', 
-          marginBottom: '12px', 
-          opacity: settings.shadowEnabled ? 1 : 0.5,
-          padding: '8px 12px',
-          borderRadius: '8px',
-          background: 'rgba(255,255,255,0.02)'
-        }}>
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between',
-            marginBottom: '6px',
-            fontSize: '12px',
-            fontWeight: 500,
-            color: '#94a3b8'
-          }}>
-            <span>Blend Min (units)</span>
-            <span style={{ color: '#e2e8f0' }}>{settings.shadowBlendMin.toFixed(1)}</span>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="50"
-            step="1"
-            value={settings.shadowBlendMin}
-            onChange={(e) => handleSettingChange('shadowBlendMin', parseFloat(e.target.value))}
             disabled={!settings.shadowEnabled}
             style={{ 
               width: '100%', 

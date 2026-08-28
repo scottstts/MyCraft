@@ -56,7 +56,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     group.clear();
 
     const upsertMesh = (
-      buf: { positions: Float32Array; normals: Float32Array; uvs: Float32Array; colors: Float32Array; indices: Uint16Array | Uint32Array },
+      buf: { positions: Float32Array; normals: Float32Array; uvs: Float32Array; ao: Float32Array; colors: Float32Array; indices: Uint16Array | Uint32Array },
       mesh: THREE.Mesh | null | undefined,
       mat: THREE.Material,
       isTransparent: boolean
@@ -80,8 +80,15 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
       };
 
       ensureAttr('position', 3, buf.positions);
+      // Native shadow rendering frustum-culls casters using geometry bounds.
+      // These geometries are reused across remeshes, so invalidate cached
+      // bounds after replacing the position buffer or a stale bound can make
+      // an updated chunk disappear from the shadow pass.
+      geometry.boundingSphere = null;
+      geometry.boundingBox = null;
       ensureAttr('normal', 3, buf.normals);
       ensureAttr('uv', 2, buf.uvs);
+      ensureAttr('ao', 1, buf.ao);
       if (buf.colors && buf.colors.length) {
         ensureAttr('color', 3, buf.colors);
       } else if (geometry.getAttribute('color')) {

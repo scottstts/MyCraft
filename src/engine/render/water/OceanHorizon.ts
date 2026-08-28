@@ -18,7 +18,7 @@ export interface OceanHorizonOptions {
   seed?: number
   /** Estimated world radius used by height sampling */
   worldRadius?: number
-  /** Source block material to sync lighting/shadows so seabed matches terrain sand */
+  /** Source block material to sync lighting so seabed matches terrain sand */
   blockMaterialSource?: BlockMaterial
   /** Desired anisotropy for seabed sand texture (if extension supported) */
   anisotropy?: number
@@ -327,6 +327,8 @@ export class OceanHorizon {
     const positions = new Float32Array(vertCount * 3)
     const uvs = new Float32Array(vertCount * 2)
     const normals = new Float32Array(vertCount * 3)
+    const ao = new Float32Array(vertCount)
+    ao.fill(1)
 
     // Helper: Euclidean radius from world origin (handles corners properly)
     const rEdge = (x: number, z: number) => Math.sqrt(x * x + z * z)
@@ -380,6 +382,7 @@ export class OceanHorizon {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+    geometry.setAttribute('ao', new THREE.BufferAttribute(ao, 1))
     // Provide per-vertex color slightly < 1 to darken seabed a touch to match in-world sand
     const colors = new Float32Array(vertCount * 3)
     const seabedDarken = 0.70 // 70% brightness
@@ -449,15 +452,12 @@ export class OceanHorizon {
     // Access ShaderMaterial uniforms with proper typing
     const su = (src as THREE.ShaderMaterial).uniforms as Record<string, THREE.IUniform>
     const du = (dst as THREE.ShaderMaterial).uniforms as Record<string, THREE.IUniform>
-    // Copy core lighting/shadow/time uniforms so appearance matches blocks exactly
-      const keys = [
-        'sunDirection','sunColor','dayLight','starLight',
-        'shadowMap0','shadowMap1','shadowMap2','shadowMap3',
-        'shadowMatrix0','shadowMatrix1','shadowMatrix2','shadowMatrix3',
-        'shadowCascades','shadowDistances','shadowSoftness','shadowBias','shadowNormalBias','shadowIntensity','shadowResolution','shadowBlendFraction','shadowBlendMin','shadowCascadeSize','shadowCamNear','shadowCamFar',
-        'cloudShadowEnabled','cloudShadowIntensity','cloudShadowAltitude','cloudShadowScale','cloudCoverage','cloudDensity','cloudWind',
-        'time','materialFogEnabled'
-      ]
+    // Copy only the custom lighting uniforms. Native shadow uniforms are
+    // renderer-managed per material and this fake horizon intentionally does
+    // not cast or receive shadows.
+    const keys = [
+      'sunDirection', 'sunColor', 'dayLight', 'starLight', 'materialFogEnabled'
+    ]
     for (const k of keys) {
       if (su[k] && du[k]) du[k].value = su[k].value
     }

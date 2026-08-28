@@ -17,8 +17,7 @@ import { Environment } from '../render/Environment';
 import { BlockMaterial } from '../render/BlockMaterial';
 import { SimplePostProcessor, type PostProcessorSettings } from '../render/SimplePostProcessor';
 import { Composer } from '../render/postprocessing/Composer';
-import { ShadowSystem, type ShadowSettings } from '../render/ShadowSystem';
-import { SunController } from '../render/lighting/SunController';
+import { SunController, type ShadowSettings } from '../render/lighting/SunController';
 import { SkyDome } from '../render/atmosphere/SkyDome';
 import { StarDome } from '../render/atmosphere/StarDome';
 import { CloudsLayer } from '../render/atmosphere/CloudsLayer';
@@ -58,7 +57,6 @@ let blockMaterial: BlockMaterial | null = null;
 let waterMaterial: WaterSurfaceMaterial | null = null;
 let postProcessor: SimplePostProcessor | null = null;
 let composer: Composer | null = null;
-let shadowSystem: ShadowSystem | null = null;
 let sunController: SunController | null = null;
 let skyDome: SkyDome | null = null;
 let starDome: StarDome | null = null;
@@ -106,6 +104,27 @@ function computeBoundsFromChunkCount(totalChunks: number) {
   } as const;
   const worldRadius = Math.max(Math.abs(bounds.maxX - bounds.minX), Math.abs(bounds.maxZ - bounds.minZ)) / 2;
   return { bounds, worldRadius };
+}
+
+function getWebGLRenderer(): THREE.WebGLRenderer | null {
+  const baseRenderer = renderer?.getRenderer();
+  if (!baseRenderer || (baseRenderer as { isWebGPURenderer?: boolean }).isWebGPURenderer === true) return null;
+  return baseRenderer as THREE.WebGLRenderer;
+}
+
+function markNativeShadowMapDirty(): void {
+  sunController?.markShadowNeedsUpdate();
+}
+
+function prepareNativeShadowMap(): void {
+  const glRenderer = getWebGLRenderer();
+  if (!glRenderer || !sunController || !sunController.consumeShadowDirty()) return;
+
+  // Both flags are required when auto-updates are disabled: the renderer
+  // gate and the individual LightShadow gate must agree before the next
+  // scene render builds the native depth map.
+  glRenderer.shadowMap.needsUpdate = true;
+  sunController.sun.shadow.needsUpdate = true;
 }
 
 function downloadJson(filename: string, data: unknown): void {
@@ -239,6 +258,7 @@ function update(dtSeconds: number) {
         const entry = pendingChunkMeshes.get(key);
         if (!entry) continue;
         try { chunkRenderer.handleChunkMesh(entry.response); } catch (e) { console.error('Apply chunk mesh failed', e); }
+        finally { markNativeShadowMapDirty(); }
         pendingChunkMeshes.delete(key);
       }
     }
@@ -310,9 +330,6 @@ function update(dtSeconds: number) {
     playerBody.update(dtSeconds);
   }
   
-  // Update material uniforms
-  if (blockMaterial && camera) blockMaterial.updateUniforms(camera);
-
   // Time-of-day and lighting: pause only when UI paused
   if (sunController) {
     if (!paused) {
@@ -339,21 +356,10 @@ function update(dtSeconds: number) {
     }
   }
 
-  // Update shadow system
-  if (shadowSystem && scene && camera) {
-    if (sunController) {
-      const sunDir = sunController.getSunDirection();
-      shadowSystem.setSunDirection(sunDir);
-    }
-    shadowSystem.update(camera, scene);
-    
-    // Update block materials with shadow uniforms (water uses unlit shader)
-    if (blockMaterial) {
-      const shadowUniforms = shadowSystem.getShadowUniforms();
-      blockMaterial.updateShadowUniforms(shadowUniforms);
-      // grass billboards don't receive shadows to keep shader simple
-    }
-  }
+  // Mark the native map before the first depth/color render in the frame.
+  // Composer's depth prepass consumes this update; its later color pass then
+  // reuses the same map instead of rebuilding it a second time.
+  prepareNativeShadowMap();
   // Update block materials with sun uniforms
   if (blockMaterial && sunController) {
     const sdir = sunController.getSunDirection();
@@ -545,7 +551,7 @@ async function start(canvas: HTMLCanvasElement) {
   if (USE_EFFECT_COMPOSER && !isWebGPU) {
     const glRenderer = baseRenderer as THREE.WebGLRenderer;
     composer = new Composer(glRenderer, scene, camera, canvasSize.width, canvasSize.height);
-    composer.setSSAO(true, 0.3, 0.2);
+    composer.setSSAO(true, 0.3, 1.25);
     composer.setBloom(true, 0.30, 0.05);
     composer.setLens(true, 0.6);
     composer.setFog(true, 0.002, dynamicFogDistance);
@@ -563,7 +569,7 @@ async function start(canvas: HTMLCanvasElement) {
     postProcessor.updateSettings({
       ssaoEnabled: true,
       ssaoIntensity: 0.3,
-      ssaoRadius: 0.2,
+      ssaoRadius: 1.25,
       waterLevel: WATER_LEVEL + 1.0,
       bloomEnabled: true,
       bloomStrength: 0.30,
@@ -583,11 +589,13 @@ async function start(canvas: HTMLCanvasElement) {
     postProcessor = null;
   }
 
-  // Initialize shadow system (temporarily disabled to avoid WebGL feedback loops)
-  shadowSystem = isWebGPU ? null : new ShadowSystem(baseRenderer as THREE.WebGLRenderer, scene);
-
-  // Initialize sun controller (day/night cycle)
-  sunController = new SunController(scene, { cycleSeconds: 180, initialTime: 0.0 });
+  // Initialize the sun controller (day/night cycle) and let Three.js own the
+  // WebGL shadow map. WebGPU remains outside this material/shadow path.
+  sunController = new SunController(scene, {
+    cycleSeconds: 180,
+    initialTime: 0.0,
+    enableShadows: !isWebGPU,
+  });
 
   // Sky dome for physical sky colors
   // Reduce solar disc brightness so bloom doesn't blow out the sky
@@ -596,43 +604,12 @@ async function start(canvas: HTMLCanvasElement) {
   clouds = new CloudsLayer(scene, { altitude: 200, coverage: 0.45, density: 0.65, windDirection: Math.PI * 0.25, windSpeed: 5 });
   // Default clouds off
   clouds.setEnabled(false);
-  // Initialize block material cloud shadow params to match clouds
-  if (blockMaterial && clouds) {
-    const w = clouds.getWind();
-    blockMaterial.setCloudShadowUniforms({
-      // Match clouds default state
-      enabled: false,
-      intensity: 0.35,
-      altitude: clouds.getAltitude(),
-      scale: 100,
-      coverage: clouds.getCoverage(),
-      density: clouds.getDensity(),
-      wind: w,
-    });
-  }
   // Temporary global hooks for clouds adjustments from DebugPanel
   (window as unknown as { __setClouds?: (cov?: number, dens?: number) => void }).__setClouds = (cov?: number, dens?: number) => {
     if (!clouds) return;
     if (typeof cov === 'number') clouds.setCoverage(cov);
     if (typeof dens === 'number') clouds.setDensity(dens);
   };
-  
-  // Configure shadows for strong, crisp sun shadows
-  // console.log('[Engine] Configuring shadow settings');
-  shadowSystem?.updateSettings({
-    enabled: true, // Enable shadows by default
-    resolution: 1024,
-    cascades: 3,
-    shadowDistance: 300,
-    softness: 1.0,
-    bias: 0.0005,
-    normalBias: 0.02,
-    intensity: 1.0,
-    stableExtents: true,
-    extentScale: 1.05,
-    shadowBlendFraction: 0.2,
-    shadowBlendMin: 3,
-  });
   
   // Set atlas config and block registry in chunk pipeline
   const blockRegistry = getBlockRegistry();
@@ -655,6 +632,24 @@ async function start(canvas: HTMLCanvasElement) {
   // Determine world size (total chunks -> NxN grid)
   const totalChunks = Math.max(1, Math.floor(useUIStore.getState().chunkCount || 9));
   const { bounds, worldRadius } = computeBoundsFromChunkCount(totalChunks);
+
+  // Fit one native orthographic shadow projection to the finite generated
+  // world. Its center remains fixed for the whole world lifetime, avoiding
+  // camera-following shadow crawl while retaining coverage for tree casters.
+  sunController?.setShadowBounds({
+    ...bounds,
+    minY: 0,
+    maxY: CHUNK_SIZE.y,
+  });
+  sunController?.setShadowSettings({
+    enabled: !isWebGPU,
+    resolution: 2048,
+    shadowDistance: 300,
+    softness: 1.0,
+    bias: 0.0005,
+    normalBias: 0.02,
+    intensity: 1.0,
+  });
 
   // Update water material edge bounds for consistent seam blend
   if (waterMaterial) {
@@ -717,19 +712,6 @@ async function start(canvas: HTMLCanvasElement) {
   interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);
   // Decorative grass system (instanced billboards)
   grassSystem = new GrassBillboardSystem(scene, world, getBlockIdByName('grass_tuft') ?? 9);
-  // Initialize grass cloud-shadow uniforms to match clouds defaults
-  if (grassSystem && clouds) {
-    const w = clouds.getWind();
-    grassSystem.setCloudShadowUniforms({
-      enabled: false,
-      intensity: 0.35,
-      altitude: clouds.getAltitude(),
-      scale: 100,
-      coverage: clouds.getCoverage(),
-      density: clouds.getDensity(),
-      wind: w,
-    });
-  }
   
   // Sound effects
   sfx = new SoundEffects(world, camera, inputSystem, playerController);
@@ -856,10 +838,10 @@ function stop() {
     postProcessor = null;
   }
 
-  // Clean up shadow system
-  if (shadowSystem) {
-    shadowSystem.dispose();
-    shadowSystem = null;
+  // Clean up native sun/light resources
+  if (sunController) {
+    sunController.dispose();
+    sunController = null;
   }
 
   // Clean up player controller
@@ -956,13 +938,18 @@ function updatePostProcessingSettings(settings: PostProcessorSettings) {
 
 // Global function for UI to update shadow settings
 function updateShadowSettings(settings: ShadowSettings) {
-  // console.log('[Engine] Received shadow settings:', settings);
-  if (shadowSystem) {
-    shadowSystem.updateSettings(settings);
-    // console.log('[Engine] Applied shadow settings successfully');
-  } else {
-    // Shadows disabled/not initialized (e.g., WebGPU path). No-op.
-    return;
+  const glRenderer = getWebGLRenderer();
+  if (!glRenderer || !sunController) return;
+
+  sunController.setShadowSettings(settings);
+  // The controller accepts partial updates; use its merged state so changing
+  // bias, intensity, or resolution cannot implicitly turn the renderer off.
+  const shadowSettings = sunController.getShadowSettings();
+  glRenderer.shadowMap.enabled = shadowSettings.enabled;
+  glRenderer.shadowMap.autoUpdate = false;
+  glRenderer.shadowMap.type = THREE.PCFShadowMap;
+  if (shadowSettings.enabled) {
+    markNativeShadowMapDirty();
   }
 }
 
@@ -986,25 +973,6 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
       }
       if (p.enabled !== undefined) clouds.setEnabled(p.enabled);
 
-      // Keep block and grass materials cloud shadow params in sync
-      if (blockMaterial && clouds) {
-        const w = clouds.getWind();
-        blockMaterial.setCloudShadowUniforms({
-          enabled: p.enabled ?? true,
-          coverage: p.coverage ?? clouds.getCoverage(),
-          density: p.density ?? clouds.getDensity(),
-          altitude: clouds.getAltitude(),
-          wind: w,
-          // intensity/scale kept as current defaults unless explicitly configured later
-        });
-        if (grassSystem) grassSystem.setCloudShadowUniforms({
-          enabled: p.enabled ?? true,
-          coverage: p.coverage ?? clouds.getCoverage(),
-          density: p.density ?? clouds.getDensity(),
-          altitude: clouds.getAltitude(),
-          wind: w,
-        });
-      }
     }
   });
 }

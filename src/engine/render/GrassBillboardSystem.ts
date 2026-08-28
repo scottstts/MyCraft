@@ -150,11 +150,7 @@ export class GrassBillboardSystem {
     return geom
   }
 
-  // Lighting/Shadow sync API (called from Engine)
+  // Lighting sync API (called from Engine)
   setSunUniforms(dir: THREE.Vector3, color: THREE.Color): void { this.material.setSun(dir, color) }
   setDayNight(day: number, star: number): void { this.material.setDayNight(day, star) }
-  updateShadowUniforms(): void { /* grass tufts don't receive cast/receive shadows */ }
-  setCloudShadowUniforms(params: { enabled?: boolean; intensity?: number; altitude?: number; scale?: number; coverage?: number; density?: number; wind?: THREE.Vector2; }): void {
-    this.material.setCloudShadowUniforms(params)
-  }
 }

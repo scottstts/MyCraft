@@ -224,7 +224,7 @@ stop() � Cleanup and dispose resources
 The engine supports both simple and advanced rendering pipelines:
 
 #### Effect Composer Pipeline (`USE_EFFECT_COMPOSER = true`)
-1. **Shadow Pass**: Cascaded shadow mapping from sun
+1. **Shadow Pass**: Native directional shadow mapping from the sun
 2. **Geometry Pass**: Render solid geometry with materials  
 3. **SSAO Pass**: Screen-space ambient occlusion
 4. **Lighting Pass**: Apply lighting and shadows
@@ -245,9 +245,9 @@ Lightweight fallback with basic SSAO, bloom, and fog effects.
 
 ### Dynamic Lighting
 - **Sun Controller**: 24-hour day/night cycle (configurable duration)
-- **Shadow System**: Real-time cascaded shadow maps
+- **Shadow System**: Native directional shadow map with fixed finite-world coverage
 - **Ambient Lighting**: Time-of-day based ambient light levels
-- **Cloud Shadows**: Dynamic cloud shadow projections
+- **Clouds**: Dynamic visual cloud layer (no custom ground-shadow projection)
 
 ## Data Models & Types
 

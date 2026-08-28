@@ -39,8 +39,8 @@ float calculateVertexAO(vec3 worldPos, vec3 normal) {
 void main() {
     vUv = uv;
     
-    // Transform normal to world space
-    vNormal = normalize(normalMatrix * normal);
+    // Lighting is evaluated with world-space directions and positions.
+    vNormal = normalize(mat3(modelMatrix) * normal);
     
     // World position
     vec4 worldPosition = modelMatrix * vec4(position, 1.0);

@@ -75,11 +75,13 @@ function handleMeshChunk(request: MeshChunkRequest): void {
       mesh.opaque.positions.buffer,
       mesh.opaque.normals.buffer,
       mesh.opaque.uvs.buffer,
+      mesh.opaque.ao.buffer,
       mesh.opaque.indices.buffer,
       mesh.opaque.colors.buffer,
       mesh.transparent.positions.buffer,
       mesh.transparent.normals.buffer,
       mesh.transparent.uvs.buffer,
+      mesh.transparent.ao.buffer,
       mesh.transparent.indices.buffer,
       mesh.transparent.colors.buffer,
     ] 
@@ -102,40 +104,12 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
   const cy = parseInt(cyStr, 10) || 0;
   const cz = parseInt(czStr, 10) || 0;
 
-  // Precompute skylight column visibility: lowest Y that is open-to-sky per (lx,lz)
-  const skyOpenFromY = new Int16Array(CHUNK_SIZE.x * CHUNK_SIZE.z);
-  for (let lz = 0; lz < CHUNK_SIZE.z; lz++) {
-    for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
-      const colIndex = lz * CHUNK_SIZE.x + lx;
-      // If any opaque block in the chunk above in this column, column is closed to sky entirely
-      let closedByAbove = false;
-      if (neighbors?.posY) {
-        for (let y = 0; y < CHUNK_SIZE.y; y++) {
-          const id = neighbors.posY.voxels[localToIndex(lx, y, lz)];
-          const def = blockRegistry.get(id);
-          if (def && def.opaque) { closedByAbove = true; break; }
-        }
-      }
-      if (closedByAbove) {
-        skyOpenFromY[colIndex] = CHUNK_SIZE.y + 1; // never open
-        continue;
-      }
-      // Find highest opaque in this column within current chunk
-      let highestOpaque = -1;
-      for (let y = CHUNK_SIZE.y - 1; y >= 0; y--) {
-        const id = chunkData.voxels[localToIndex(lx, y, lz)];
-        const def = blockRegistry.get(id);
-        if (def && def.opaque) { highestOpaque = y; break; }
-      }
-      skyOpenFromY[colIndex] = highestOpaque + 1; // 0..CHUNK_SIZE.y
-    }
-  }
-
   // Opaque and transparent buffers are built separately so we can render
   // them with different materials and blending order on the main thread.
   const positionsO: number[] = [];
   const normalsO: number[] = [];
   const uvsO: number[] = [];
+  const aoO: number[] = [];
   const colorsO: number[] = [];
   const indicesO: number[] = [];
   let vertexCountO = 0;
@@ -143,6 +117,7 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
   const positionsT: number[] = [];
   const normalsT: number[] = [];
   const uvsT: number[] = [];
+  const aoT: number[] = [];
   const colorsT: number[] = [];
   const indicesT: number[] = [];
   let vertexCountT = 0;
@@ -166,10 +141,6 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
         const gx = cx * CHUNK_SIZE.x + lx;
         const gy = cy * CHUNK_SIZE.y + ly;
         const gz = cz * CHUNK_SIZE.z + lz;
-
-        // Compute simple skylight from precomputed map
-        const colIndex = lz * CHUNK_SIZE.x + lx;
-        const skylight = ly >= skyOpenFromY[colIndex] ? 1.0 : 0.7;
 
         // Per-block UV rotation and tiny tint jitter to kill tiling (solid blocks only)
         // Do NOT rotate grass or wood — their textures have a required orientation
@@ -251,20 +222,20 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
             if (isOpaque) {
               addFaceQuad(
                 lx, ly, lz, face, block,
-                positionsO, normalsO, uvsO, colorsO, indicesO, vertexCountO,
+                positionsO, normalsO, uvsO, aoO, colorsO, indicesO, vertexCountO,
                 chunkData, // for in-chunk AO sampling
                 neighbors, // for AO sampling across chunk borders
-                skylight, rot, tint, // per-block
+                rot, tint, // per-block
                 
               );
               vertexCountO += 4;
             } else {
               addFaceQuad(
                 lx, ly, lz, face, block,
-                positionsT, normalsT, uvsT, colorsT, indicesT, vertexCountT,
+                positionsT, normalsT, uvsT, aoT, colorsT, indicesT, vertexCountT,
                 chunkData,
                 neighbors,
-                1.0, 0, 1.0, // no skylight/tint/rotation for water; safe defaults
+                0, 1.0, // no tint/rotation for water; safe defaults
                 
               );
               vertexCountT += 4;
@@ -280,6 +251,7 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
       positions: new Float32Array(positionsO),
       normals: new Float32Array(normalsO),
       uvs: new Float32Array(uvsO),
+      ao: new Float32Array(aoO),
       colors: new Float32Array(colorsO),
       indices: new Uint32Array(indicesO)
     },
@@ -287,6 +259,7 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
       positions: new Float32Array(positionsT),
       normals: new Float32Array(normalsT),
       uvs: new Float32Array(uvsT),
+      ao: new Float32Array(aoT),
       colors: new Float32Array(colorsT),
       indices: new Uint32Array(indicesT)
     }
@@ -303,7 +276,7 @@ function addFaceQuad(
   lx: number, ly: number, lz: number,
   face: Face,
   block: BlockDef,
-  positions: number[], normals: number[], uvs: number[], colors: number[], indices: number[],
+  positions: number[], normals: number[], uvs: number[], ao: number[], colors: number[], indices: number[],
   vertexOffset: number,
   chunkData: { voxels: Uint8Array },
   neighbors: {
@@ -314,7 +287,6 @@ function addFaceQuad(
     posZ?: { voxels: Uint8Array };
     negZ?: { voxels: Uint8Array };
   } | undefined,
-  skylight: number,
   uvRotation: number,
   tintJitter: number
 ): void {
@@ -479,9 +451,13 @@ function addFaceQuad(
       aoFactor = aoTable[occ];
     }
 
-    // Combine AO with skylight and per-block jitter
-    const c = aoFactor * skylight * (isSolid ? tintJitter : 1.0);
+    // Keep tint separate from ambient visibility so direct sun lighting is
+    // not darkened by the baked term. The legacy mesher applied a 0.7
+    // skylight factor to every opaque voxel; retain that ambient contribution
+    // without letting it multiply the direct light.
+    const c = isSolid ? tintJitter : 1.0;
     colors.push(c, c, c);
+    ao.push(aoFactor * (isSolid ? 0.7 : 1.0));
   }
   
   // Add indices for two triangles
@@ -526,7 +502,7 @@ function getFaceUV(block: BlockDef, faceName: string): [number, number] {
   return tileCoords;
 }
 
-// --- Helpers for AO/skylight/variation ---
+// --- Helpers for ambient visibility/variation ---
 
 function localInside(x: number, y: number, z: number): boolean {
   return x >= 0 && x < CHUNK_SIZE.x && y >= 0 && y < CHUNK_SIZE.y && z >= 0 && z < CHUNK_SIZE.z;
@@ -586,8 +562,6 @@ function isOccluding(x: number, y: number, z: number, chunkData: { voxels: Uint8
   const def = id >= 0 ? blockRegistry.get(id) : undefined;
   return !!(def && def.opaque);
 }
-
-// (Skylight computed via skyOpenFromY map in buildChunkMesh)
 
 function hash32(x: number, y: number, z: number): number {
   // 32-bit mix (xorshift-like)

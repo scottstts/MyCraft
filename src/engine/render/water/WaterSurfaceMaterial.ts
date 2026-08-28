@@ -99,7 +99,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec4 wp = modelMatrix * vec4(position, 1.0);
           vWorld = wp.xyz;
           vUvVary = uv;
-          vNormalVary = normalize(normalMatrix * normal);
+          // uSunDir and all water positions are world-space.
+          vNormalVary = normalize(mat3(modelMatrix) * normal);
           gl_Position = projectionMatrix * viewMatrix * wp;
         }
       `,

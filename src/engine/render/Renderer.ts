@@ -71,11 +71,17 @@ export class Renderer {
       (this.renderer as THREE.WebGLRenderer).useLegacyLights = false;
     }
 
-    // Optional shadows (disabled for now)
+    // Native WebGL shadows are configured here. The engine marks the single
+    // sun shadow dirty when its direction or caster set changes, so the map
+    // is rendered once and reused by the color/depth passes in a frame.
     if (!this.isWebGPU) {
       const gl = this.renderer as THREE.WebGLRenderer;
-      gl.shadowMap.enabled = false;
-      gl.shadowMap.type = THREE.PCFSoftShadowMap;
+      gl.shadowMap.enabled = true;
+      gl.shadowMap.autoUpdate = false;
+      // PCFShadowMap honors LightShadow.radius. PCFSoftShadowMap's kernel is
+      // screen/texel dependent and ignores that control, making it harder to
+      // keep this pixel-art scene's shadow edge predictable.
+      gl.shadowMap.type = THREE.PCFShadowMap;
     }
   }
 
