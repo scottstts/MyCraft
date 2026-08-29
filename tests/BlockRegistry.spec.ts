@@ -6,6 +6,19 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BlockRegistry, getBlock, getBlockIdByName } from '../src/engine/world/blocks/BlockRegistry';
 
+const DEFAULT_BLOCK_NAMES = [
+  'air',
+  'grass',
+  'dirt',
+  'stone',
+  'sand',
+  'water',
+  'wood',
+  'leaves',
+  'leaves_maple',
+  'grass_tuft',
+] as const;
+
 describe('BlockRegistry', () => {
   let registry: BlockRegistry;
 
@@ -73,7 +86,7 @@ describe('BlockRegistry', () => {
     });
 
     it('should have correct block count', () => {
-      expect(registry.getBlockCount()).toBe(4); // air, grass, dirt, stone
+      expect(registry.getBlockCount()).toBe(DEFAULT_BLOCK_NAMES.length);
     });
 
     it('should check if block exists', () => {
@@ -86,17 +99,17 @@ describe('BlockRegistry', () => {
   describe('Block faces configuration', () => {
     it('should have different face textures for grass', () => {
       const grass = registry.getBlock(1);
-      expect(grass!.faces.top).toEqual([0, 1]);
-      expect(grass!.faces.bottom).toEqual([1, 1]);
-      expect(grass!.faces.side).toEqual([2, 1]);
+      expect(grass!.faces.top).toBe('grass_top');
+      expect(grass!.faces.bottom).toBe('dirt');
+      expect(grass!.faces.side).toBe('grass_side');
     });
 
     it('should have uniform faces for dirt and stone', () => {
       const dirt = registry.getBlock(2);
       const stone = registry.getBlock(3);
 
-      expect(dirt!.faces.all).toEqual([1, 1]);
-      expect(stone!.faces.all).toEqual([3, 1]);
+      expect(dirt!.faces.all).toBe('dirt');
+      expect(stone!.faces.all).toBe('cobblestone');
     });
   });
 
@@ -116,10 +129,10 @@ describe('BlockRegistry', () => {
   describe('getAllBlocks', () => {
     it('should return all registered blocks', () => {
       const allBlocks = registry.getAllBlocks();
-      expect(allBlocks).toHaveLength(4);
+      expect(allBlocks).toHaveLength(DEFAULT_BLOCK_NAMES.length);
       
-      const names = allBlocks.map(block => block.name).sort();
-      expect(names).toEqual(['air', 'dirt', 'grass', 'stone']);
+      const names = allBlocks.map(block => block.name);
+      expect(names).toEqual(DEFAULT_BLOCK_NAMES);
     });
   });
 });

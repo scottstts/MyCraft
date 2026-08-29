@@ -12,6 +12,7 @@ import {
   localToIndex, 
   indexToLocal 
 } from '../src/engine/utils/coords';
+import { CHUNK_SIZE } from '../src/config/constants';
 
 describe('Coordinate Math', () => {
   describe('floorDiv', () => {
@@ -56,24 +57,36 @@ describe('Coordinate Math', () => {
 
   describe('worldToChunk', () => {
     it('maps positive coordinates correctly', () => {
-      const result = worldToChunk(15, 63, 15);
-      expect(result).toEqual({ cx: 0, cy: 0, cz: 0, lx: 15, ly: 63, lz: 15 });
+      const result = worldToChunk(CHUNK_SIZE.x - 1, CHUNK_SIZE.y - 1, CHUNK_SIZE.z - 1);
+      expect(result).toEqual({
+        cx: 0,
+        cy: 0,
+        cz: 0,
+        lx: CHUNK_SIZE.x - 1,
+        ly: CHUNK_SIZE.y - 1,
+        lz: CHUNK_SIZE.z - 1,
+      });
     });
 
     it('maps coordinates at chunk boundaries', () => {
-      const result = worldToChunk(16, 64, 16);
+      const result = worldToChunk(CHUNK_SIZE.x, CHUNK_SIZE.y, CHUNK_SIZE.z);
       expect(result).toEqual({ cx: 1, cy: 1, cz: 1, lx: 0, ly: 0, lz: 0 });
     });
 
     it('maps negative coordinates correctly', () => {
-      // -1 should be in chunk (-1, -1, -1) at local position (15, 63, 15)
       const result = worldToChunk(-1, -1, -1);
-      expect(result).toEqual({ cx: -1, cy: -1, cz: -1, lx: 15, ly: 63, lz: 15 });
+      expect(result).toEqual({
+        cx: -1,
+        cy: -1,
+        cz: -1,
+        lx: CHUNK_SIZE.x - 1,
+        ly: CHUNK_SIZE.y - 1,
+        lz: CHUNK_SIZE.z - 1,
+      });
     });
 
     it('maps negative chunk boundaries correctly', () => {
-      // -16 should be in chunk (-1, -1, -1) at local position (0, 0, 0)
-      const result = worldToChunk(-16, -64, -16);
+      const result = worldToChunk(-CHUNK_SIZE.x, -CHUNK_SIZE.y, -CHUNK_SIZE.z);
       expect(result).toEqual({ cx: -1, cy: -1, cz: -1, lx: 0, ly: 0, lz: 0 });
     });
 
@@ -101,26 +114,27 @@ describe('Coordinate Math', () => {
     it('converts between local coords and flat index correctly', () => {
       // Test some key positions
       expect(localToIndex(0, 0, 0)).toBe(0);
-      expect(localToIndex(15, 0, 0)).toBe(15);
-      expect(localToIndex(0, 0, 1)).toBe(16);
-      expect(localToIndex(0, 1, 0)).toBe(16 * 16);
+      expect(localToIndex(CHUNK_SIZE.x - 1, 0, 0)).toBe(CHUNK_SIZE.x - 1);
+      expect(localToIndex(0, 0, 1)).toBe(CHUNK_SIZE.x);
+      expect(localToIndex(0, 1, 0)).toBe(CHUNK_SIZE.x * CHUNK_SIZE.z);
       
       // Test max position
-      expect(localToIndex(15, 63, 15)).toBe(16 * 64 * 16 - 1);
+      expect(localToIndex(CHUNK_SIZE.x - 1, CHUNK_SIZE.y - 1, CHUNK_SIZE.z - 1))
+        .toBe(CHUNK_SIZE.x * CHUNK_SIZE.y * CHUNK_SIZE.z - 1);
     });
 
     it('converts index back to local coords correctly', () => {
       expect(indexToLocal(0)).toEqual({ lx: 0, ly: 0, lz: 0 });
-      expect(indexToLocal(15)).toEqual({ lx: 15, ly: 0, lz: 0 });
-      expect(indexToLocal(16)).toEqual({ lx: 0, ly: 0, lz: 1 });
-      expect(indexToLocal(16 * 16)).toEqual({ lx: 0, ly: 1, lz: 0 });
+      expect(indexToLocal(CHUNK_SIZE.x - 1)).toEqual({ lx: CHUNK_SIZE.x - 1, ly: 0, lz: 0 });
+      expect(indexToLocal(CHUNK_SIZE.x)).toEqual({ lx: 0, ly: 0, lz: 1 });
+      expect(indexToLocal(CHUNK_SIZE.x * CHUNK_SIZE.z)).toEqual({ lx: 0, ly: 1, lz: 0 });
     });
 
     it('has correct round-trip conversion', () => {
       const testCoords = [
         [0, 0, 0],
-        [15, 63, 15],
-        [8, 32, 8],
+        [CHUNK_SIZE.x - 1, CHUNK_SIZE.y - 1, CHUNK_SIZE.z - 1],
+        [Math.floor(CHUNK_SIZE.x / 2), Math.floor(CHUNK_SIZE.y / 2), Math.floor(CHUNK_SIZE.z / 2)],
         [1, 1, 1]
       ];
 
@@ -135,17 +149,26 @@ describe('Coordinate Math', () => {
   describe('Integration tests', () => {
     it('correctly maps world coordinates across chunk boundaries', () => {
       // Test a sequence of world coordinates that cross chunk boundaries
-      const coords = [-17, -16, -1, 0, 1, 15, 16, 17];
+      const coords = [
+        -CHUNK_SIZE.x - 1,
+        -CHUNK_SIZE.x,
+        -1,
+        0,
+        1,
+        CHUNK_SIZE.x - 1,
+        CHUNK_SIZE.x,
+        CHUNK_SIZE.x + 1,
+      ];
       
       for (const x of coords) {
         const result = worldToChunk(x, 0, 0);
         
         // Verify invariants
         expect(result.lx).toBeGreaterThanOrEqual(0);
-        expect(result.lx).toBeLessThan(16);
+        expect(result.lx).toBeLessThan(CHUNK_SIZE.x);
         
         // Verify reconstruction
-        const reconstructed = result.cx * 16 + result.lx;
+        const reconstructed = result.cx * CHUNK_SIZE.x + result.lx;
         expect(reconstructed).toBe(x);
       }
     });

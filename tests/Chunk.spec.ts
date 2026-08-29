@@ -13,19 +13,19 @@ describe('Chunk indexing utilities', () => {
     it('should convert 3D coordinates to flat index correctly', () => {
       // Test corner cases
       expect(flattenIndex(0, 0, 0)).toBe(0);
-      expect(flattenIndex(15, 0, 0)).toBe(15);
-      expect(flattenIndex(0, 0, 15)).toBe(15 * 16);
-      expect(flattenIndex(0, 1, 0)).toBe(16 * 16);
+      expect(flattenIndex(CHUNK_SIZE.x - 1, 0, 0)).toBe(CHUNK_SIZE.x - 1);
+      expect(flattenIndex(0, 0, CHUNK_SIZE.z - 1)).toBe((CHUNK_SIZE.z - 1) * CHUNK_SIZE.x);
+      expect(flattenIndex(0, 1, 0)).toBe(CHUNK_SIZE.x * CHUNK_SIZE.z);
 
       // Test specific coordinate
-      expect(flattenIndex(5, 10, 7)).toBe(10 * (16 * 16) + 7 * 16 + 5);
+      expect(flattenIndex(5, 10, 7)).toBe(10 * (CHUNK_SIZE.x * CHUNK_SIZE.z) + 7 * CHUNK_SIZE.x + 5);
     });
 
     it('should throw for invalid coordinates', () => {
       expect(() => flattenIndex(-1, 0, 0)).toThrow();
-      expect(() => flattenIndex(16, 0, 0)).toThrow();
-      expect(() => flattenIndex(0, 64, 0)).toThrow();
-      expect(() => flattenIndex(0, 0, 16)).toThrow();
+      expect(() => flattenIndex(CHUNK_SIZE.x, 0, 0)).toThrow();
+      expect(() => flattenIndex(0, CHUNK_SIZE.y, 0)).toThrow();
+      expect(() => flattenIndex(0, 0, CHUNK_SIZE.z)).toThrow();
     });
   });
 
@@ -33,11 +33,11 @@ describe('Chunk indexing utilities', () => {
     it('should convert flat index back to 3D coordinates', () => {
       const testCases = [
         { lx: 0, ly: 0, lz: 0 },
-        { lx: 15, ly: 0, lz: 0 },
-        { lx: 0, ly: 0, lz: 15 },
+        { lx: CHUNK_SIZE.x - 1, ly: 0, lz: 0 },
+        { lx: 0, ly: 0, lz: CHUNK_SIZE.z - 1 },
         { lx: 0, ly: 1, lz: 0 },
         { lx: 5, ly: 10, lz: 7 },
-        { lx: 15, ly: 63, lz: 15 } // Max coordinates
+        { lx: CHUNK_SIZE.x - 1, ly: CHUNK_SIZE.y - 1, lz: CHUNK_SIZE.z - 1 }
       ];
 
       for (const { lx, ly, lz } of testCases) {
@@ -56,18 +56,22 @@ describe('Chunk indexing utilities', () => {
 
   describe('utility functions', () => {
     it('should return correct chunk voxel count', () => {
-      expect(getChunkVoxelCount()).toBe(16 * 64 * 16);
+      expect(getChunkVoxelCount()).toBe(CHUNK_SIZE.x * CHUNK_SIZE.y * CHUNK_SIZE.z);
     });
 
     it('should validate local coordinates correctly', () => {
       expect(isValidLocalCoords(0, 0, 0)).toBe(true);
-      expect(isValidLocalCoords(15, 63, 15)).toBe(true);
-      expect(isValidLocalCoords(8, 32, 8)).toBe(true);
+      expect(isValidLocalCoords(CHUNK_SIZE.x - 1, CHUNK_SIZE.y - 1, CHUNK_SIZE.z - 1)).toBe(true);
+      expect(isValidLocalCoords(
+        Math.floor(CHUNK_SIZE.x / 2),
+        Math.floor(CHUNK_SIZE.y / 2),
+        Math.floor(CHUNK_SIZE.z / 2),
+      )).toBe(true);
 
       expect(isValidLocalCoords(-1, 0, 0)).toBe(false);
-      expect(isValidLocalCoords(16, 0, 0)).toBe(false);
-      expect(isValidLocalCoords(0, 64, 0)).toBe(false);
-      expect(isValidLocalCoords(0, 0, 16)).toBe(false);
+      expect(isValidLocalCoords(CHUNK_SIZE.x, 0, 0)).toBe(false);
+      expect(isValidLocalCoords(0, CHUNK_SIZE.y, 0)).toBe(false);
+      expect(isValidLocalCoords(0, 0, CHUNK_SIZE.z)).toBe(false);
     });
   });
 });
@@ -83,7 +87,7 @@ describe('Chunk class', () => {
     it('should create empty chunk filled with AIR', () => {
       expect(chunk.isEmpty()).toBe(true);
       expect(chunk.get(0, 0, 0)).toBe(0);
-      expect(chunk.get(15, 63, 15)).toBe(0);
+      expect(chunk.get(CHUNK_SIZE.x - 1, CHUNK_SIZE.y - 1, CHUNK_SIZE.z - 1)).toBe(0);
     });
 
     it('should create chunk from existing data', () => {
@@ -134,10 +138,10 @@ describe('Chunk class', () => {
       // Test all corners
       const corners = [
         [0, 0, 0],
-        [15, 0, 0],
-        [0, 63, 0],
-        [0, 0, 15],
-        [15, 63, 15]
+        [CHUNK_SIZE.x - 1, 0, 0],
+        [0, CHUNK_SIZE.y - 1, 0],
+        [0, 0, CHUNK_SIZE.z - 1],
+        [CHUNK_SIZE.x - 1, CHUNK_SIZE.y - 1, CHUNK_SIZE.z - 1]
       ];
 
       for (const [lx, ly, lz] of corners) {
@@ -148,14 +152,14 @@ describe('Chunk class', () => {
 
     it('should throw for invalid coordinates', () => {
       expect(() => chunk.get(-1, 0, 0)).toThrow();
-      expect(() => chunk.get(16, 0, 0)).toThrow();
-      expect(() => chunk.get(0, 64, 0)).toThrow();
-      expect(() => chunk.get(0, 0, 16)).toThrow();
+      expect(() => chunk.get(CHUNK_SIZE.x, 0, 0)).toThrow();
+      expect(() => chunk.get(0, CHUNK_SIZE.y, 0)).toThrow();
+      expect(() => chunk.get(0, 0, CHUNK_SIZE.z)).toThrow();
 
       expect(() => chunk.set(-1, 0, 0, 1)).toThrow();
-      expect(() => chunk.set(16, 0, 0, 1)).toThrow();
-      expect(() => chunk.set(0, 64, 0, 1)).toThrow();
-      expect(() => chunk.set(0, 0, 16, 1)).toThrow();
+      expect(() => chunk.set(CHUNK_SIZE.x, 0, 0, 1)).toThrow();
+      expect(() => chunk.set(0, CHUNK_SIZE.y, 0, 1)).toThrow();
+      expect(() => chunk.set(0, 0, CHUNK_SIZE.z, 1)).toThrow();
     });
 
     it('should throw for invalid block IDs', () => {
@@ -169,7 +173,7 @@ describe('Chunk class', () => {
       chunk.fill(1); // Fill with grass
       expect(chunk.isEmpty()).toBe(false);
       expect(chunk.get(0, 0, 0)).toBe(1);
-      expect(chunk.get(15, 63, 15)).toBe(1);
+      expect(chunk.get(CHUNK_SIZE.x - 1, CHUNK_SIZE.y - 1, CHUNK_SIZE.z - 1)).toBe(1);
     });
 
     it('should clear chunk', () => {
@@ -220,7 +224,7 @@ describe('Chunk class', () => {
       
       // Verify it's a copy
       size.x = 999;
-      expect(chunk.getSize().x).toBe(16);
+      expect(chunk.getSize().x).toBe(CHUNK_SIZE.x);
     });
   });
 });

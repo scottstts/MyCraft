@@ -3,28 +3,65 @@
  * Validates chunk management, world-coordinate block operations, and events
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { World } from '../src/engine/world/World';
 import { Chunk } from '../src/engine/world/chunk/Chunk';
+import { CHUNK_SIZE } from '../src/config/constants';
+
+class TestWorker {
+  static instances: TestWorker[] = [];
+
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: ErrorEvent) => void) | null = null;
+  postMessage = vi.fn();
+  terminate = vi.fn();
+
+  constructor() {
+    TestWorker.instances.push(this);
+  }
+}
 
 describe('World', () => {
   let world: World;
 
   beforeEach(() => {
+    TestWorker.instances.length = 0;
+    vi.stubGlobal('Worker', TestWorker);
     world = new World();
   });
 
+  afterEach(() => {
+    world.chunkPipeline.destroy();
+    vi.unstubAllGlobals();
+  });
+
+  function loadChunk(cx: number, cy: number, cz: number): Chunk {
+    const chunk = new Chunk();
+    world.setChunk(cx, cy, cz, chunk);
+    return chunk;
+  }
+
   describe('Chunk management', () => {
-    it('should create chunks on demand with ensureChunk', () => {
+    it('should request missing chunks with ensureChunk', () => {
       const chunk = world.ensureChunk(0, 0, 0);
-      expect(chunk).toBeInstanceOf(Chunk);
-      expect(chunk.isEmpty()).toBe(true);
+      expect(chunk).toBeUndefined();
+      expect(TestWorker.instances[0].postMessage).toHaveBeenCalledWith({
+        type: 'GEN_CHUNK',
+        payload: {
+          key: '0,0,0',
+          cx: 0,
+          cy: 0,
+          cz: 0,
+          seed: 12345,
+          worldRadius: undefined,
+        },
+      });
     });
 
-    it('should return same chunk for repeated ensureChunk calls', () => {
-      const chunk1 = world.ensureChunk(1, 2, 3);
-      const chunk2 = world.ensureChunk(1, 2, 3);
-      expect(chunk1).toBe(chunk2);
+    it('should deduplicate repeated generation requests', () => {
+      expect(world.ensureChunk(1, 2, 3)).toBeUndefined();
+      expect(world.ensureChunk(1, 2, 3)).toBeUndefined();
+      expect(TestWorker.instances[0].postMessage).toHaveBeenCalledTimes(1);
     });
 
     it('should return undefined for non-existent chunks with getChunk', () => {
@@ -33,7 +70,7 @@ describe('World', () => {
     });
 
     it('should return existing chunk with getChunk', () => {
-      const originalChunk = world.ensureChunk(1, 1, 1);
+      const originalChunk = loadChunk(1, 1, 1);
       const retrievedChunk = world.getChunk(1, 1, 1);
       expect(retrievedChunk).toBe(originalChunk);
     });
@@ -50,7 +87,7 @@ describe('World', () => {
     });
 
     it('should remove chunks correctly', () => {
-      world.ensureChunk(1, 1, 1);
+      loadChunk(1, 1, 1);
       expect(world.isChunkLoaded(1, 1, 1)).toBe(true);
       
       const removed = world.removeChunk(1, 1, 1);
@@ -64,11 +101,11 @@ describe('World', () => {
     it('should track loaded chunk count', () => {
       expect(world.getLoadedChunkCount()).toBe(0);
       
-      world.ensureChunk(0, 0, 0);
+      loadChunk(0, 0, 0);
       expect(world.getLoadedChunkCount()).toBe(1);
       
-      world.ensureChunk(1, 0, 0);
-      world.ensureChunk(0, 1, 0);
+      loadChunk(1, 0, 0);
+      loadChunk(0, 1, 0);
       expect(world.getLoadedChunkCount()).toBe(3);
       
       world.removeChunk(0, 0, 0);
@@ -78,13 +115,16 @@ describe('World', () => {
 
   describe('World-coordinate block operations', () => {
     it('should set and get blocks across chunk boundaries', () => {
-      // Test setting blocks in different chunks
+      loadChunk(0, 0, 0);
+      loadChunk(1, 0, 1);
+      loadChunk(-1, 0, -1);
+
       world.setBlock(0, 10, 0, 1);   // Origin chunk
-      world.setBlock(16, 20, 16, 2); // Different chunk
+      world.setBlock(CHUNK_SIZE.x, 20, CHUNK_SIZE.z, 2); // Positive neighbor chunk
       world.setBlock(-1, 30, -1, 3); // Negative coordinates
       
       expect(world.getBlock(0, 10, 0)).toBe(1);
-      expect(world.getBlock(16, 20, 16)).toBe(2);
+      expect(world.getBlock(CHUNK_SIZE.x, 20, CHUNK_SIZE.z)).toBe(2);
       expect(world.getBlock(-1, 30, -1)).toBe(3);
     });
 
@@ -93,14 +133,18 @@ describe('World', () => {
     });
 
     it('should handle negative world coordinates correctly', () => {
+      loadChunk(-1, 0, -1);
+
       world.setBlock(-5, 10, -7, 2);
       expect(world.getBlock(-5, 10, -7)).toBe(2);
       
-      world.setBlock(-16, 20, -16, 3);
-      expect(world.getBlock(-16, 20, -16)).toBe(3);
+      world.setBlock(-CHUNK_SIZE.x, 20, -CHUNK_SIZE.z, 3);
+      expect(world.getBlock(-CHUNK_SIZE.x, 20, -CHUNK_SIZE.z)).toBe(3);
     });
 
     it('should check block solidity correctly', () => {
+      loadChunk(0, 0, 0);
+
       world.setBlock(0, 0, 0, 0); // AIR (not solid)
       world.setBlock(1, 0, 0, 1); // Grass (solid)
       world.setBlock(2, 0, 0, 2); // Dirt (solid)
@@ -116,6 +160,8 @@ describe('World', () => {
     });
 
     it('should check block opacity correctly', () => {
+      loadChunk(0, 0, 0);
+
       world.setBlock(0, 0, 0, 0); // AIR (not opaque)
       world.setBlock(1, 0, 0, 1); // Grass (opaque)
       
@@ -125,11 +171,12 @@ describe('World', () => {
   });
 
   describe('Events', () => {
-    it('should emit CHUNK_ADDED when chunk is created', () => {
+    it('should emit CHUNK_ADDED when a chunk is loaded', () => {
       const listener = vi.fn();
       world.on('CHUNK_ADDED', listener);
       
-      const chunk = world.ensureChunk(5, 6, 7);
+      const chunk = new Chunk();
+      world.setChunk(5, 6, 7, chunk);
       
       expect(listener).toHaveBeenCalledWith({
         key: '5,6,7',
@@ -139,18 +186,18 @@ describe('World', () => {
     });
 
     it('should not emit CHUNK_ADDED for existing chunks', () => {
-      world.ensureChunk(1, 1, 1);
+      loadChunk(1, 1, 1);
       
       const listener = vi.fn();
       world.on('CHUNK_ADDED', listener);
       
-      world.ensureChunk(1, 1, 1); // Same chunk
+      world.setChunk(1, 1, 1, new Chunk());
       
       expect(listener).not.toHaveBeenCalled();
     });
 
     it('should emit CHUNK_REMOVED when chunk is removed', () => {
-      world.ensureChunk(2, 3, 4);
+      loadChunk(2, 3, 4);
       
       const listener = vi.fn();
       world.on('CHUNK_REMOVED', listener);
@@ -164,6 +211,8 @@ describe('World', () => {
     });
 
     it('should emit BLOCK_CHANGED when block is set', () => {
+      loadChunk(0, 0, 0);
+
       const listener = vi.fn();
       world.on('BLOCK_CHANGED', listener);
       
@@ -183,6 +232,8 @@ describe('World', () => {
     });
 
     it('should emit BLOCK_CHANGED with correct old block ID', () => {
+      loadChunk(0, 0, 0);
+
       world.setBlock(0, 0, 0, 1); // Set to grass first
       
       const listener = vi.fn();
@@ -202,16 +253,16 @@ describe('World', () => {
 
   describe('Utility methods', () => {
     it('should get loaded chunk keys', () => {
-      world.ensureChunk(0, 0, 0);
-      world.ensureChunk(1, 2, 3);
+      loadChunk(0, 0, 0);
+      loadChunk(1, 2, 3);
       
       const keys = world.getLoadedChunkKeys().sort();
       expect(keys).toEqual(['0,0,0', '1,2,3']);
     });
 
     it('should get loaded chunks', () => {
-      const chunk1 = world.ensureChunk(0, 0, 0);
-      const chunk2 = world.ensureChunk(1, 1, 1);
+      const chunk1 = loadChunk(0, 0, 0);
+      const chunk2 = loadChunk(1, 1, 1);
       
       const chunks = world.getLoadedChunks();
       expect(chunks).toHaveLength(2);
@@ -223,7 +274,7 @@ describe('World', () => {
       // Create a 3x3 grid of chunks around origin
       for (let cx = -1; cx <= 1; cx++) {
         for (let cz = -1; cz <= 1; cz++) {
-          world.ensureChunk(cx, 0, cz);
+          loadChunk(cx, 0, cz);
         }
       }
       
@@ -235,9 +286,9 @@ describe('World', () => {
     });
 
     it('should clear all chunks', () => {
-      world.ensureChunk(0, 0, 0);
-      world.ensureChunk(1, 1, 1);
-      world.ensureChunk(-1, -1, -1);
+      loadChunk(0, 0, 0);
+      loadChunk(1, 1, 1);
+      loadChunk(-1, -1, -1);
       
       expect(world.getLoadedChunkCount()).toBe(3);
       
@@ -253,7 +304,7 @@ describe('World', () => {
 
   describe('Chunk by key operations', () => {
     it('should get chunk by key string', () => {
-      const chunk = world.ensureChunk(1, 2, 3);
+      const chunk = loadChunk(1, 2, 3);
       const retrieved = world.getChunkByKey('1,2,3');
       expect(retrieved).toBe(chunk);
     });
