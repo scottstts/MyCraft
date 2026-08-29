@@ -15,6 +15,11 @@ import { isMeshChunkRequest } from '../../types/workers.js';
 import { CHUNK_SIZE } from '../../config/constants.js';
 import { localToIndex } from '../utils/coords.js';
 
+// The unified WaterSystem owns the continuous sea-level plane. Water blocks
+// remain in World for swimming/flooding/placement, but their duplicate sea
+// level top faces must not be rasterized into the chunk mesh.
+const WATER_LEVEL = 42;
+
 // Block registry snapshot (passed from main thread)
 let blockRegistry = new Map<BlockId, BlockDef>();
 let atlasConfig: AtlasConfig | null = null;
@@ -141,6 +146,8 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
         const gx = cx * CHUNK_SIZE.x + lx;
         const gy = cy * CHUNK_SIZE.y + ly;
         const gz = cz * CHUNK_SIZE.z + lz;
+
+        if (block.name === 'water' && gy === WATER_LEVEL) continue;
 
         // Per-block UV rotation and tiny tint jitter to kill tiling (solid blocks only)
         // Do NOT rotate grass or wood — their textures have a required orientation

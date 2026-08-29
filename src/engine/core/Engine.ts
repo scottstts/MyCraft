@@ -24,8 +24,9 @@ import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
 import { CHUNK_SIZE } from '../../config/constants';
 import { WATER_LEVEL } from '../world/TerrainGenerator';
-import { OceanHorizon } from '../render/water/OceanHorizon';
+import { WaterSystem } from '../render/water/WaterSystem';
 import { WaterSurfaceMaterial } from '../render/water/WaterSurfaceMaterial';
+import { OCEAN_WATER_CENTER_OFFSET } from '../render/water/OceanWaveField';
 import { InputSystem } from '../systems/Input';
 import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
@@ -60,7 +61,7 @@ let composer: Composer | null = null;
 let sunController: SunController | null = null;
 let skyDome: SkyDome | null = null;
 let atmosphereModel: AtmosphereModel | null = null;
-let oceanHorizon: OceanHorizon | null = null;
+let waterSystem: WaterSystem | null = null;
 let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
@@ -80,6 +81,10 @@ let diagnosticView: DiagnosticCameraId | null = null;
 let voxelShadowVolumeReported = false;
 let voxelShadowVolume: VoxelOccupancyVolume | null = null;
 let voxelSunShadowPass: VoxelSunShadowPass | null = null;
+// Render-only center of the one-voxel water envelope. Gameplay keeps its
+// existing WATER_LEVEL + 1.0 interaction surface; this value only drives
+// water optics, caustics, and screen-space water masking.
+const VISUAL_WATER_LEVEL = WATER_LEVEL + OCEAN_WATER_CENTER_OFFSET;
 // Frame counter for coordinating mesh swaps
 let frameCounter = 0;
 // Queue incoming chunk meshes; apply in small batches to avoid border flicker
@@ -340,6 +345,7 @@ function update(dtSeconds: number) {
     blockMaterial.setDayLight(dayLight);
     blockMaterial.setStarLight(atmosphereState.starVisibility * 0.35);
     blockMaterial.setSkyAmbient(atmosphereState.skyIrradiance);
+    blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.55, waterSystem?.getTime() ?? 0);
     if (grassSystem) grassSystem.setSunUniforms(sdir, atmosphereState.sunColor);
     if (grassSystem) grassSystem.setDayNight(dayLight, atmosphereState.starVisibility * 0.35);
     if (grassSystem) grassSystem.setSkyAmbient(atmosphereState.skyIrradiance);
@@ -347,8 +353,10 @@ function update(dtSeconds: number) {
     if (playerBody) playerBody.setSkyAmbient(atmosphereState.skyIrradiance);
   }
 
-  // Update water materials with ambient lighting to match day/night cycle
-  if ((waterMaterial || oceanHorizon) && sunController && atmosphereState) {
+  // Update water materials with ambient lighting to match day/night cycle.
+  // This only changes render uniforms; player water/collision logic remains
+  // owned by PlayerController and is intentionally not touched here.
+  if ((waterMaterial || waterSystem) && sunController && atmosphereState) {
     const sdir = sunController.getSunDirection();
     const waterAmbient = Math.max(0.15, atmosphereState.daylight);
     // Apply to both water material instances
@@ -362,11 +370,11 @@ function update(dtSeconds: number) {
         RENDER_STYLE.atmosphere.skyRadianceScale,
       );
     }
-    if (oceanHorizon) {
-      oceanHorizon.setSun(sdir, atmosphereState.sunColor);
-      oceanHorizon.setAmbientLighting(waterAmbient, atmosphereState.nightTint);
-      oceanHorizon.setSkyColors(atmosphereState.skyZenith, atmosphereState.skyHorizon);
-      oceanHorizon.setSkyAtmosphere(
+    if (waterSystem) {
+      waterSystem.setSun(sdir, atmosphereState.sunColor);
+      waterSystem.setAmbientLighting(waterAmbient, atmosphereState.nightTint);
+      waterSystem.setSkyColors(atmosphereState.skyZenith, atmosphereState.skyHorizon);
+      waterSystem.setSkyAtmosphere(
         atmosphereState.skyAerosol,
         atmosphereState.skyAerosolStrength,
         RENDER_STYLE.atmosphere.skyRadianceScale,
@@ -374,9 +382,13 @@ function update(dtSeconds: number) {
     }
   }
   
-  // Animate far ocean illusion
-  if (oceanHorizon) {
-    oceanHorizon.update(dtSeconds);
+  // Advance the render-only water system. This does not alter gameplay water
+  // blocks, swimming, or interaction state.
+  if (waterSystem && camera) {
+    waterSystem.update(dtSeconds, camera);
+    waterMaterial?.setTime(waterSystem.getTime());
+    waterMaterial?.setCameraUnderwater(waterSystem.isCameraUnderwater());
+    composer?.setUnderwater(waterSystem.isCameraUnderwater());
   }
 
   // Update subsystems here (physics, input, etc.)
@@ -458,6 +470,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
+  blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.55);
 
   // Determine anisotropy support for any textures that can benefit (e.g., seabed sand)
   let maxAniso = 0;
@@ -480,6 +493,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   });
   // Make block water surfaces slightly translucent
   waterMaterial.setAlpha(0.7);
+  waterMaterial.setWaterLevel(VISUAL_WATER_LEVEL);
   // Add subtle refraction and wave perturbation
   waterMaterial.setRefraction(0.18, 0.75, 0.12, 0.035, 0.06);
   // Increase Fresnel-driven opacity at shallow (grazing) angles
@@ -503,7 +517,8 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     composer.setBloom(RENDER_STYLE.bloom.enabled, RENDER_STYLE.bloom.strength, RENDER_STYLE.bloom.threshold);
     composer.setLens(RENDER_STYLE.lens.enabled, RENDER_STYLE.lens.intensity);
     composer.setAerialPerspective(true, aerialPerspectiveDistance);
-    composer.setSSAOWaterLevel(WATER_LEVEL + 1.0);
+    composer.setSSAOWaterLevel(VISUAL_WATER_LEVEL);
+    composer.setUnderwaterWaterLevel(VISUAL_WATER_LEVEL);
   } else {
     composer = null;
   }
@@ -625,22 +640,32 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     });
   }
 
-  // Add far ocean ring outside world bounds to visually extend water to horizon
+  // Build the render-only ocean plane and visual seabed extension. These
+  // meshes never enter World, so the existing collision, selection, saves,
+  // and water interaction code remain unchanged.
   if (USE_OCEAN_HORIZON) {
     const farOceanDistance = camera.far * 0.98;
-
-    oceanHorizon = new OceanHorizon(scene, {
+    waterSystem = new WaterSystem(scene, {
       bounds,
       waterLevel: WATER_LEVEL,
       farDistance: farOceanDistance,
-      color: 0x1a2744, // Deep navy blue like real ocean
-      tileScale: 1.0,
-      enableSeabed: true,
+      color: 0x1a6f8e,
       seed: world.getSeed(),
       worldRadius,
       blockMaterialSource: blockMaterial ?? undefined,
       anisotropy: maxAniso ? Math.min(8, maxAniso) : 8,
     });
+    waterSystem.setSceneInputs(
+      composer?.getSceneColorTexture() ?? null,
+      composer?.getDepthTexture() ?? null,
+      composer?.getSceneColorResolution() ?? { x: canvasSize.width, y: canvasSize.height },
+      camera.near,
+      camera.far,
+    );
+    composer?.setOpaqueCaptureHooks(
+      () => waterSystem?.setOpaqueCaptureMode(true),
+      () => waterSystem?.setOpaqueCaptureMode(false),
+    );
   }
 
   // Player controller (movement + gravity + collisions)
@@ -693,6 +718,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       }
       // Set world seed from save
       world.setSeed(pendingSave.settings.seed);
+      waterSystem?.setSeed(world.getSeed());
       // Ingest chunks
       for (const ch of pendingSave.chunks) {
         const vox = new Uint8Array(atob(ch.voxelsB64).split('').map((c) => c.charCodeAt(0)));
@@ -734,6 +760,15 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       if (composer) {
         composer.setPixelRatio(size.dpr);
         composer.setSize(size.width, size.height);
+      }
+      if (waterSystem && camera) {
+        waterSystem.setSceneInputs(
+          composer?.getSceneColorTexture() ?? null,
+          composer?.getDepthTexture() ?? null,
+          composer?.getSceneColorResolution() ?? { x: size.width, y: size.height },
+          camera.near,
+          camera.far,
+        );
       }
       if (voxelSunShadowPass) {
         const resolution = voxelSunShadowPass.getDiagnostics().resolution;
@@ -866,10 +901,8 @@ function stop() {
   atmosphereModel = null;
 
   // Clean up ocean horizon
-  if (oceanHorizon && scene) {
-    oceanHorizon.dispose(scene);
-  }
-  oceanHorizon = null;
+  if (waterSystem) waterSystem.dispose();
+  waterSystem = null;
 
   // Clean up renderer
   if (renderer) {
@@ -954,6 +987,7 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
       skyAerosol: atmosphere.skyAerosol.toArray(),
       skyAerosolStrength: atmosphere.skyAerosolStrength,
     } : null,
+    water: waterSystem?.getDiagnostics() ?? null,
     exposure: composer?.getExposureDiagnostics() ?? null,
   };
 };

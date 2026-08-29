@@ -1,8 +1,9 @@
 /**
  * WebGL post-processing pipeline built on EffectComposer.
- * The pass order is RenderPass -> SSAO -> AerialPerspective -> ExposureMeter
- * -> Bloom -> LensFlare -> OutputPass. SSAO and voxel shadow ownership remain
- * unchanged; atmosphere and output transforms are centralized here.
+ * The pass order is RenderPass -> SSAO -> AerialPerspective -> Underwater
+ * medium -> ExposureMeter -> Bloom -> LensFlare -> OutputPass. SSAO and
+ * voxel shadow ownership remain unchanged; atmosphere and output transforms
+ * are centralized here.
  */
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
@@ -13,6 +14,7 @@ import { BloomWrapperPass } from './passes/BloomPass'
 import { LensFlarePass } from './passes/LensFlarePass'
 import { AerialPerspectivePass } from './passes/AerialPerspectivePass'
 import { ExposureMeterPass } from './passes/ExposureMeterPass'
+import { UnderwaterPass } from './passes/UnderwaterPass'
 import type { AtmosphereState } from '../atmosphere/AtmosphereModel'
 import { RENDER_STYLE } from '../settings/RenderStyle'
 import type { VoxelSunShadowPass } from '../lighting/VoxelSunShadowPass.js'
@@ -26,10 +28,14 @@ export class Composer {
   private lens: LensFlarePass
   private meter: ExposureMeterPass
   private output: OutputPass
+  private underwater: UnderwaterPass
   private depthTarget: THREE.WebGLRenderTarget
   private renderer: THREE.WebGLRenderer
   private scene: THREE.Scene
   private voxelSunShadow: VoxelSunShadowPass | null = null
+  private beforeOpaqueCapture: (() => void) | null = null
+  private afterOpaqueCapture: (() => void) | null = null
+  private underwaterEnabled = false
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, width: number, height: number) {
     // Use default internal ping-pong color buffers for composer
@@ -52,6 +58,7 @@ export class Composer {
     const depthTex = new THREE.DepthTexture(effective.width, effective.height, THREE.UnsignedInt248Type)
     depthTex.format = THREE.DepthStencilFormat
     this.depthTarget.depthTexture = depthTex
+    this.depthTarget.texture.colorSpace = THREE.NoColorSpace
 
     this.renderPass = new RenderPass(scene, camera)
     this.composer.addPass(this.renderPass)
@@ -65,6 +72,10 @@ export class Composer {
     this.aerial.setDepthTexture(this.depthTarget.depthTexture)
     this.aerial.setSize(effective.width, effective.height)
     this.composer.addPass(this.aerial)
+
+    this.underwater = new UnderwaterPass()
+    this.underwater.setDepthTexture(this.depthTarget.depthTexture)
+    this.composer.addPass(this.underwater)
 
     this.meter = new ExposureMeterPass(RENDER_STYLE.exposure, RENDER_STYLE.exposure.meterWidth, RENDER_STYLE.exposure.meterHeight)
     this.composer.addPass(this.meter)
@@ -190,16 +201,39 @@ export class Composer {
   getDepthTexture(): THREE.DepthTexture {
     return this.depthTarget.depthTexture as THREE.DepthTexture
   }
+
+  getSceneColorTexture(): THREE.Texture {
+    return this.depthTarget.texture
+  }
+
+  getSceneColorResolution(): { x: number; y: number } {
+    return { x: this.depthTarget.width, y: this.depthTarget.height }
+  }
+
+  setOpaqueCaptureHooks(before: (() => void) | null, after: (() => void) | null): void {
+    this.beforeOpaqueCapture = before
+    this.afterOpaqueCapture = after
+  }
+
+  setUnderwater(enabled: boolean): void {
+    this.underwaterEnabled = enabled
+    this.underwater.setUnderwater(enabled)
+  }
+
+  setUnderwaterWaterLevel(level: number): void { this.underwater.setWaterLevel(level) }
+
   update(camera: THREE.PerspectiveCamera, sunDirWorld: THREE.Vector3, sunColor?: THREE.Color, atmosphere?: AtmosphereState) {
     // Render depth prepass into separate target to avoid feedback
     const shadowStates = this.setShadowSamplingEnabled(false);
     const prev = this.renderer.getRenderTarget()
     try {
+      this.beforeOpaqueCapture?.()
       this.renderer.setRenderTarget(this.depthTarget)
       this.renderer.clear(true, true, true)
       this.renderer.render(this.scene, camera)
     } finally {
       this.renderer.setRenderTarget(prev)
+      this.afterOpaqueCapture?.()
       this.restoreShadowSampling(shadowStates);
     }
 
@@ -210,6 +244,9 @@ export class Composer {
     // Update per-pass uniforms
     this.ssao.setCamera(camera)
     this.aerial.setCamera(camera)
+    this.underwater.setCamera(camera)
+    this.underwater.setSun(sunDirWorld, sunColor ?? new THREE.Color(1, 1, 0.95))
+    this.underwater.setUnderwater(this.underwaterEnabled)
     if (atmosphere) this.aerial.setAtmosphereState(atmosphere)
     this.lens.setCamera(camera)
     this.lens.setSun(sunDirWorld, sunColor ?? new THREE.Color(1,1,0.95), camera)

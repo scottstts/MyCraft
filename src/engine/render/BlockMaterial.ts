@@ -148,6 +148,14 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       // Scene-linear irradiance evaluated by AtmosphereModel.
       uniform vec3 skyAmbient;
 
+      // Optional water-caustic contribution. Disabled by default so ordinary
+      // block materials remain unchanged; WaterSystem enables it for the
+      // playable and visual-only seabed surfaces.
+      uniform bool waterCausticEnabled;
+      uniform float waterCausticLevel;
+      uniform float waterCausticIntensity;
+      uniform float waterCausticTime;
+
       // Specular anti-aliasing: broaden roughness near high normal gradients
       float specularAARoughness(float r, vec3 N) {
           // Variance from normal derivatives; clamp to avoid NaNs
@@ -305,6 +313,14 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           return vec4(total, indirectMask);
       }
 
+      float waterCausticField(vec2 worldXZ, float time) {
+          vec2 p = worldXZ * 0.22;
+          float a = sin(p.x * 1.7 + time * 1.9) + sin(p.y * 1.3 - time * 1.45);
+          float b = sin((p.x + p.y) * 2.35 + time * 1.15) + sin((p.x - p.y) * 2.9 - time * 1.7);
+          float c = 0.5 + 0.5 * sin(a * 1.55 + b * 0.75);
+          return pow(clamp(c, 0.0, 1.0), 5.0);
+      }
+
       void main() {
           vec4 texColor = texture2D_AA(map, vUv);
           // Atlas textures are uploaded as SRGBColorSpace; WebGL performs the
@@ -319,6 +335,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec4 lighting = calculateEnhancedLighting(tinted, normal, viewDir, vAmbientOcclusion);
           vec3 lit = lighting.rgb * tinted;
           vec3 color = mix(tinted, lit, clamp(lightingMix, 0.0, 1.0));
+
+          if (waterCausticEnabled) {
+            float submerged = 1.0 - smoothstep(waterCausticLevel - 0.75, waterCausticLevel + 0.25, vWorldPosition.y);
+            float upward = smoothstep(0.10, 0.85, max(vNormal.y, 0.0));
+            float caustic = waterCausticField(vWorldPosition.xz, waterCausticTime);
+            color += vec3(0.06, 0.16, 0.18) * caustic * submerged * upward * waterCausticIntensity;
+          }
           
           // Small blue-noise-ish dithering in scene-linear space to reduce
           // visible banding before the shared output transform.
@@ -360,6 +383,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           dayLight: { value: 1.0 },
           starLight: { value: 0.0 },
           skyAmbient: { value: new THREE.Color(0.12, 0.18, 0.32) },
+          waterCausticEnabled: { value: false },
+          waterCausticLevel: { value: 43.0 },
+          waterCausticIntensity: { value: 0.0 },
+          waterCausticTime: { value: 0.0 },
           // Anti-aliasing defaults
           aaEnabled: { value: true },
           aaStrength: { value: 1.0 },
@@ -464,6 +491,15 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   /** Update the shared scene-linear sky irradiance. */
   setSkyAmbient(color: THREE.Color): void {
     (this.uniforms.skyAmbient.value as THREE.Color).copy(color);
+  }
+
+  /** Enable the shared render-only water caustic response on submerged faces. */
+  setWaterCaustics(enabled: boolean, waterLevel: number, intensity: number, time = 0): void {
+    const uniforms = this.uniforms as Record<string, { value: unknown }>;
+    uniforms.waterCausticEnabled.value = enabled;
+    uniforms.waterCausticLevel.value = waterLevel;
+    uniforms.waterCausticIntensity.value = Math.max(0, intensity);
+    uniforms.waterCausticTime.value = time;
   }
 
 }
