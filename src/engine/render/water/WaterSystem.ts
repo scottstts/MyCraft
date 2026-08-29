@@ -7,6 +7,43 @@ import { WaterSurfaceMaterial } from './WaterSurfaceMaterial'
 import { CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
 import sandTextureUrl from '../../../assets/textures/sand.png'
 
+const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
+
+function createTerrainHeightTexture(
+  bounds: WaterSystemOptions['bounds'],
+  seed: number,
+  worldRadius: number,
+): THREE.DataTexture {
+  const spanX = Math.max(1, bounds.maxX - bounds.minX)
+  const spanZ = Math.max(1, bounds.maxZ - bounds.minZ)
+  const desiredResolution = Math.ceil(Math.max(spanX, spanZ) / 1.5)
+  let resolution = 64
+  while (resolution < desiredResolution && resolution < 256) resolution *= 2
+  const data = new Uint8Array(resolution * resolution * 4)
+  for (let z = 0; z < resolution; z += 1) {
+    const worldZ = bounds.minZ + ((z + 0.5) / resolution) * spanZ
+    for (let x = 0; x < resolution; x += 1) {
+      const worldX = bounds.minX + ((x + 0.5) / resolution) * spanX
+      const height = getHeightAtPosition(worldX, worldZ, seed, worldRadius)
+      const encoded = Math.round(THREE.MathUtils.clamp(height / TERRAIN_HEIGHT_TEXTURE_SCALE, 0, 1) * 255)
+      const index = (z * resolution + x) * 4
+      data[index] = encoded
+      data[index + 1] = encoded
+      data[index + 2] = encoded
+      data[index + 3] = 255
+    }
+  }
+  const texture = new THREE.DataTexture(data, resolution, resolution, THREE.RGBAFormat, THREE.UnsignedByteType)
+  texture.colorSpace = THREE.NoColorSpace
+  texture.wrapS = THREE.ClampToEdgeWrapping
+  texture.wrapT = THREE.ClampToEdgeWrapping
+  texture.magFilter = THREE.LinearFilter
+  texture.minFilter = THREE.LinearFilter
+  texture.generateMipmaps = false
+  texture.needsUpdate = true
+  return texture
+}
+
 export interface WaterSystemOptions {
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number }
   waterLevel: number
@@ -33,6 +70,7 @@ export class WaterSystem {
   private readonly group: THREE.Group
   private readonly oceanGroup: THREE.Group
   private readonly material: WaterSurfaceMaterial
+  private readonly terrainHeightTexture: THREE.DataTexture
   private readonly caustics: WaterCaustics | null
   private seabedMaterial: BlockMaterial | null = null
   private seabedGroup: THREE.Group | null = null
@@ -55,6 +93,11 @@ export class WaterSystem {
     this.oceanGroup.name = 'OceanSurface'
     this.group.add(this.oceanGroup)
 
+    // The water shader needs the same terrain height field that defines the
+    // playable shoreline. This keeps foam on shallow coast water instead of
+    // guessing from the rectangular map boundary.
+    this.terrainHeightTexture = createTerrainHeightTexture(options.bounds, options.seed, options.worldRadius)
+
     const surfaceY = options.waterLevel + OCEAN_WATER_CENTER_OFFSET
     this.material = new WaterSurfaceMaterial({
       map: null,
@@ -63,6 +106,8 @@ export class WaterSystem {
       useWorldUV: true,
       bounds: options.bounds,
       ocean: true,
+      terrainHeightMap: this.terrainHeightTexture,
+      terrainHeightScale: TERRAIN_HEIGHT_TEXTURE_SCALE,
     })
     this.material.setWaterLevel(surfaceY)
     this.material.setRefraction(0.18, 1.0 / 1.333, 1.0, 1.0, 0.0)
@@ -139,6 +184,7 @@ export class WaterSystem {
   setSeed(seed: number): void {
     if (this.options.seed === seed || this.disposed) return
     this.options.seed = seed
+    this.updateTerrainHeightTexture()
     this.seabedBuildToken += 1
     if (this.seabedGroup) {
       this.scene.remove(this.seabedGroup)
@@ -225,6 +271,7 @@ export class WaterSystem {
     this.disposeGroup(this.group)
     if (this.seabedGroup) this.disposeGroup(this.seabedGroup)
     this.material.dispose()
+    this.terrainHeightTexture.dispose()
     this.seabedMaterial?.dispose()
     this.caustics?.dispose()
   }
@@ -349,6 +396,27 @@ export class WaterSystem {
 
   private sampleHeight(x: number, z: number): number {
     return getHeightAtPosition(x, z, this.options.seed, this.options.worldRadius)
+  }
+
+  private updateTerrainHeightTexture(): void {
+    const image = this.terrainHeightTexture.image as { data: Uint8Array; width: number; height: number }
+    const spanX = Math.max(1, this.options.bounds.maxX - this.options.bounds.minX)
+    const spanZ = Math.max(1, this.options.bounds.maxZ - this.options.bounds.minZ)
+    for (let z = 0; z < image.height; z += 1) {
+      const worldZ = this.options.bounds.minZ + ((z + 0.5) / image.height) * spanZ
+      for (let x = 0; x < image.width; x += 1) {
+        const worldX = this.options.bounds.minX + ((x + 0.5) / image.width) * spanX
+        const height = this.sampleHeight(worldX, worldZ)
+        const encoded = Math.round(THREE.MathUtils.clamp(height / TERRAIN_HEIGHT_TEXTURE_SCALE, 0, 1) * 255)
+        const index = (z * image.width + x) * 4
+        image.data[index] = encoded
+        image.data[index + 1] = encoded
+        image.data[index + 2] = encoded
+        image.data[index + 3] = 255
+      }
+    }
+    this.terrainHeightTexture.needsUpdate = true
+    this.material.setTerrainHeightMap(this.terrainHeightTexture, TERRAIN_HEIGHT_TEXTURE_SCALE)
   }
 
   private insideBounds(x: number, z: number): boolean {

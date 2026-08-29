@@ -3,6 +3,9 @@ import { OCEAN_WAVES, oceanWaveDeclarations } from './OceanWaveField'
 
 export interface WaterSurfaceParams {
   map: THREE.Texture | null
+  /** Optional terrain top-height field used to locate the real shoreline. */
+  terrainHeightMap?: THREE.Texture | null
+  terrainHeightScale?: number
   color?: THREE.Color | number | string
   tileScale?: number
   useWorldUV?: boolean
@@ -10,6 +13,16 @@ export interface WaterSurfaceParams {
   /** Ocean meshes are opaque composited surfaces; block water stays blended. */
   ocean?: boolean
 }
+
+const terrainHeightFallback = new THREE.DataTexture(
+  new Uint8Array([0, 0, 0, 255]),
+  1,
+  1,
+  THREE.RGBAFormat,
+  THREE.UnsignedByteType,
+)
+terrainHeightFallback.colorSpace = THREE.NoColorSpace
+terrainHeightFallback.needsUpdate = true
 
 /**
  * Shared water shader for natural ocean geometry and the legacy off-level
@@ -27,6 +40,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     const tileScale = Math.max(1e-3, params.tileScale ?? 1.0)
     const useWorldUV = params.useWorldUV !== false
     const b = params.bounds ?? { minX: -1e9, maxX: 1e9, minZ: -1e9, maxZ: 1e9 }
+    const terrainHeightMap = params.terrainHeightMap ?? terrainHeightFallback
+    const terrainHeightScale = Math.max(1, params.terrainHeightScale ?? 128)
     const waveDeclarations = oceanWaveDeclarations()
 
     super({
@@ -49,6 +64,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uInnerMaxX: { value: b.maxX },
         uInnerMinZ: { value: b.minZ },
         uInnerMaxZ: { value: b.maxZ },
+        uTerrainHeightMap: { value: terrainHeightMap },
+        uTerrainHeightMapEnabled: { value: !!params.terrainHeightMap },
+        uTerrainHeightScale: { value: terrainHeightScale },
         uAlpha: { value: ocean ? 1.0 : 0.7 },
         // The ocean uses the exact dielectric Fresnel result.  A small bias is
         // retained only for the legacy block-water path, whose old alpha
@@ -162,6 +180,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uInnerMaxX;
         uniform float uInnerMinZ;
         uniform float uInnerMaxZ;
+        uniform sampler2D uTerrainHeightMap;
+        uniform bool uTerrainHeightMapEnabled;
+        uniform float uTerrainHeightScale;
         uniform float uAlpha;
         uniform float uFresnelBias;
         uniform float uEtaAirWater;
@@ -220,6 +241,19 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
             u.y
           );
+        }
+
+        // The shoreline is the actual terrain/water column, not the outer
+        // rectangular ocean mesh. The CPU WaterSystem bakes this same
+        // generator into a small height field, giving the foam a stable
+        // coastline around bays and irregular island edges.
+        float sampleTerrainTop(vec2 xz) {
+          if (!uOceanMode || !uTerrainHeightMapEnabled) return -1000.0;
+          vec2 span = vec2(max(uInnerMaxX - uInnerMinX, 1.0), max(uInnerMaxZ - uInnerMinZ, 1.0));
+          vec2 uv = (xz - vec2(uInnerMinX, uInnerMinZ)) / span;
+          float inside = step(0.0, uv.x) * step(0.0, uv.y) * step(uv.x, 1.0) * step(uv.y, 1.0);
+          float encoded = texture2D(uTerrainHeightMap, clamp(uv, vec2(0.0), vec2(1.0))).r;
+          return mix(-1000.0, encoded * uTerrainHeightScale + 1.0, inside);
         }
 
         float oceanTanh(float x) {
@@ -464,21 +498,37 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float foamNoiseLarge = noise(vWorld.xz * 0.115 + uTime * vec2(uFoamDrift * 0.24, -uFoamDrift * 0.16));
           float foamNoiseFine = noise(vWorld.xz * 0.68 - uTime * vec2(uFoamDrift * 0.82, uFoamDrift * 0.54));
           float foamBreakup = mix(foamNoiseLarge, foamNoiseFine, 0.48);
-          // Coastal breaker band: the boundary is a broad shoaling zone, not
-          // a hard rectangular stripe.  A directional low-frequency train is
-          // gated by the live fold/crest field, then broken up by the same
-          // foam history surrogate used in the open sea.
-          float coastDistance = min(
-            min(abs(vWorld.x - uInnerMinX), abs(vWorld.x - uInnerMaxX)),
-            min(abs(vWorld.z - uInnerMinZ), abs(vWorld.z - uInnerMaxZ))
-          );
-          float coastMask = uOceanMode ? (1.0 - smoothstep(3.0, 28.0, coastDistance)) : 0.0;
-          vec2 breakerWind = normalize(vec2(0.78, 0.63));
-          float breakerTrain = 0.5 + 0.5 * sin(dot(vWorld.xz, breakerWind) * 0.24 - uTime * 0.78 + sin(vWorld.x * 0.075) * 0.75);
-          float breaker = coastMask * smoothstep(0.50, 0.90, breakerTrain)
-            * smoothstep(0.18, 0.82, crest + foamFold * 0.42);
-          float foamPotential = max(max(foamFold, crest * 0.72), breaker);
+          // Coastal foam is driven by the actual terrain/water column. This
+          // avoids the old rectangular-boundary train, which could project
+          // long white ribbons across open water. The height field follows
+          // the same terrain generator as the playable island, so bays and
+          // irregular shoreline pockets receive foam while deep offshore
+          // water remains untouched.
+          vec2 shoreXZ = vBaseWorld.xz;
+          float terrainTop = sampleTerrainTop(shoreXZ);
+          float waterColumn = uWaterLevel - terrainTop;
+          float waterSide = smoothstep(-0.35, 0.16, waterColumn);
+          float shallowBand = 1.0 - smoothstep(0.35, 5.5, waterColumn);
+          float shorelineBand = waterSide * shallowBand;
+          vec2 foamDomain = shoreXZ + oceanDomainWarp(shoreXZ, uTime) * 0.35;
+          float patchLarge = noise(foamDomain * 0.12 + uTime * vec2(0.012, -0.009));
+          float patchMedium = noise(foamDomain * 0.34 - uTime * vec2(0.033, 0.021));
+          float patchFine = noise(foamDomain * 0.88 + uTime * vec2(-0.071, 0.048));
+          float patchValue = patchLarge * 0.52 + patchMedium * 0.32 + patchFine * 0.16;
+          float patchMask = smoothstep(0.47, 0.70, patchValue);
+          // A noisy moving front makes each patch taper into the water rather
+          // than forming a continuous contour line along the entire coast.
+          float frontOffset = (patchMedium - 0.5) * 1.35 + (patchFine - 0.5) * 0.55;
+          float foamFront = 1.0 - smoothstep(-0.28, 1.35, waterColumn + frontOffset);
+          float wavePulse = smoothstep(0.08, 0.46, max(vWorld.y - uWaterLevel, 0.0) + crest * 0.26 + foamFold * 0.30);
+          float shoreFoam = shorelineBand * patchMask * (0.42 + 0.58 * max(foamFront, wavePulse * 0.72));
+          // Keep a small broken swash trace at the waterline even during a
+          // trough; it is still terrain-gated and cannot appear offshore.
+          shoreFoam += shorelineBand * (1.0 - patchMask) * foamFront * 0.10;
+          shoreFoam = clamp(shoreFoam, 0.0, 1.0);
+          float foamPotential = max(max(foamFold, crest * 0.72), shoreFoam);
           float foam = smoothstep(uFoamThreshold * 0.72, 0.92, foamPotential * mix(0.66, 1.38, foamBreakup * uFoamNoise));
+          foam = max(foam, shoreFoam * 0.78);
           color = mix(color, vec3(0.92, 0.98, 1.0), foam * uFoamIntensity);
           color = mix(color, color * uNightTint, (1.0 - clamp(uAmbientIntensity, 0.0, 1.0)) * 0.45);
           color *= mix(0.20, 1.0, clamp(uAmbientIntensity, 0.0, 1.0));
@@ -516,6 +566,12 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     this.uniforms.uInnerMaxX.value = bounds.maxX
     this.uniforms.uInnerMinZ.value = bounds.minZ
     this.uniforms.uInnerMaxZ.value = bounds.maxZ
+  }
+
+  setTerrainHeightMap(texture: THREE.Texture | null, heightScale = 128): void {
+    this.uniforms.uTerrainHeightMap.value = texture ?? terrainHeightFallback
+    this.uniforms.uTerrainHeightMapEnabled.value = !!texture
+    this.uniforms.uTerrainHeightScale.value = Math.max(1, heightScale)
   }
 
   setEdge(_strength: number, _width: number): void {
