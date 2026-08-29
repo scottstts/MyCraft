@@ -353,6 +353,13 @@ export class FirstPersonBody {
     this.torsoMat.setLighting(dir, color, dayLight, starLight)
   }
 
+  /** Keep the first-person body on the same scene-linear sky irradiance. */
+  setSkyAmbient(color: THREE.Color): void {
+    this.armMat.setSkyAmbient(color)
+    this.legMat.setSkyAmbient(color)
+    this.torsoMat.setSkyAmbient(color)
+  }
+
   /** Try to start a primary-click swing (if idle) */
   onPrimaryClick(): void { this.tryStartSwing('LMB') }
   /** Try to start a secondary-click swing (if idle) */

@@ -2,8 +2,18 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { SunController } from '../src/engine/render/lighting/SunController';
 import { BlockMaterial } from '../src/engine/render/BlockMaterial';
+import { RENDER_STYLE } from '../src/engine/render/settings/RenderStyle';
 
 describe('continuous voxel sun lighting', () => {
+  it('defaults to a twenty-minute full cycle (ten minutes per half)', () => {
+    const controller = new SunController(new THREE.Scene(), { enableShadows: true });
+    expect(controller.getTime()).toBeCloseTo(0.25);
+    controller.update(600);
+    expect(controller.getTime()).toBeCloseTo(0.75);
+    expect(RENDER_STYLE.dayNightCycleSeconds).toBe(1200);
+    controller.dispose();
+  });
+
   it('updates the authored sun direction every frame without a shadow-raster dirty gate', () => {
     const controller = new SunController(new THREE.Scene(), {
       initialTime: 0,

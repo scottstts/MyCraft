@@ -16,6 +16,8 @@ describe('local diagnostics route', () => {
     expect(getDiagnosticsRequest({ hostname: 'mycraft.scottsun.io', search: '?debug=1&view=overview' })).toBeNull();
     expect(getDiagnosticsRequest({ hostname: 'localhost', search: '?debug=0&view=overview' })).toBeNull();
     expect(getDiagnosticsRequest({ hostname: 'localhost', search: '?debug=1&view=unknown' })).toBeNull();
+    expect(getDiagnosticsRequest({ hostname: 'localhost', search: '?debug=1&view=overview&time=noon' })).toEqual({ view: 'overview', time: 0.25 });
+    expect(getDiagnosticsRequest({ hostname: 'localhost', search: '?debug=1&view=overview&time=1.25' })).toEqual({ view: 'overview', time: 0.25 });
   });
 
   it('recognizes loopback hosts but not deployed hosts', () => {
@@ -28,9 +30,9 @@ describe('local diagnostics route', () => {
 });
 
 describe('diagnostic player cameras', () => {
-  it('creates four independent cameras with the gameplay projection', () => {
+    it('creates independent cameras with the gameplay projection', () => {
     const cameras = DIAGNOSTIC_CAMERA_IDS.map((id) => createDiagnosticCamera(16 / 9, id, context));
-    expect(new Set(cameras).size).toBe(4);
+    expect(new Set(cameras).size).toBe(DIAGNOSTIC_CAMERA_IDS.length);
     for (const camera of cameras) {
       expect(camera).toBeInstanceOf(THREE.PerspectiveCamera);
       expect(camera.fov).toBe(70);

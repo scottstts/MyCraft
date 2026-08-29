@@ -16,12 +16,15 @@ export const DIAGNOSTIC_CAMERA_IDS = [
   'player-spawn',
   'player-ridge',
   'player-gully',
+  'sky',
 ] as const;
 
 export type DiagnosticCameraId = typeof DIAGNOSTIC_CAMERA_IDS[number];
 
 export interface DiagnosticRequest {
   view: DiagnosticCameraId;
+  /** Optional fixed normalized cycle position for deterministic captures. */
+  time?: number;
 }
 
 export interface DiagnosticCameraContext {
@@ -58,7 +61,19 @@ export function getDiagnosticsRequest(location: Pick<Location, 'hostname' | 'sea
   if (params.get('debug') !== '1') return null;
 
   const view = params.get('view');
-  return isDiagnosticCameraId(view) ? { view } : null;
+  if (!isDiagnosticCameraId(view)) return null;
+
+  const rawTime = params.get('time');
+  if (!rawTime) return { view };
+  const preset: Record<string, number> = {
+    sunrise: 0.02,
+    noon: 0.25,
+    sunset: 0.48,
+    midnight: 0.75,
+  };
+  const parsed = preset[rawTime.toLowerCase()] ?? Number.parseFloat(rawTime);
+  if (!Number.isFinite(parsed)) return null;
+  return { view, time: ((parsed % 1) + 1) % 1 };
 }
 
 function chooseLandPosition(seed: number, desiredX: number, desiredZ: number, worldRadius: number): { x: number; z: number; height: number } {
@@ -184,6 +199,10 @@ export function getDiagnosticCameraPose(id: DiagnosticCameraId, context: Diagnos
       );
     case 'player-gully':
       return groundedPlayerPose(context.seed, context.worldRadius, -22, 18, new THREE.Vector3(4, -1.5, -6));
+    case 'sky': {
+      const position = new THREE.Vector3(spawn.x, getHeightAtPosition(spawn.x, spawn.z, context.seed, context.worldRadius) + PLAYER_EYE_HEIGHT + 1, spawn.z);
+      return { position, yaw: 0, pitch: THREE.MathUtils.degToRad(65) };
+    }
   }
 }
 

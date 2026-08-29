@@ -13,7 +13,7 @@ export default function App() {
   // The parser rejects every non-local host, so a deployed build cannot enter
   // this route merely by adding query parameters.
   const diagnostics = getDiagnosticsRequest(window.location)
-  if (diagnostics) return <DiagnosticsApp view={diagnostics.view} />
+  if (diagnostics) return <DiagnosticsApp view={diagnostics.view} time={diagnostics.time} />
 
   return (
     <>

@@ -2,11 +2,16 @@
 // We keep thresholds/strength exposed to Engine
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import * as THREE from 'three'
+import { RENDER_STYLE } from '../../settings/RenderStyle'
 
 export class BloomWrapperPass extends UnrealBloomPass {
   constructor(width: number, height: number){
-    // Default to the app's desired bloom: strength 0.30, threshold 0.05
-    super(new THREE.Vector2(width, height), 0.30, 0.5, 0.05)
+    super(
+      new THREE.Vector2(width, height),
+      RENDER_STYLE.bloom.strength,
+      RENDER_STYLE.bloom.radius,
+      RENDER_STYLE.bloom.threshold,
+    )
   }
   setSize(width: number, height: number){ super.setSize(width, height) }
   setSettings({ enabled, strength, threshold }: { enabled?: boolean; strength?: number; threshold?: number }){

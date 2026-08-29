@@ -188,6 +188,10 @@ export class OceanHorizon {
     this.material.setSkyColors(topColor, horizonColor)
   }
 
+  setSkyAtmosphere(aerosol: THREE.Color, strength: number, radianceScale = 1.25) {
+    this.material.setSkyAtmosphere(aerosol, strength, radianceScale)
+  }
+
   update(dt: number){
     // Time for water animation is driven by WaterSurfaceMaterial's global ticker,
     // so we don't advance a separate clock here to avoid seam phase mismatch.
@@ -456,7 +460,7 @@ export class OceanHorizon {
     // renderer-managed per material and this fake horizon intentionally does
     // not cast or receive shadows.
     const keys = [
-      'sunDirection', 'sunColor', 'dayLight', 'starLight', 'materialFogEnabled'
+      'sunDirection', 'sunColor', 'dayLight', 'starLight', 'skyAmbient'
     ]
     for (const k of keys) {
       if (su[k] && du[k]) du[k].value = su[k].value

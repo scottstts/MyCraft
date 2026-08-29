@@ -29,22 +29,23 @@ export class BodyMaterial extends THREE.ShaderMaterial {
       uniform vec3 sunColor;
       uniform float dayLight;  // 0..1
       uniform float starLight; // 0..1
+      uniform vec3 skyAmbient; // scene-linear irradiance from AtmosphereModel
       uniform float alphaCutoff;
 
       void main(){
         vec4 tex = texture2D(map, vUv);
         if (tex.a < alphaCutoff) discard;
+        // Body textures are uploaded as SRGBColorSpace; WebGL already
+        // returns linear RGB from the sampler.
+        vec3 albedo = tex.rgb;
 
         vec3 N = normalize(vNormal);
         vec3 L = normalize(sunDirection);
         float NdotL = max(dot(N, L), 0.0);
 
         // Ambient day/night similar to BlockMaterial (simplified)
-        vec3 dayAmb = vec3(0.4, 0.5, 0.6) * 0.20;
-        vec3 nightAmb = vec3(0.01, 0.015, 0.02) * 0.12;
-        vec3 ambBase = mix(nightAmb, dayAmb, clamp(dayLight, 0.0, 1.0));
         vec3 starAmb = vec3(0.02, 0.025, 0.04) * 0.35 * clamp(starLight, 0.0, 1.0);
-        vec3 ambient = ambBase + starAmb;
+        vec3 ambient = skyAmbient + starAmb;
 
         vec3 diffuse = sunColor * NdotL * clamp(dayLight, 0.0, 1.0);
 
@@ -55,9 +56,7 @@ export class BodyMaterial extends THREE.ShaderMaterial {
         float fresnel = pow(1.0 - max(dot(N, V), 0.0), 2.0);
         vec3 rim = vec3(0.8, 0.9, 1.0) * fresnel * 0.08 * clamp(dayLight, 0.0, 1.0);
 
-        vec3 color = tex.rgb * (ambient + diffuse + rim);
-        color = color / (color + vec3(1.0));
-        color = pow(color, vec3(1.0/2.2));
+        vec3 color = albedo * (ambient + diffuse + rim);
         gl_FragColor = vec4(color, 1.0);
       }
     `;
@@ -66,6 +65,7 @@ export class BodyMaterial extends THREE.ShaderMaterial {
       vertexShader,
       fragmentShader,
       transparent: false,
+      toneMapped: false,
       depthWrite: true,
       side: THREE.FrontSide,
       uniforms: {
@@ -74,6 +74,7 @@ export class BodyMaterial extends THREE.ShaderMaterial {
         sunColor: { value: new THREE.Color(1,1,1) },
         dayLight: { value: 1.0 },
         starLight: { value: 0.0 },
+        skyAmbient: { value: new THREE.Color(0.12, 0.18, 0.32) },
         alphaCutoff: { value: 0.5 },
       }
     });
@@ -88,6 +89,9 @@ export class BodyMaterial extends THREE.ShaderMaterial {
     (this.uniforms.sunColor as { value: THREE.Color }).value.copy(color);
     (this.uniforms.dayLight as { value: number }).value = THREE.MathUtils.clamp(day, 0, 1);
     (this.uniforms.starLight as { value: number }).value = THREE.MathUtils.clamp(star, 0, 1);
+  }
+  setSkyAmbient(color: THREE.Color) {
+    (this.uniforms.skyAmbient as { value: THREE.Color }).value.copy(color)
   }
   setAlphaCutoff(c: number) {
     (this.uniforms.alphaCutoff as { value: number }).value = THREE.MathUtils.clamp(c, 0, 1);

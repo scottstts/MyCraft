@@ -145,6 +145,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float dayLight;
       // Star light factor (0..1) tiny ambient boost at night
       uniform float starLight;
+      // Scene-linear irradiance evaluated by AtmosphereModel.
+      uniform vec3 skyAmbient;
 
       // Specular anti-aliasing: broaden roughness near high normal gradients
       float specularAARoughness(float r, vec3 N) {
@@ -254,12 +256,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
 
       vec4 calculateEnhancedLighting(vec3 albedo, vec3 normal, vec3 viewDir, float ambientOcclusion) {
           // Ambient visibility is kept separate from direct sun lighting.
-          vec3 dayAmb = vec3(0.4, 0.5, 0.6) * 0.20;
-          vec3 nightAmb = vec3(0.01, 0.015, 0.02) * 0.12;
-          vec3 ambBase = mix(nightAmb, dayAmb, clamp(dayLight, 0.0, 1.0));
           vec3 starAmb = vec3(0.02, 0.025, 0.04) * 0.35 * clamp(starLight, 0.0, 1.0);
           float ao = clamp(ambientOcclusion, 0.0, 1.0);
-          vec3 ambient = (ambBase + starAmb) * ao;
+          vec3 ambient = (skyAmbient + starAmb) * ao;
           
           // Main sun light (provided via uniforms)
           vec3 sunDir = normalize(sunDirection);
@@ -306,18 +305,11 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           return vec4(total, indirectMask);
       }
 
-      // Atmospheric fog (legacy per-material; disabled by default in favor of post-process fog)
-      uniform bool materialFogEnabled;
-      vec3 applyAtmosphericFog(vec3 color, float distance) {
-          if (!materialFogEnabled) return color;
-          float fogDensity = 0.0002;
-          float fogFactor = 1.0 - exp(-distance * fogDensity);
-          vec3 fogColor = vec3(0.7, 0.8, 0.9);
-          return mix(color, fogColor, clamp(fogFactor, 0.0, 0.6));
-      }
-
       void main() {
           vec4 texColor = texture2D_AA(map, vUv);
+          // Atlas textures are uploaded as SRGBColorSpace; WebGL performs the
+          // transfer-function decode during sampling, so this value is already
+          // scene-linear and must not be decoded a second time.
           vec3 albedo = texColor.rgb;
           vec3 tinted = albedo * vColor;
           
@@ -328,14 +320,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 lit = lighting.rgb * tinted;
           vec3 color = mix(tinted, lit, clamp(lightingMix, 0.0, 1.0));
           
-          float distance = length(vViewPosition);
-          color = applyAtmosphericFog(color, distance);
-          
-          // Tone mapping and gamma correction
-          color = color / (color + vec3(1.0));
-          color = pow(color, vec3(1.0/2.2));
-
-          // Small blue-noise-ish dithering in sRGB to reduce visible banding downstream
+          // Small blue-noise-ish dithering in scene-linear space to reduce
+          // visible banding before the shared output transform.
           if (ditherAmount > 0.0) {
             float n1 = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233))) * 43758.5453);
             float n2 = fract(sin(dot(gl_FragCoord.yx, vec2(39.3467,11.135))) * 24634.6345);
@@ -373,7 +359,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           voxelShadowEnabled: { value: false },
           dayLight: { value: 1.0 },
           starLight: { value: 0.0 },
-          materialFogEnabled: { value: false },
+          skyAmbient: { value: new THREE.Color(0.12, 0.18, 0.32) },
           // Anti-aliasing defaults
           aaEnabled: { value: true },
           aaStrength: { value: 1.0 },
@@ -390,6 +376,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       defines: envMap ? { USE_ENVMAP: true } : {},
       side: THREE.FrontSide,
       transparent: false,
+      toneMapped: false,
       // All illumination is authored in this shader. Native Three.js shadow
       // chunks are intentionally disabled; VoxelSunShadowPass owns visibility.
       lights: false,
@@ -472,6 +459,11 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   setStarLight(level: number): void {
     const uniforms = this.uniforms as Record<string, { value: unknown }>;
     uniforms.starLight.value = THREE.MathUtils.clamp(level, 0, 1);
+  }
+
+  /** Update the shared scene-linear sky irradiance. */
+  setSkyAmbient(color: THREE.Color): void {
+    (this.uniforms.skyAmbient.value as THREE.Color).copy(color);
   }
 
 }

@@ -13,15 +13,13 @@ import type { ChunkPipelineEvents } from '../world/ChunkPipeline';
 import type { ChunkMeshResponse, ChunkKey } from '../../types/workers';
 import { ChunkRenderer } from '../render/ChunkRenderer';
 import { loadFullAtlas } from '../render/Atlas';
-import { Environment } from '../render/Environment';
 import { BlockMaterial } from '../render/BlockMaterial';
-import { SimplePostProcessor, type PostProcessorSettings } from '../render/SimplePostProcessor';
 import { Composer } from '../render/postprocessing/Composer';
-import { SunController, type ShadowSettings } from '../render/lighting/SunController';
+import { SunController } from '../render/lighting/SunController';
 import { SkyDome } from '../render/atmosphere/SkyDome';
-import { StarDome } from '../render/atmosphere/StarDome';
-import { CloudsLayer } from '../render/atmosphere/CloudsLayer';
+import { AtmosphereModel } from '../render/atmosphere/AtmosphereModel';
 import { applyGraphicsSettings, type GraphicsSettings } from '../render/settings/GraphicsSettings';
+import { RENDER_STYLE } from '../render/settings/RenderStyle';
 import { getBlockRegistry } from '../world/blocks/BlockRegistry';
 import { findSpawnPosition } from '../world/TerrainGenerator';
 import { CHUNK_SIZE } from '../../config/constants';
@@ -35,7 +33,7 @@ import { InteractionSystem } from '../systems/InteractionSystem';
 import { GrassBillboardSystem } from '../render/GrassBillboardSystem';
 import { getBlockIdByName } from '../world/blocks/BlockRegistry';
 import { useUIStore } from '../../state/ui';
-import { USE_EFFECT_COMPOSER, USE_OCEAN_HORIZON } from '../../config/flags';
+import { USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
 import type { WorldSavePayload, SavedChunk, SavedInventory, WorldSaveFile } from '../../types/save';
 import { base64FromBytes, signPayload, encryptPayload, SAVE_ENC_ALG, SAVE_SIGNATURE_ALG, SAVE_PUBLIC_KEY_ID } from '../../shared/save';
@@ -56,15 +54,12 @@ let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let world: World | null = null;
 let chunkRenderer: ChunkRenderer | null = null;
-let environment: Environment | null = null;
 let blockMaterial: BlockMaterial | null = null;
 let waterMaterial: WaterSurfaceMaterial | null = null;
-let postProcessor: SimplePostProcessor | null = null;
 let composer: Composer | null = null;
 let sunController: SunController | null = null;
 let skyDome: SkyDome | null = null;
-let starDome: StarDome | null = null;
-let clouds: CloudsLayer | null = null;
+let atmosphereModel: AtmosphereModel | null = null;
 let oceanHorizon: OceanHorizon | null = null;
 let inputSystem: InputSystem | null = null;
 let playerController: PlayerController | null = null;
@@ -76,7 +71,7 @@ let fpsCounterFrames: number = 0;
 let fpsLastReportNow: number = 0;
 let lastPaused: boolean = false;
 let sfx: SoundEffects | null = null;
-let dynamicFogDistance = 600; // default, updated based on world size
+let aerialPerspectiveDistance = 600; // default, updated based on world size
 let playerRigRoot: THREE.Group | null = null;
 let playerBody: FirstPersonBody | null = null;
 let lastMoveActive = false;
@@ -95,6 +90,7 @@ declare global {
     __WORLD_SNAPSHOT?: WorldSavePayload;
     __saveWorld?: () => void;
     __getVoxelShadowDiagnostics?: () => unknown;
+    __getRenderDiagnostics?: () => unknown;
     // UI can set this before triggering save to make the browser show a native save dialog.
     // We avoid tight typing here to keep DOM lib compatibility across environments.
     __nextSaveFileHandle?: unknown;
@@ -325,72 +321,56 @@ function update(dtSeconds: number) {
       sunController.update(dtSeconds);
     }
   }
-  if (skyDome && sunController) {
-    skyDome.setSunDirection(sunController.getSunDirection());
-  }
-  if (starDome && sunController) {
-    starDome.update();
-    // Use dayLight from sun elevation (y component of sun direction) for star visibility
-    const dayLight = Math.max(0, sunController.getSunDirection().y);
-    const starVis = 1 - THREE.MathUtils.clamp(dayLight / 0.25, 0, 1); // fully visible by dayLight<=0
-    starDome.setVisibility(starVis);
-    starDome.setIntensity(1.2 + 1.6 * starVis);
-  }
-  if (clouds) {
-    clouds.update();
-    if (sunController) {
-      const sdir = sunController.getSunDirection();
-      const dayLight = Math.max(0, sdir.y);
-      clouds.setDayLight(dayLight);
-    }
+  const atmosphereState = sunController && atmosphereModel
+    ? atmosphereModel.evaluate(sunController.getSunDirection())
+    : null;
+  if (atmosphereState) {
+    sunController?.setAtmosphereLighting(atmosphereState.sunColor, atmosphereState.sunIntensity);
+    skyDome?.setAtmosphereState(atmosphereState);
+    if (camera) skyDome?.setCameraPosition(camera.position);
   }
 
   // Update block materials with sun uniforms
-  if (blockMaterial && sunController) {
+  if (blockMaterial && sunController && atmosphereState) {
     const sdir = sunController.getSunDirection();
-    blockMaterial.setSunUniforms(sdir, sunController.getSunColor());
+    blockMaterial.setSunUniforms(sdir, atmosphereState.sunColor);
     // Day/night factor for ambient modulation with a small night floor to avoid total darkness
-    const rawDayLight = Math.max(0, sdir.y);
     const NIGHT_MIN_LIGHT = 0.10; // keep nights faintly lit
-    const dayLight = Math.max(NIGHT_MIN_LIGHT, rawDayLight);
+    const dayLight = Math.max(NIGHT_MIN_LIGHT, atmosphereState.daylight);
     blockMaterial.setDayLight(dayLight);
-    // Star light provides a tiny ambient boost at night (based on raw elevation)
-    const starVis = 1 - THREE.MathUtils.clamp((rawDayLight - 0.0) / 0.2, 0, 1);
-    blockMaterial.setStarLight(starVis * 0.35);
-    if (grassSystem) grassSystem.setSunUniforms(sdir, sunController.getSunColor());
-    if (grassSystem) grassSystem.setDayNight(dayLight, starVis * 0.35);
-    if (playerBody) playerBody.setLighting(sdir, sunController.getSunColor(), dayLight, starVis * 0.35);
+    blockMaterial.setStarLight(atmosphereState.starVisibility * 0.35);
+    blockMaterial.setSkyAmbient(atmosphereState.skyIrradiance);
+    if (grassSystem) grassSystem.setSunUniforms(sdir, atmosphereState.sunColor);
+    if (grassSystem) grassSystem.setDayNight(dayLight, atmosphereState.starVisibility * 0.35);
+    if (grassSystem) grassSystem.setSkyAmbient(atmosphereState.skyIrradiance);
+    if (playerBody) playerBody.setLighting(sdir, atmosphereState.sunColor, dayLight, atmosphereState.starVisibility * 0.35);
+    if (playerBody) playerBody.setSkyAmbient(atmosphereState.skyIrradiance);
   }
 
   // Update water materials with ambient lighting to match day/night cycle
-  if ((waterMaterial || oceanHorizon) && sunController) {
+  if ((waterMaterial || oceanHorizon) && sunController && atmosphereState) {
     const sdir = sunController.getSunDirection();
-    const sunColor = sunController.getSunColor();
-    
-    // Use same ambient calculation as blocks but with more dramatic night reduction
-    const rawDayLight = Math.max(0, sdir.y);
-    const WATER_NIGHT_MIN = 0.15; // Water can be darker than blocks at night
-    const waterAmbient = Math.max(WATER_NIGHT_MIN, rawDayLight);
-    
-    // Update sky colors based on time of day for realistic reflections
-    const skyNightTop = new THREE.Color(0.02, 0.04, 0.08);      // Much darker at night
-    const skyDayTop = new THREE.Color(0.25, 0.42, 0.72);        // Slightly darker blue
-    const skyNightHorizon = new THREE.Color(0.05, 0.07, 0.12);  // Much darker at night  
-    const skyDayHorizon = new THREE.Color(0.58, 0.68, 0.82);    // Slightly darker horizon
-    
-    const skyTop = skyNightTop.clone().lerp(skyDayTop, waterAmbient);
-    const skyHorizon = skyNightHorizon.clone().lerp(skyDayHorizon, waterAmbient);
-    
+    const waterAmbient = Math.max(0.15, atmosphereState.daylight);
     // Apply to both water material instances
     if (waterMaterial) {
-      waterMaterial.setSun(sdir, sunColor);
-      waterMaterial.setAmbientLighting(waterAmbient);
-      waterMaterial.setSkyColors(skyTop, skyHorizon);
+      waterMaterial.setSun(sdir, atmosphereState.sunColor);
+      waterMaterial.setAmbientLighting(waterAmbient, atmosphereState.nightTint);
+      waterMaterial.setSkyColors(atmosphereState.skyZenith, atmosphereState.skyHorizon);
+      waterMaterial.setSkyAtmosphere(
+        atmosphereState.skyAerosol,
+        atmosphereState.skyAerosolStrength,
+        RENDER_STYLE.atmosphere.skyRadianceScale,
+      );
     }
     if (oceanHorizon) {
-      oceanHorizon.setSun(sdir, sunColor);
-      oceanHorizon.setAmbientLighting(waterAmbient);
-      oceanHorizon.setSkyColors(skyTop, skyHorizon);
+      oceanHorizon.setSun(sdir, atmosphereState.sunColor);
+      oceanHorizon.setAmbientLighting(waterAmbient, atmosphereState.nightTint);
+      oceanHorizon.setSkyColors(atmosphereState.skyZenith, atmosphereState.skyHorizon);
+      oceanHorizon.setSkyAtmosphere(
+        atmosphereState.skyAerosol,
+        atmosphereState.skyAerosolStrength,
+        RENDER_STYLE.atmosphere.skyRadianceScale,
+      );
     }
   }
   
@@ -400,31 +380,10 @@ function update(dtSeconds: number) {
   }
 
   // Update subsystems here (physics, input, etc.)
-  if (composer && camera && sunController) {
+  if (composer && camera && sunController && atmosphereState) {
     const sdir = sunController.getSunDirection();
-    const scol = sunController.getSunColor();
-    composer.update(camera, sdir, scol);
-    // Darken fog color at night for proper night appearance
-    const rawDayLight = Math.max(0, sdir.y);
-    const NIGHT_MIN_LIGHT = 0.10;
-    const dayLight = Math.max(NIGHT_MIN_LIGHT, rawDayLight);
-    const dayFog = new THREE.Color(0.72, 0.82, 0.92);
-    const nightFog = new THREE.Color(0.03, 0.05, 0.08);
-    const fogColor = nightFog.clone().lerp(dayFog, dayLight);
-    composer.setFogColor(fogColor);
-    composer.setFogDayLight(dayLight);
-    // Match far-ocean tint to time of day for consistent horizon
-    const dayOcean = new THREE.Color(0x4aa3d8);
-    const nightOcean = new THREE.Color(0x0a0e16);
-    const oceanCol = nightOcean.clone().lerp(dayOcean, THREE.MathUtils.clamp(dayLight, 0, 1));
-    if (oceanHorizon) oceanHorizon.setColor(oceanCol);
-    if (waterMaterial) waterMaterial.setColor(oceanCol);
+    composer.update(camera, sdir, atmosphereState.sunColor, atmosphereState);
     composer.render();
-  } else if (postProcessor) {
-    if (sunController && camera) {
-      postProcessor.setSunLighting(sunController.getSunDirection(), camera);
-    }
-    postProcessor.render();
   } else if (renderer && scene && camera) {
     // Fallback to basic rendering
     renderer.render(scene, camera);
@@ -458,6 +417,8 @@ function tick(now: number) {
 export interface EngineStartOptions {
   /** When set, render a fixed local diagnostics pose through the normal pipeline. */
   diagnosticView?: DiagnosticCameraId;
+  /** Optional normalized time-of-day used by local validation captures. */
+  diagnosticTime?: number;
 }
 
 async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOptions = {}) {
@@ -481,22 +442,11 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   // Initialize world
   world = new World();
   
-  // Create simple environment mapping (temporarily simplified to avoid WebGL errors)
-  environment = new Environment(baseRenderer);
-  let envMap: THREE.CubeTexture | null = null;
-  try {
-    envMap = environment.createEnvironmentMap();
-    scene.environment = envMap;
-  } catch (error) {
-    console.warn('Environment mapping disabled due to renderer compatibility:', error);
-    envMap = null;
-  }
-  
   // Load atlas and initialize chunk renderer with custom material
   const atlas = await loadFullAtlas();
   blockMaterial = new BlockMaterial(
     atlas.getTexture(),
-    envMap,
+    null,
     undefined,
     { tileSize: atlas.getConfig().tileSize, atlasSize: atlas.getConfig().atlasSize }
   );
@@ -541,53 +491,24 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   playerBody = new FirstPersonBody();
   playerBody.init(playerRigRoot, camera);
 
-  // Initialize post-processing pipeline
+  // Initialize the single active post-processing pipeline.
   const canvasSize = renderer.getCanvasSize();
-  if (USE_EFFECT_COMPOSER && !isWebGPU) {
+  if (!isWebGPU) {
     const glRenderer = baseRenderer as THREE.WebGLRenderer;
     composer = new Composer(glRenderer, scene, camera, canvasSize.width, canvasSize.height);
-    composer.setSSAO(true, 0.3, 1.25);
-    composer.setBloom(true, 0.30, 0.05);
-    composer.setLens(true, 0.6);
-    composer.setFog(true, 0.002, dynamicFogDistance);
+    composer.setSSAO(RENDER_STYLE.ssao.enabled, RENDER_STYLE.ssao.intensity, RENDER_STYLE.ssao.radius);
+    composer.setBloom(RENDER_STYLE.bloom.enabled, RENDER_STYLE.bloom.strength, RENDER_STYLE.bloom.threshold);
+    composer.setLens(RENDER_STYLE.lens.enabled, RENDER_STYLE.lens.intensity);
+    composer.setAerialPerspective(true, aerialPerspectiveDistance);
     composer.setSSAOWaterLevel(WATER_LEVEL + 1.0);
-    composer.setVolumetrics(false, 0.1, 32);
-  } else if (!isWebGPU) {
-    const glRenderer = baseRenderer as THREE.WebGLRenderer;
-    postProcessor = new SimplePostProcessor(
-      glRenderer,
-      scene,
-      camera,
-      canvasSize.width,
-      canvasSize.height
-    );
-    postProcessor.updateSettings({
-      ssaoEnabled: true,
-      ssaoIntensity: 0.3,
-      ssaoRadius: 1.25,
-      waterLevel: WATER_LEVEL + 1.0,
-      bloomEnabled: true,
-      bloomStrength: 0.30,
-      bloomThreshold: 0.05,
-      exposure: 0.9,
-      contrast: 1.15,
-      saturation: 1.1,
-      fogEnabled: true,
-      fogBaseDensity: 0.002,
-      fogMaxDistance: dynamicFogDistance,
-      volumetricsEnabled: false,
-      volumetricsIntensity: 0.1,
-      volumetricsSteps: 32,
-    });
   } else {
     composer = null;
-    postProcessor = null;
   }
 
   // Initialize the continuous sun illumination. WebGL voxel visibility is
   // resolved by VoxelSunShadowPass; WebGPU remains outside this path.
   sunController = new SunController(scene, {
-    cycleSeconds: 180,
+    cycleSeconds: RENDER_STYLE.dayNightCycleSeconds,
     // A fresh diagnostic URL must be immediately sunlit. At t=0 the authored
     // sun is exactly on the horizon and its direct intensity is zero, which
     // makes correctly rendered voxel visibility look as if shadows were missing.
@@ -595,23 +516,14 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     // 0.125 puts the sun at a 45° elevation: direct light is already at its
     // full daytime intensity, while cast shadows are long enough to inspect
     // in every diagnostic pose instead of hiding directly beneath casters.
-    initialTime: diagnosticMode ? 0.125 : 0.0,
+    initialTime: options.diagnosticTime ?? (diagnosticMode ? 0.125 : 0.0),
+    paused: diagnosticMode,
     enableShadows: !isWebGPU,
   });
+  if (diagnosticMode) console.info('[AtmosphereInit]', JSON.stringify({ requestedTime: options.diagnosticTime, actualTime: sunController.getTime(), paused: sunController.isPaused() }));
 
-  // Sky dome for physical sky colors
-  // Reduce solar disc brightness so bloom doesn't blow out the sky
-  skyDome = new SkyDome(scene, { turbidity: 2.0, rayleigh: 1.5, mieCoefficient: 0.005, mieDirectionalG: 0.8, sunIntensityScale: 0.5, sunDiscScale: 0.1 });
-  starDome = new StarDome(scene, { intensity: 1.2 });
-  clouds = new CloudsLayer(scene, { altitude: 200, coverage: 0.45, density: 0.65, windDirection: Math.PI * 0.25, windSpeed: 5 });
-  // Default clouds off
-  clouds.setEnabled(false);
-  // Temporary global hooks for clouds adjustments from DebugPanel
-  (window as unknown as { __setClouds?: (cov?: number, dens?: number) => void }).__setClouds = (cov?: number, dens?: number) => {
-    if (!clouds) return;
-    if (typeof cov === 'number') clouds.setCoverage(cov);
-    if (typeof dens === 'number') clouds.setDensity(dens);
-  };
+  atmosphereModel = new AtmosphereModel();
+  skyDome = new SkyDome(scene);
   
   // Set atlas config and block registry in chunk pipeline
   const blockRegistry = getBlockRegistry();
@@ -669,13 +581,13 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     });
   }
   sunController?.setShadowSettings({
-    enabled: !isWebGPU,
-    shadowDistance: 300,
+    enabled: RENDER_STYLE.shadows.enabled && !isWebGPU,
+    shadowDistance: RENDER_STYLE.shadows.distance,
     resolution: 2048,
     softness: 0,
     bias: 0,
     normalBias: 0,
-    intensity: 1.0,
+    intensity: RENDER_STYLE.shadows.intensity,
   });
   if (voxelSunShadowPass && sunController) {
     const settings = sunController.getShadowSettings();
@@ -690,23 +602,10 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
 
   // worldRadius computed above
 
-  // Calculate dynamic fog distance to avoid horizon gaps
+  // Calculate the aerial-perspective cutoff to avoid horizon gaps.
   const margin = CHUNK_SIZE.x * 2; // small cushion
-  dynamicFogDistance = Math.min(camera.far * 0.95, worldRadius + margin);
-  // Update fog distance now that world size is known
-  if (composer) {
-    composer.setFog(true, 0.002, dynamicFogDistance);
-    // Add horizon haze above water level only, at far distance, leaving seabed alone
-    const hazeStart = Math.max(0, worldRadius - CHUNK_SIZE.x * 1.5);
-    const hazeDensity = 0.0045;    // slightly lower extra fog at far distances
-    const hazeMaxMix = 0.05;       // reduce horizon washout to avoid white ring
-    const hazeAngleBoost = 0.4;    // smaller boost when looking near-horizon
-    const hazePlaneBoost = 0.2;    // modest extra boost within a small band over the water plane
-    const hazePlaneBand = 6.0;     // meters above water level for extra boost
-    composer.setHorizonHaze({ enabled: true, waterLevel: WATER_LEVEL + 1.0, hazeStart, hazeDensity, hazeMaxMix, hazeAngleBoost, hazePlaneBoost, hazePlaneBand });
-  } else if (postProcessor) {
-    postProcessor.updateSettings({ fogEnabled: true, fogBaseDensity: 0.002, fogMaxDistance: dynamicFogDistance });
-  }
+  aerialPerspectiveDistance = Math.min(camera.far * 0.95, worldRadius + margin);
+  composer?.setAerialPerspective(true, aerialPerspectiveDistance);
 
   // Set world radius in chunk pipeline for terrain generation
   world.chunkPipeline.setWorldRadius(worldRadius);
@@ -829,12 +728,9 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       camera.aspect = size.width / size.height;
       camera.updateProjectionMatrix();
       
-      // Update post-processor size
       if (composer) {
         composer.setPixelRatio(size.dpr);
         composer.setSize(size.width, size.height);
-      } else if (postProcessor) {
-        postProcessor.setSize(size.width, size.height);
       }
       if (voxelSunShadowPass) {
         const resolution = voxelSunShadowPass.getDiagnostics().resolution;
@@ -905,12 +801,6 @@ function stop() {
     waterMaterial = null;
   }
 
-  // Clean up post processor
-  if (postProcessor) {
-    postProcessor.dispose();
-    postProcessor = null;
-  }
-
   if (composer) {
     composer.dispose();
     composer = null;
@@ -966,11 +856,11 @@ function stop() {
     world = null;
   }
   
-  // Clean up environment
-  if (environment) {
-    environment.dispose();
-    environment = null;
+  if (skyDome) {
+    skyDome.dispose();
+    skyDome = null;
   }
+  atmosphereModel = null;
 
   // Clean up ocean horizon
   if (oceanHorizon && scene) {
@@ -987,8 +877,8 @@ function stop() {
   scene = null;
   camera = null;
   
-  // Reset dynamic fog distance
-  dynamicFogDistance = 600;
+  // Reset dynamic aerial-perspective distance
+  aerialPerspectiveDistance = 600;
 }
 
 // Global function for UI to read current graphics state
@@ -996,97 +886,25 @@ function getGraphicsSettings(): GraphicsSettings {
   return {
     timeOfDay: {
       t: sunController ? sunController.getTime() : 0,
-      paused: false,
-      cycleSeconds: 180,
+      paused: sunController?.isPaused() ?? false,
+      cycleSeconds: RENDER_STYLE.dayNightCycleSeconds,
     },
-    renderer: { exposure: renderer ? renderer.getRenderer().toneMappingExposure : 1.0 },
   };
 }
 
-// Global function for UI to update post-processing settings
-function updatePostProcessingSettings(settings: PostProcessorSettings) {
-  // console.log('[Engine] Received post-processing settings:', settings);
-  if (composer) {
-    composer.setSSAO(!!settings.ssaoEnabled, settings.ssaoIntensity, settings.ssaoRadius);
-    composer.setBloom(!!settings.bloomEnabled, settings.bloomStrength, settings.bloomThreshold);
-    composer.setFog(!!settings.fogEnabled, settings.fogBaseDensity ?? 0.002, settings.fogMaxDistance ?? dynamicFogDistance);
-    composer.setVolumetrics(!!settings.volumetricsEnabled, settings.volumetricsIntensity ?? 0.1, settings.volumetricsSteps ?? 32);
-    composer.setColorGrading(settings.exposure, settings.contrast, settings.saturation);
-    // console.log('[Engine] Applied composer post-processing settings');
-  } else if (postProcessor) {
-    postProcessor.updateSettings(settings);
-    // console.log('[Engine] Applied post-processing settings successfully');
-  } else {
-    // Engine not ready or running in a renderer path without post FX (e.g., WebGPU fallback).
-    return;
-  }
-}
-
-// Global function for UI to update shadow settings
-function updateShadowSettings(settings: ShadowSettings) {
-  if (!sunController) return;
-  sunController.setShadowSettings(settings);
-  const shadowSettings = sunController.getShadowSettings();
-  voxelSunShadowPass?.setSettings({
-    enabled: shadowSettings.enabled,
-    maxDistance: shadowSettings.shadowDistance,
-  });
-  if (blockMaterial && voxelSunShadowPass) {
-    const resolution = voxelSunShadowPass.getDiagnostics().resolution;
-    blockMaterial.setVoxelShadowTexture(
-      voxelSunShadowPass.getTexture(),
-      resolution.width,
-      resolution.height,
-      shadowSettings.enabled,
-    );
-    grassSystem?.setVoxelShadowTexture(
-      voxelSunShadowPass.getTexture(),
-      resolution.width,
-      resolution.height,
-      shadowSettings.enabled,
-    );
-  }
-}
-
-// Global function for UI to update graphics settings (time of day, exposure, etc.)
+// Global function for UI to update the two player-facing graphics controls.
 function updateGraphicsSettings(settings: GraphicsSettings) {
   applyGraphicsSettings(settings, {
     setTime: (t: number) => { sunController?.setTime(t); },
     setTimePaused: (p: boolean) => { sunController?.pause(p); },
-    setCycleSeconds: (sec: number) => { sunController?.setCycleSeconds(sec); },
-    setRendererExposure: (exp: number) => {
-      if (renderer) renderer.getRenderer().toneMappingExposure = exp;
-    },
-    setClouds: (p) => {
-      if (!clouds) return;
-      if (p.coverage !== undefined) clouds.setCoverage(p.coverage);
-      if (p.density !== undefined) clouds.setDensity(p.density);
-      if (p.windDirection !== undefined || p.windSpeed !== undefined) {
-        const dir = p.windDirection ?? Math.PI * 0.25;
-        const sp = p.windSpeed ?? 5;
-        clouds.setWind(dir, sp);
-      }
-      if (p.enabled !== undefined) clouds.setEnabled(p.enabled);
-
-    }
+    // The duration is baked into RenderStyle. Ignore any stale caller value
+    // so old saved UI state cannot reintroduce a user-tunable cycle length.
+    setCycleSeconds: () => { sunController?.setCycleSeconds(RENDER_STYLE.dayNightCycleSeconds); },
   });
 }
 
 // Expose to global scope for UI communication
 (window as Window & {
-  updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
-  updateShadowSettings?: (settings: ShadowSettings) => void;
-  updateGraphicsSettings?: (settings: GraphicsSettings) => void;
-  getGraphicsSettings?: () => GraphicsSettings;
-}).updatePostProcessingSettings = updatePostProcessingSettings;
-(window as Window & {
-  updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
-  updateShadowSettings?: (settings: ShadowSettings) => void;
-  updateGraphicsSettings?: (settings: GraphicsSettings) => void;
-}).updateShadowSettings = updateShadowSettings;
-(window as Window & {
-  updatePostProcessingSettings?: (settings: PostProcessorSettings) => void;
-  updateShadowSettings?: (settings: ShadowSettings) => void;
   updateGraphicsSettings?: (settings: GraphicsSettings) => void;
   getGraphicsSettings?: () => GraphicsSettings;
 }).updateGraphicsSettings = updateGraphicsSettings;
@@ -1101,12 +919,41 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
 (window as Window & { __getVoxelShadowDiagnostics?: () => unknown }).__getVoxelShadowDiagnostics = () =>
   voxelSunShadowPass?.getDiagnostics() ?? null;
 
-// console.log('[Engine] Global functions exposed to window:', {
-//   updatePostProcessingSettings: !!(window as Window & { updatePostProcessingSettings?: unknown }).updatePostProcessingSettings,
-//   updateShadowSettings: !!(window as Window & { updateShadowSettings?: unknown }).updateShadowSettings,
-//   updateGraphicsSettings: !!(window as Window & { updateGraphicsSettings?: unknown }).updateGraphicsSettings,
-//   getGraphicsSettings: !!(window as Window & { getGraphicsSettings?: unknown }).getGraphicsSettings,
-// });
+// Read-only hook used by local visual validation. It exposes authored state,
+// not mutable controls, so the player-facing settings remain intentionally
+// baked into RenderStyle.
+(window as Window & { __getRenderDiagnostics?: () => unknown }).__getRenderDiagnostics = () => {
+  const material = skyDome?.sky.material as THREE.ShaderMaterial | undefined;
+  const atmosphere = atmosphereModel?.state;
+  return {
+    renderer: renderer ? {
+      toneMapping: renderer.getRenderer().toneMapping,
+      toneMappingExposure: renderer.getRenderer().toneMappingExposure,
+      outputColorSpace: renderer.getRenderer().outputColorSpace,
+    } : null,
+    sky: skyDome ? {
+      visible: skyDome.sky.visible,
+      scale: skyDome.sky.scale.x,
+      position: skyDome.sky.position.toArray(),
+      renderOrder: skyDome.sky.renderOrder,
+      materialType: material?.type,
+      skyZenith: (material?.uniforms.skyZenith?.value as THREE.Color | undefined)?.toArray(),
+      skyHorizon: (material?.uniforms.skyHorizon?.value as THREE.Color | undefined)?.toArray(),
+      skyAerosol: (material?.uniforms.skyAerosol?.value as THREE.Color | undefined)?.toArray(),
+      skyAerosolStrength: material?.uniforms.skyAerosolStrength?.value,
+    } : null,
+    atmosphere: atmosphere ? {
+      sunDirection: atmosphere.sunDirection.toArray(),
+      daylight: atmosphere.daylight,
+      sunIntensity: atmosphere.sunIntensity,
+      skyZenith: atmosphere.skyZenith.toArray(),
+      skyHorizon: atmosphere.skyHorizon.toArray(),
+      skyAerosol: atmosphere.skyAerosol.toArray(),
+      skyAerosolStrength: atmosphere.skyAerosolStrength,
+    } : null,
+    exposure: composer?.getExposureDiagnostics() ?? null,
+  };
+};
 
 // Expose SFX helpers to UI
 (window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__setSfxVolume = (v: number) => { sfx?.setVolume(v); };

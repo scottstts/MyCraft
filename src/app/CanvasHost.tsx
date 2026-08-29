@@ -11,7 +11,7 @@ import type { DiagnosticCameraId } from '../diagnostics/cameras'
 
 
 type EngineApi = {
-  start: (canvas: HTMLCanvasElement, options?: { diagnosticView?: DiagnosticCameraId }) => Promise<void>
+  start: (canvas: HTMLCanvasElement, options?: { diagnosticView?: DiagnosticCameraId; diagnosticTime?: number }) => Promise<void>
   stop: () => void
 }
 
@@ -23,9 +23,10 @@ async function loadEngine(): Promise<EngineApi> {
 
 export interface CanvasHostProps {
   diagnosticView?: DiagnosticCameraId
+  diagnosticTime?: number
 }
 
-export function CanvasHost({ diagnosticView }: CanvasHostProps = {}) {
+export function CanvasHost({ diagnosticView, diagnosticTime }: CanvasHostProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const setPaused = useUIStore(s => s.setPaused)
   const setInGame = useUIStore(s => s.setInGame)
@@ -47,7 +48,7 @@ export function CanvasHost({ diagnosticView }: CanvasHostProps = {}) {
       // If the first async import resolves after its effect was cleaned up,
       // do not start a second engine behind the live mount.
       if (!mounted) return
-      await engineApi.start(canvas, diagnosticView ? { diagnosticView } : undefined)
+      await engineApi.start(canvas, diagnosticView ? { diagnosticView, diagnosticTime } : undefined)
       // Startup itself awaits atlas/worker setup. A navigation during that
       // await must tear down the completed engine rather than leave a hidden
       // RAF/light pair running behind the next scene.
@@ -82,7 +83,7 @@ export function CanvasHost({ diagnosticView }: CanvasHostProps = {}) {
       if (removeListeners) removeListeners()
       if (engineStarted) engineApi?.stop()
     }
-  }, [restartToken, setPaused, setInGame, gameStarted, diagnosticView])
+  }, [restartToken, setPaused, setInGame, gameStarted, diagnosticView, diagnosticTime])
 
   // Prevent context menu on right click over canvas
   const onContextMenu = (e: React.MouseEvent) => e.preventDefault()

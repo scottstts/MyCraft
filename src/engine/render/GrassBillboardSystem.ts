@@ -156,6 +156,7 @@ export class GrassBillboardSystem {
   // Lighting sync API (called from Engine)
   setSunUniforms(dir: THREE.Vector3, color: THREE.Color): void { this.material.setSun(dir, color) }
   setDayNight(day: number, star: number): void { this.material.setDayNight(day, star) }
+  setSkyAmbient(color: THREE.Color): void { this.material.setSkyAmbient(color) }
   getTexture(): THREE.Texture { return (this.material.uniforms.map as { value: THREE.Texture }).value }
   setVoxelShadowTexture(texture: THREE.Texture, width: number, height: number, enabled = true): void {
     this.material.setVoxelShadowTexture(texture, width, height, enabled)

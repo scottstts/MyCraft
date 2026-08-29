@@ -56,10 +56,16 @@ export class Renderer {
     this.syncCanvasSize(canvas);
 
     // Shared visual settings
-    this.renderer.setClearColor(0x87ceeb);
+    // Keep the fallback clear dark and atmospheric; the analytic dome covers
+    // all camera rays in the active WebGL path, but this prevents a bright
+    // legacy-sky flash while it is being initialized or if a ray misses it.
+    this.renderer.setClearColor(0x101a2d);
     if ('toneMapping' in this.renderer) {
-      (this.renderer as THREE.WebGLRenderer).toneMapping = THREE.ACESFilmicToneMapping;
-      (this.renderer as THREE.WebGLRenderer).toneMappingExposure = 0.8;
+      // OutputPass owns the single scene-linear -> display transform. AgX
+      // preserves sky gradients and sun highlights more gracefully than the
+      // previous ACES + per-material Reinhard/gamma stack.
+      (this.renderer as THREE.WebGLRenderer).toneMapping = THREE.AgXToneMapping;
+      (this.renderer as THREE.WebGLRenderer).toneMappingExposure = 1.0;
     }
     if ('outputColorSpace' in this.renderer) {
       (this.renderer as THREE.WebGLRenderer).outputColorSpace = THREE.SRGBColorSpace;

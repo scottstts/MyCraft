@@ -29,6 +29,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     const b = params.bounds ?? { minX: -1e9, maxX: 1e9, minZ: -1e9, maxZ: 1e9 }
     super({
       transparent: true,
+      toneMapped: false,
       depthWrite: false,
       depthTest: true,
       side: THREE.DoubleSide,
@@ -86,6 +87,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         // Sky gradient controls (simple analytic sky for reflections)
         uSkyTop: { value: new THREE.Color(0.32, 0.50, 0.80) },
         uSkyHorizon: { value: new THREE.Color(0.68, 0.78, 0.92) },
+        uSkyAerosol: { value: new THREE.Color(0.36, 0.43, 0.52) },
+        uSkyAerosolStrength: { value: 0.14 },
+        uSkyRadianceScale: { value: 1.25 },
         // Ambient lighting controls
         uAmbientIntensity: { value: 1.0 },   // Overall ambient light multiplier [0..1]
         uNightTint: { value: new THREE.Color(0.1, 0.15, 0.25) }, // Tint applied at night
@@ -122,8 +126,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         // Distance/angle transmission shaping
         uniform float uAlphaDistStart; uniform float uAlphaDistEnd; uniform float uAlphaMax;
         uniform float uAlphaNearMin; uniform float uAlphaNearDist;
-        // Sky gradient
-        uniform vec3 uSkyTop; uniform vec3 uSkyHorizon;
+        // Shared sky gradient/aerosol handoff
+        uniform vec3 uSkyTop; uniform vec3 uSkyHorizon; uniform vec3 uSkyAerosol; uniform float uSkyAerosolStrength; uniform float uSkyRadianceScale;
           // Ambient lighting
           uniform float uAmbientIntensity; uniform vec3 uNightTint;
 
@@ -253,10 +257,17 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         }
 
         vec3 skyColor(vec3 dir){
-          // Simple analytic sky: horizon brighter, zenith deeper blue.
-          float h = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0); // -1..1 -> 0..1
-          vec3 base = mix(uSkyHorizon, uSkyTop, pow(h, 0.65));
-          return base;
+          // Match the dome's bounded lower hemisphere and broad marine
+          // aerosol shoulder. Reflections therefore converge to the same
+          // horizon instead of switching to a separate painted gradient.
+          float up = max(dir.y, 0.0);
+          vec3 gradient = mix(uSkyHorizon, uSkyTop, pow(up, 0.48));
+          vec3 seaMist = mix(uSkyAerosol, uSkyHorizon, 0.58);
+          vec3 base = mix(seaMist, gradient, smoothstep(-0.38, 0.14, dir.y));
+          float aerosol = smoothstep(-0.18, 0.0, dir.y)
+            * (1.0 - smoothstep(0.0, 0.30, dir.y))
+            * uSkyAerosolStrength;
+          return mix(base, uSkyAerosol, aerosol) * uSkyRadianceScale;
         }
 
         float fresnelSchlick(float cosTheta, float F0){
@@ -457,10 +468,6 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float f = uEdgeStrength * smoothstep(0.0, max(uEdgeWidth, 1e-3), outside);
           col = mix(col, vec3(0.88, 0.94, 1.0), f);
 
-          // Tonemap-ish and gamma
-          col = col / (col + vec3(1.0));
-          col = pow(col, vec3(1.0/2.2));
-
           // Fresnel-driven alpha shaping so grazing angles appear less transparent
           float a = max(uAlpha, uAlphaNearMin);
           float fresnelAlpha = clamp(uAlphaFresnelBase + uAlphaFresnelScale * F, 0.0, 2.0);
@@ -547,6 +554,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
   setSkyColors(topColor: THREE.Color, horizonColor: THREE.Color) {
     (this.uniforms.uSkyTop.value as THREE.Color).copy(topColor);
     (this.uniforms.uSkyHorizon.value as THREE.Color).copy(horizonColor);
+  }
+  setSkyAtmosphere(aerosol: THREE.Color, strength: number, radianceScale = 1.25) {
+    (this.uniforms.uSkyAerosol.value as THREE.Color).copy(aerosol)
+    this.uniforms.uSkyAerosolStrength.value = Math.max(0, Math.min(0.25, strength))
+    this.uniforms.uSkyRadianceScale.value = Math.max(0.1, radianceScale)
   }
   setWaves(params: { amp?: number; chop?: number; wind?: THREE.Vector2; speed?: number; L0?: number; L1?: number; L2?: number }){
     if (params.amp !== undefined) this.uniforms.uWaveAmp.value = Math.max(0, params.amp)

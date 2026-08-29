@@ -63,9 +63,9 @@ The main game engine orchestrates all subsystems:
 
 ### Rendering Pipeline (`src/engine/render/`)
 - **Three.js WebGL renderer** with custom materials and shaders
-- **Advanced post-processing** including SSAO, bloom, fog, volumetric lighting
-- **Dynamic lighting** with sun/moon cycle and shadow mapping
-- **Atmospheric effects** including sky dome, clouds, and stars
+- **Authored post-processing** including SSAO, aerial perspective, exposure, bloom, and lens flare
+- **Dynamic lighting** with a fixed 10-minute day / 10-minute night cycle and voxel sun visibility
+- **Atmospheric effects** including an analytic Rayleigh/Mie sky, solar/lunar discs, and stars
 - **Water rendering** with reflections, refractions, and horizon effects
 
 ### Physics & Interaction (`src/engine/systems/`)
@@ -203,8 +203,8 @@ stop() � Cleanup and dispose resources
 #### Rendering System (`src/engine/render/Renderer.ts`)
 - **Scene Builder**: Constructs Three.js scene with lighting
 - **Material System**: Custom block materials with atlas texturing  
-- **Post-Processing**: Multi-pass effects including SSAO, bloom, fog
-- **Atmospheric Rendering**: Sky dome, clouds, stars, volumetric lighting
+- **Post-Processing**: Fixed scene-linear pipeline with SSAO, aerial perspective, exposure, bloom, lens flare, and output mapping
+- **Atmospheric Rendering**: Analytic Rayleigh/Mie sky, solar/lunar discs, and deterministic stars
 
 #### Input System (`src/engine/systems/Input.ts`)
 - **Pointer Lock API** for FPS camera control
@@ -221,21 +221,19 @@ stop() � Cleanup and dispose resources
 ## Rendering Pipeline
 
 ### Multi-Pass Rendering
-The engine supports both simple and advanced rendering pipelines:
+The engine uses one authored WebGL composer. Rendering stays scene-linear until
+the final `OutputPass` applies the display transform:
 
-#### Effect Composer Pipeline (`USE_EFFECT_COMPOSER = true`)
-1. **Shadow Pass**: Native directional shadow mapping from the sun
-2. **Geometry Pass**: Render solid geometry with materials  
-3. **SSAO Pass**: Screen-space ambient occlusion
-4. **Lighting Pass**: Apply lighting and shadows
-5. **Bloom Pass**: HDR bloom with threshold and intensity
-6. **Fog Pass**: Distance-based atmospheric fog
-7. **Lens Flare Pass**: Sun lens flare effects
-8. **Volumetric Pass**: God rays and volumetric lighting
-9. **Color Grading**: Final exposure, contrast, saturation
+1. **Geometry Pass**: Render terrain, water, grass, and the analytic sky
+2. **SSAO Pass**: Screen-space ambient occlusion (fixed authored settings)
+3. **Aerial Perspective Pass**: Depth-aware distance scattering using the shared atmosphere state
+4. **Exposure Meter**: Fixed 64×36 luminance meter with bounded adaptation
+5. **Bloom Pass**: Subtle HDR highlight bloom
+6. **Lens Flare Pass**: Restrained sun flare
+7. **Output Pass**: Single AgX tone map and sRGB conversion
 
-#### Simple Post-Processor (`USE_EFFECT_COMPOSER = false`)
-Lightweight fallback with basic SSAO, bloom, and fog effects.
+Voxel sun visibility remains the sole terrain-shadow authority; its occupancy
+volume and screen-space reconstruction are kept separate from the sky pipeline.
 
 ### Material System
 - **Block Material**: Atlas-based texturing with lighting and shadows
@@ -244,10 +242,10 @@ Lightweight fallback with basic SSAO, bloom, and fog effects.
 - **Sky Materials**: Physically-based sky dome and star field
 
 ### Dynamic Lighting
-- **Sun Controller**: 24-hour day/night cycle (configurable duration)
-- **Shadow System**: Native directional shadow map with fixed finite-world coverage
+- **Sun Controller**: Fixed 10-minute day / 10-minute night cycle
+- **Shadow System**: Voxel occupancy and screen-space visibility (no second native shadow map)
 - **Ambient Lighting**: Time-of-day based ambient light levels
-- **Clouds**: Dynamic visual cloud layer (no custom ground-shadow projection)
+- **Atmosphere Model**: Shared sky, sun, ambient, and distance-scattering state
 
 ## Data Models & Types
 
@@ -302,11 +300,13 @@ INTERACTION.reach = 5                    // Block interaction distance
 ```typescript
 USE_WORKERS = true                       // Enable Web Workers
 USE_GREEDY_MESH = false                  // Mesh optimization (WIP)
-USE_EFFECT_COMPOSER = true               // Advanced post-processing
 USE_OCEAN_HORIZON = true                 // Far ocean rendering
 ENABLE_NOCLIP = false                    // Debug flying mode
 CHUNK_RADIUS = 6                         // World generation radius
 ```
+
+Authored rendering values live in `src/engine/render/settings/RenderStyle.ts`;
+they are intentionally not exposed as player-facing tuning controls.
 
 ## Build System
 

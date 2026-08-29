@@ -8,6 +8,7 @@
  * compatibility settings surface used by the debug panel.
  */
 import * as THREE from 'three';
+import { RENDER_STYLE } from '../settings/RenderStyle';
 
 export interface SunControllerOptions {
   cycleSeconds?: number;
@@ -50,7 +51,7 @@ export class SunController {
 
   private t = 0;
   private paused = false;
-  private cycleSeconds = 180;
+  private cycleSeconds: number = RENDER_STYLE.dayNightCycleSeconds;
   private sunDir = new THREE.Vector3(1, 1, 1).normalize();
   private sunColor = new THREE.Color(0xffffff);
   private readonly shadowsSupported: boolean;
@@ -59,7 +60,7 @@ export class SunController {
   private readonly up = new THREE.Vector3(0, 1, 0);
 
   constructor(scene: THREE.Scene, opts: SunControllerOptions = {}) {
-    this.cycleSeconds = opts.cycleSeconds ?? 180;
+    this.cycleSeconds = opts.cycleSeconds ?? RENDER_STYLE.dayNightCycleSeconds;
     this.paused = !!opts.paused;
     this.t = (opts.initialTime ?? 0.25) % 1;
     this.shadowsSupported = opts.enableShadows ?? true;
@@ -98,9 +99,17 @@ export class SunController {
   getSunColor(target: THREE.Color = new THREE.Color()): THREE.Color { return target.copy(this.sunColor); }
   getElevationRadians(): number { return Math.asin(Math.sin(this.t * TWO_PI)); }
 
+  /** Keep auxiliary directional-light consumers on the shared atmosphere state. */
+  setAtmosphereLighting(color: THREE.Color, intensity: number): void {
+    this.sunColor.copy(color);
+    this.sun.color.copy(color);
+    this.sun.intensity = this.shadowsSupported ? Math.max(0, intensity) : 0;
+  }
+
   /** Compatibility no-op retained for callers that used to fit a shadow map. */
-  setShadowBounds(_bounds: { minX: number; maxX: number; minZ: number; maxZ: number; minY?: number; maxY?: number }): void {
+  setShadowBounds(bounds: { minX: number; maxX: number; minZ: number; maxZ: number; minY?: number; maxY?: number }): void {
     // Voxel visibility is bounded by VoxelOccupancyVolume, not a light frustum.
+    void bounds;
   }
 
   setShadowSettings(settings: Partial<ShadowSettings>): void {
