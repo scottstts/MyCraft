@@ -48,9 +48,16 @@ export const RENDER_STYLE = {
     // values, not player-facing controls.
     skyRadianceScale: 1.25,
     aerosolStrength: 0.14,
-    aerialPerspectiveStart: 36,
-    aerialPerspectiveExtinction: 0.0028,
+    aerialPerspectiveStart: 96,
+    aerialPerspectiveExtinction: 0.0022,
     aerialPerspectiveMax: 0.72,
+    // A view-ray envelope, applied to both sky and finite-depth surfaces, so
+    // the ocean/sky boundary shares one 360-degree marine airlight shoulder.
+    horizonHazeWidth: 0.26,
+    horizonHazeStrength: 1.0,
+    // Keep the geometric-horizon blend subtle on nearby receivers; distance
+    // haze and the full airlight shoulder still converge farther out.
+    horizonHazeNearSurfaceFloor: 0.04,
   },
 } as const;
 

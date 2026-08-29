@@ -5,7 +5,8 @@ import { RENDER_STYLE } from '../../settings/RenderStyle';
 
 /**
  * Depth-aware surface aerial perspective using the same coefficients and
- * sun/sky state as SkyDome. Sky pixels are left to the dome itself.
+ * sun/sky state as SkyDome. A shared view-ray horizon envelope is also
+ * applied to sky pixels so the ocean and dome meet through one airlight band.
  */
 export class AerialPerspectivePass extends ShaderPass {
   constructor() {
@@ -35,6 +36,9 @@ export class AerialPerspectivePass extends ShaderPass {
         hazeStart: { value: 36.0 },
         hazeExtinction: { value: 0.0028 },
         hazeMax: { value: 0.72 },
+        horizonHazeWidth: { value: RENDER_STYLE.atmosphere.horizonHazeWidth },
+        horizonHazeStrength: { value: RENDER_STYLE.atmosphere.horizonHazeStrength },
+        horizonHazeNearSurfaceFloor: { value: RENDER_STYLE.atmosphere.horizonHazeNearSurfaceFloor },
         enabled: { value: true },
       },
       toneMapped: false,
@@ -70,6 +74,9 @@ export class AerialPerspectivePass extends ShaderPass {
         uniform float hazeStart;
         uniform float hazeExtinction;
         uniform float hazeMax;
+        uniform float horizonHazeWidth;
+        uniform float horizonHazeStrength;
+        uniform float horizonHazeNearSurfaceFloor;
         uniform bool enabled;
         varying vec2 vUv;
 
@@ -110,13 +117,36 @@ export class AerialPerspectivePass extends ShaderPass {
         void main() {
           vec4 source = texture2D(tDiffuse, vUv);
           float distanceToSurface = readDepth(vUv);
-          if (!enabled || distanceToSurface >= cameraFar * 0.999) {
+          if (!enabled) {
             gl_FragColor = source;
             return;
           }
 
-          float d = min(distanceToSurface, maxDistance);
           vec3 ray = viewRayWorld();
+          float up = max(ray.y, 0.0);
+          float vertical = pow(up, 0.48);
+          vec3 gradient = mix(skyHorizon, skyZenith, vertical);
+          vec3 seaMist = mix(skyAerosol, skyHorizon, 0.58);
+          vec3 ambientSky = mix(seaMist, gradient, smoothstep(-0.38, 0.14, ray.y));
+          float aerosol = smoothstep(-0.18, 0.0, ray.y)
+            * (1.0 - smoothstep(0.0, 0.30, ray.y))
+            * skyAerosolStrength;
+          ambientSky = mix(ambientSky, skyAerosol, aerosol) * skyRadianceScale;
+
+          // Sky pixels have no finite depth, so they used to bypass this pass
+          // entirely while the far ocean was fogged below them. Apply one
+          // angular marine-airlight envelope to both sides of the horizon. It
+          // is view-ray based (not screen-axis based), therefore it surrounds
+          // the player continuously through every yaw direction.
+          float horizonBand = exp(-pow(abs(ray.y) / max(horizonHazeWidth, 1e-3), 2.0));
+          vec3 horizonAirlight = mix(seaMist, skyHorizon, 0.25) * skyRadianceScale;
+          float horizonMix = clamp(horizonBand * horizonHazeStrength, 0.0, 1.0);
+          if (distanceToSurface >= cameraFar * 0.999) {
+            gl_FragColor = vec4(mix(source.rgb, horizonAirlight, horizonMix), source.a);
+            return;
+          }
+
+          float d = min(distanceToSurface, maxDistance);
           vec3 position = worldPosition(distanceToSurface);
           float altitude = max(position.y - waterLevel, 0.0);
           float density = mix(1.0, 0.35, 1.0 - exp(-altitude / max(0.25, mieScaleHeight * 4.0)));
@@ -131,21 +161,23 @@ export class AerialPerspectivePass extends ShaderPass {
           vec3 transmittance = exp(-extinction * opticalLength);
           float inscatterAmount = clamp(1.0 - dot(transmittance, vec3(0.333333)), 0.0, hazeMax);
 
-          float up = max(ray.y, 0.0);
-          float vertical = pow(up, 0.48);
-          vec3 gradient = mix(skyHorizon, skyZenith, vertical);
-          vec3 seaMist = mix(skyAerosol, skyHorizon, 0.58);
-          vec3 ambientSky = mix(seaMist, gradient, smoothstep(-0.38, 0.14, ray.y));
-          float aerosol = smoothstep(-0.18, 0.0, ray.y)
-            * (1.0 - smoothstep(0.0, 0.30, ray.y))
-            * skyAerosolStrength;
-          ambientSky = mix(ambientSky, skyAerosol, aerosol) * skyRadianceScale;
           float cosSun = dot(ray, normalize(sunDirection));
           float singleScatter = rayleighPhase(cosSun) * rayleighCoefficient * 0.16
             + miePhase(cosSun, mieDirectionalG) * mieCoefficient * 0.22;
           vec3 sunScatter = sunColor * sunIntensity * singleScatter * inscatterAmount * 1.6;
           vec3 inscatter = ambientSky * inscatterAmount * 0.66 + sunScatter;
-          gl_FragColor = vec4(source.rgb * transmittance + inscatter, source.a);
+          vec3 composed = source.rgb * transmittance + inscatter;
+          // The distance term preserves a crisp near field while ensuring the
+          // far ocean and distant terrain converge to the same airlight as the
+          // sky at the shared horizon.
+          float distanceHaze = smoothstep(hazeStart, max(hazeStart + 1.0, maxDistance), d);
+          // Even a nearby receiver at the geometric horizon should inherit a
+          // small amount of the shared airlight. Without this floor the sky
+          // branch and a water/terrain depth branch can still meet as a hard
+          // line when the surface is inside the normal haze start distance.
+          float horizonSurfaceMix = horizonMix * mix(horizonHazeNearSurfaceFloor, 1.0, distanceHaze);
+          composed = mix(composed, horizonAirlight, horizonSurfaceMix);
+          gl_FragColor = vec4(composed, source.a);
         }
       `,
     });
@@ -181,6 +213,9 @@ export class AerialPerspectivePass extends ShaderPass {
     this.uniforms.hazeStart.value = RENDER_STYLE.atmosphere.aerialPerspectiveStart;
     this.uniforms.hazeExtinction.value = RENDER_STYLE.atmosphere.aerialPerspectiveExtinction;
     this.uniforms.hazeMax.value = RENDER_STYLE.atmosphere.aerialPerspectiveMax;
+    this.uniforms.horizonHazeWidth.value = RENDER_STYLE.atmosphere.horizonHazeWidth;
+    this.uniforms.horizonHazeStrength.value = RENDER_STYLE.atmosphere.horizonHazeStrength;
+    this.uniforms.horizonHazeNearSurfaceFloor.value = RENDER_STYLE.atmosphere.horizonHazeNearSurfaceFloor;
     this.uniforms.rayleighScaleHeight.value = state.rayleighScaleHeight;
     this.uniforms.mieScaleHeight.value = state.mieScaleHeight;
     this.uniforms.rayleighCoefficient.value = state.rayleighCoefficient;

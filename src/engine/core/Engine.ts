@@ -383,7 +383,10 @@ function update(dtSeconds: number) {
   if (composer && camera && sunController && atmosphereState) {
     const sdir = sunController.getSunDirection();
     composer.update(camera, sdir, atmosphereState.sunColor, atmosphereState);
-    composer.render();
+    // Feed the same bounded frame delta used by the simulation into the
+    // composer. EffectComposer otherwise measures its own uncapped clock;
+    // after a hitch or tab resume that would let exposure adapt in one jump.
+    composer.render(dtSeconds);
   } else if (renderer && scene && camera) {
     // Fallback to basic rendering
     renderer.render(scene, camera);

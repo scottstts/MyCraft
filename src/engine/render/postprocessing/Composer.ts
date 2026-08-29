@@ -221,7 +221,15 @@ export class Composer {
   setAerialPerspective(enabled: boolean, maxDistance: number) { this.aerial.setSettings({ enabled, maxDistance }) }
   getExposureDiagnostics() { return this.meter.getDiagnostics() }
   resetExposure() { this.meter.reset() }
-  render() { this.composer.render() }
+  render(deltaSeconds = 0) {
+    // Never let EffectComposer fall back to its own wall-clock delta. The
+    // engine supplies the bounded simulation delta; callers that omit it get
+    // a deterministic zero instead of an exposure jump after a stall.
+    const boundedDelta = Number.isFinite(deltaSeconds)
+      ? Math.min(0.1, Math.max(0, deltaSeconds))
+      : 0
+    this.composer.render(boundedDelta)
+  }
 
   dispose(): void {
     this.voxelSunShadow?.dispose()

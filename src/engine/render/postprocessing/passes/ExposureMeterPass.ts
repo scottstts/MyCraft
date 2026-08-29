@@ -27,6 +27,7 @@ export class ExposureMeterPass extends Pass {
   private averageLuminance = 0.18;
   private targetExposure = 1;
   private currentExposure = 1;
+  private readbackFailures = 0;
 
   constructor(settings: ExposureMeterSettings, width: number, height: number) {
     super();
@@ -75,7 +76,12 @@ export class ExposureMeterPass extends Pass {
     readBuffer: THREE.WebGLRenderTarget,
     deltaTime: number,
   ): void {
-    this.currentExposure = this.adapt(this.currentExposure, this.targetExposure, deltaTime);
+    // The engine supplies a bounded simulation delta, but keep the pass safe
+    // when it is driven by another composer or a diagnostic caller. Exposure
+    // is intentionally rate-limited so a stalled tab cannot cause a visible
+    // one-frame iris jump.
+    const adaptationDelta = Math.min(0.1, Math.max(0, deltaTime));
+    this.currentExposure = this.adapt(this.currentExposure, this.targetExposure, adaptationDelta);
     renderer.toneMappingExposure = this.currentExposure;
 
     const previousTarget = renderer.getRenderTarget();
@@ -96,7 +102,9 @@ export class ExposureMeterPass extends Pass {
         .then((pixels) => this.consumePixels(pixels as Uint8Array))
         .catch(() => {
           this.pending = false;
-          this.targetExposure = 1;
+          // Keep the last valid target. Resetting to unity on a transient
+          // readback failure couples scene brightness to GPU/driver timing.
+          this.readbackFailures += 1;
         });
       return;
     }
@@ -106,7 +114,8 @@ export class ExposureMeterPass extends Pass {
       this.consumePixels(this.pixels);
     } catch {
       this.pending = false;
-      this.targetExposure = 1;
+      // Keep the last valid target for the same reason as the async path.
+      this.readbackFailures += 1;
     }
   }
 
@@ -136,12 +145,13 @@ export class ExposureMeterPass extends Pass {
     return current + (target - current) * amount;
   }
 
-  getDiagnostics(): { averageLuminance: number; targetExposure: number; currentExposure: number; pending: boolean } {
+  getDiagnostics(): { averageLuminance: number; targetExposure: number; currentExposure: number; pending: boolean; readbackFailures: number } {
     return {
       averageLuminance: this.averageLuminance,
       targetExposure: this.targetExposure,
       currentExposure: this.currentExposure,
       pending: this.pending,
+      readbackFailures: this.readbackFailures,
     };
   }
 
@@ -151,6 +161,7 @@ export class ExposureMeterPass extends Pass {
     this.currentExposure = 1;
     this.pending = false;
     this.frame = 0;
+    this.readbackFailures = 0;
   }
 
   setSize(): void {
