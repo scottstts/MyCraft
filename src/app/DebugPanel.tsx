@@ -60,7 +60,7 @@ export const DebugPanel: React.FC = () => {
     shadowSoftness: 1.0,
     shadowIntensity: 1.0,
     shadowBias: -0.0001,
-    shadowNormalBias: 0.005,
+    shadowNormalBias: 0,
     fogEnabled: true,
     fogBaseDensity: 0.002,
     fogMaxDistance: 600,

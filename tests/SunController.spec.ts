@@ -5,11 +5,11 @@ import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 import { NATIVE_WEBGL_SHADOW_MAP_TYPE } from '../src/engine/render/Renderer';
 
 describe('native WebGL shadow stability', () => {
-  it('uses the stripe-safe native VSM filter', () => {
-    expect(NATIVE_WEBGL_SHADOW_MAP_TYPE).toBe(THREE.VSMShadowMap);
+  it('uses the native PCF-soft filter', () => {
+    expect(NATIVE_WEBGL_SHADOW_MAP_TYPE).toBe(THREE.PCFSoftShadowMap);
   });
 
-  it('keeps the sun smooth while refreshing the native map on a texel budget', () => {
+  it('refreshes the native map whenever the moving sun changes', () => {
     const scene = new THREE.Scene();
     const controller = new SunController(scene, {
       initialTime: 0,
@@ -23,7 +23,7 @@ describe('native WebGL shadow stability', () => {
     const previousLightPosition = controller.sun.position.clone();
     for (let i = 0; i < 6; i++) {
       controller.update(1 / 120);
-      expect(controller.consumeShadowDirty()).toBe(false);
+      expect(controller.consumeShadowDirty()).toBe(true);
     }
     expect(controller.sun.position.distanceTo(previousLightPosition)).toBeGreaterThan(0);
     controller.update(1 / 120);
@@ -42,6 +42,7 @@ describe('native WebGL shadow stability', () => {
   it('uses a small negative native depth bias by default', () => {
     const controller = new SunController(new THREE.Scene(), { enableShadows: true });
     expect(controller.sun.shadow.bias).toBe(-0.0001);
+    expect(controller.sun.shadow.normalBias).toBe(0);
     controller.dispose();
   });
 
@@ -55,7 +56,7 @@ describe('native WebGL shadow stability', () => {
 
   it('casts voxel shadows from outward faces', () => {
     const material = new BlockMaterial(new THREE.Texture(), null, undefined, { tileSize: 16, atlasSize: 11 });
-    expect(material.shadowSide).toBe(THREE.DoubleSide);
+    expect(material.shadowSide).toBe(THREE.FrontSide);
     material.dispose();
   });
 

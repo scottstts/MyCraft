@@ -13,9 +13,10 @@ const MIN_PIXEL_RATIO = 1;
 
 // Keep the WebGL shadow filter in one place so runtime settings cannot switch
 // the renderer back to a different filter than the initial renderer setup.
-// VSM is the stripe-free native path for the large, open voxel surfaces: its
-// filtered moments avoid the nearest-depth comparison bands exposed by PCF.
-export const NATIVE_WEBGL_SHADOW_MAP_TYPE = THREE.VSMShadowMap;
+// Use Three's native percentage-closer filter. Unlike VSM, this compares the
+// unfiltered shadow depth directly and does not introduce a blurred moment
+// distribution between adjacent voxel surfaces.
+export const NATIVE_WEBGL_SHADOW_MAP_TYPE = THREE.PCFSoftShadowMap;
 
 type CanvasSyncState = {
   width: number;

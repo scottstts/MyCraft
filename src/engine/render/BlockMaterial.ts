@@ -331,12 +331,12 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       ]),
       defines: envMap ? { USE_ENVMAP: true } : {},
       side: THREE.FrontSide,
-      // The chunk mesher emits only exposed faces; it is an open voxel shell,
-      // not a closed manifold. Let the native shadow pass capture either
-      // winding so a sun-facing top/side face can still occlude the ground.
-      // This affects the shadow caster only; the visible material remains
-      // FrontSide so its authored lighting and silhouette are unchanged.
-      shadowSide: THREE.DoubleSide,
+      // The mesher emits every exposed voxel face with outward CCW winding.
+      // Keep the native shadow caster on that same outward-face set. Using
+      // DoubleSide also rasterizes the faces turned away from the sun, which
+      // lets unrelated open-shell surfaces compete in the depth map as the
+      // light rotates and produces the edge clusters/flicker.
+      shadowSide: THREE.FrontSide,
       transparent: false,
       lights: true,
     });

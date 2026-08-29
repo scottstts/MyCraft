@@ -647,7 +647,7 @@ async function start(canvas: HTMLCanvasElement) {
     shadowDistance: 300,
     softness: 1.0,
     bias: -0.0001,
-    normalBias: 0.005,
+    normalBias: 0,
     intensity: 1.0,
   });
 
