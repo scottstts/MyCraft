@@ -345,7 +345,7 @@ function update(dtSeconds: number) {
     blockMaterial.setDayLight(dayLight);
     blockMaterial.setStarLight(atmosphereState.starVisibility * 0.35);
     blockMaterial.setSkyAmbient(atmosphereState.skyIrradiance);
-    blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.55, waterSystem?.getTime() ?? 0);
+    blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80, waterSystem?.getTime() ?? 0);
     if (grassSystem) grassSystem.setSunUniforms(sdir, atmosphereState.sunColor);
     if (grassSystem) grassSystem.setDayNight(dayLight, atmosphereState.starVisibility * 0.35);
     if (grassSystem) grassSystem.setSkyAmbient(atmosphereState.skyIrradiance);
@@ -389,6 +389,14 @@ function update(dtSeconds: number) {
     waterMaterial?.setTime(waterSystem.getTime());
     waterMaterial?.setCameraUnderwater(waterSystem.isCameraUnderwater());
     composer?.setUnderwater(waterSystem.isCameraUnderwater());
+    if (composer) {
+      composer.setUnderwaterCaustics(
+        waterSystem.getCausticTexture(),
+        waterSystem.getCausticOrigin(),
+        waterSystem.getCausticExtent(),
+        waterSystem.getCausticResolution(),
+      );
+    }
   }
 
   // Update subsystems here (physics, input, etc.)
@@ -470,7 +478,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
-  blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.55);
+  blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80);
 
   // Determine anisotropy support for any textures that can benefit (e.g., seabed sand)
   let maxAniso = 0;
@@ -654,6 +662,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       worldRadius,
       blockMaterialSource: blockMaterial ?? undefined,
       anisotropy: maxAniso ? Math.min(8, maxAniso) : 8,
+      renderer: !isWebGPU ? (baseRenderer as THREE.WebGLRenderer) : undefined,
     });
     waterSystem.setSceneInputs(
       composer?.getSceneColorTexture() ?? null,

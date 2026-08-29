@@ -50,7 +50,10 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uInnerMinZ: { value: b.minZ },
         uInnerMaxZ: { value: b.maxZ },
         uAlpha: { value: ocean ? 1.0 : 0.7 },
-        uFresnelBias: { value: 0.02 },
+        // The ocean uses the exact dielectric Fresnel result.  A small bias is
+        // retained only for the legacy block-water path, whose old alpha
+        // tuning expected a slightly brighter grazing rim.
+        uFresnelBias: { value: ocean ? 0.0 : 0.02 },
         uEtaAirWater: { value: 1.0 / 1.333 },
         uRefractAmount: { value: 0.18 },
         uAbsorption: { value: new THREE.Vector3(0.20, 0.06, 0.02) },
@@ -104,14 +107,27 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         varying float vHeight;
         varying float vViewDepth;
 
+        float oceanTanh(float x) {
+          float e = exp(min(2.0 * x, 20.0));
+          return (e - 1.0) / (e + 1.0);
+        }
+
+        float oceanOmega(float k, float speed) {
+          float depthTerm = oceanTanh(min(k * OCEAN_WATER_DEPTH, 20.0));
+          float gravityTerm = 9.81 * k * depthTerm;
+          float capillaryTerm = OCEAN_SURFACE_TENSION_OVER_DENSITY * k * k * k;
+          return sqrt(max(gravityTerm + capillaryTerm, 0.0)) * speed * uWaveSpeed;
+        }
+
         vec3 oceanDisplacement(vec2 xz, float time) {
           vec3 displaced = vec3(0.0);
+          vec2 warpedXZ = xz + oceanDomainWarp(xz, time);
           ${Array.from({ length: OCEAN_WAVES.length }, (_, index) => `
             {
               float k = 6.28318530718 / OCEAN_WAVE_LENGTH_${index};
-              float omega = sqrt(9.81 * k) * OCEAN_WAVE_SPEED_${index} * uWaveSpeed;
-              float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, xz) - omega * time;
-              float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * min(uWaveAmp, 1.0);
+              float omega = oceanOmega(k, OCEAN_WAVE_SPEED_${index});
+              float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, warpedXZ) - omega * time + OCEAN_WAVE_PHASE_${index};
+              float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * oceanWaveGroupEnvelope(warpedXZ, time, float(${index})) * min(uWaveAmp, 1.0);
               float c = cos(phase);
               displaced.xz += OCEAN_WAVE_DIRECTION_${index} * OCEAN_WAVE_STEEPNESS_${index} * amplitude * uWaveChop * c;
               displaced.y += amplitude * sin(phase);
@@ -142,6 +158,10 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uTime;
         uniform bool uOceanMode;
         uniform float uWaterLevel;
+        uniform float uInnerMinX;
+        uniform float uInnerMaxX;
+        uniform float uInnerMinZ;
+        uniform float uInnerMaxZ;
         uniform float uAlpha;
         uniform float uFresnelBias;
         uniform float uEtaAirWater;
@@ -202,29 +222,59 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           );
         }
 
-        vec3 waveNormal(vec2 xz, float time, out float crest) {
+        float oceanTanh(float x) {
+          float e = exp(min(2.0 * x, 20.0));
+          return (e - 1.0) / (e + 1.0);
+        }
+
+        float oceanOmega(float k, float speed) {
+          float depthTerm = oceanTanh(min(k * OCEAN_WATER_DEPTH, 20.0));
+          float gravityTerm = 9.81 * k * depthTerm;
+          float capillaryTerm = OCEAN_SURFACE_TENSION_OVER_DENSITY * k * k * k;
+          return sqrt(max(gravityTerm + capillaryTerm, 0.0)) * speed * uWaveSpeed;
+        }
+
+        vec3 waveNormal(vec2 xz, float time, out float crest, out float jacobian) {
           vec3 tangentX = vec3(1.0, 0.0, 0.0);
           vec3 tangentZ = vec3(0.0, 0.0, 1.0);
+          float jxx = 1.0;
+          float jxz = 0.0;
+          float jzx = 0.0;
+          float jzz = 1.0;
           float phaseEnergy = 0.0;
           float totalAmplitude = 0.0;
+          vec2 warpedXZ = xz + oceanDomainWarp(xz, time);
+          vec2 dWarpDx;
+          vec2 dWarpDz;
+          oceanDomainWarpPartials(xz, time, dWarpDx, dWarpDz);
           ${Array.from({ length: OCEAN_WAVES.length }, (_, index) => `
             {
               float k = 6.28318530718 / OCEAN_WAVE_LENGTH_${index};
-              float omega = sqrt(9.81 * k) * OCEAN_WAVE_SPEED_${index} * uWaveSpeed;
-              float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, xz) - omega * time;
-              float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * min(uWaveAmp, 1.0);
+              float omega = oceanOmega(k, OCEAN_WAVE_SPEED_${index});
+              float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, warpedXZ) - omega * time + OCEAN_WAVE_PHASE_${index};
+              float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * oceanWaveGroupEnvelope(warpedXZ, time, float(${index})) * min(uWaveAmp, 1.0);
               float q = OCEAN_WAVE_STEEPNESS_${index} * uWaveChop;
               float s = sin(phase);
               float c = cos(phase);
               float dx = OCEAN_WAVE_DIRECTION_${index}.x;
               float dz = OCEAN_WAVE_DIRECTION_${index}.y;
-              tangentX += vec3(-q * amplitude * k * dx * dx * s, amplitude * k * dx * c, -q * amplitude * k * dx * dz * s);
-              tangentZ += vec3(-q * amplitude * k * dx * dz * s, amplitude * k * dz * c, -q * amplitude * k * dz * dz * s);
+              float phaseDx = k * (dx * (1.0 + dWarpDx.x) + dz * dWarpDx.y);
+              float phaseDz = k * (dx * dWarpDz.x + dz * (1.0 + dWarpDz.y));
+              tangentX += vec3(-q * amplitude * dx * phaseDx * s, amplitude * phaseDx * c, -q * amplitude * dz * phaseDx * s);
+              tangentZ += vec3(-q * amplitude * dx * phaseDz * s, amplitude * phaseDz * c, -q * amplitude * dz * phaseDz * s);
+              // Gerstner horizontal displacement Jacobian.  Its determinant
+              // is a fold/crest signal: compressions concentrate light and
+              // are the stable source for foam instead of a scrolling tint.
+              jxx += -q * amplitude * dx * phaseDx * s;
+              jxz += -q * amplitude * dx * phaseDz * s;
+              jzx += -q * amplitude * dz * phaseDx * s;
+              jzz += -q * amplitude * dz * phaseDz * s;
               phaseEnergy += abs(s) * amplitude;
               totalAmplitude += amplitude;
             }
           `).join('\n')}
           vec3 macro = normalize(cross(tangentZ, tangentX));
+          jacobian = jxx * jzz - jxz * jzx;
 
           float footprint = max(length(dFdx(vWorld.xz)), length(dFdy(vWorld.xz)));
           vec2 wind = normalize(vec2(0.80, 0.40));
@@ -243,19 +293,20 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec2 d2 = normalize(wind * 0.5 - crossWind * 0.866);
           vec2 d3 = normalize(crossWind * 0.94 - wind * 0.34);
           vec2 d4 = normalize(wind * 0.28 + crossWind * 0.96);
-          vec2 micro = wind * (0.12 * k0 * cos(dot(xz, wind) * k0 + time * 2.1) * aa0);
-          micro += d1 * (0.08 * k1 * cos(dot(xz, d1) * k1 - time * 2.7) * aa1);
-          micro += d2 * (0.05 * k2 * cos(dot(xz, d2) * k2 + time * 3.5) * aa2);
+          vec2 detailXZ = xz + oceanDomainWarp(xz, time) * 0.42;
+          vec2 micro = wind * (0.12 * k0 * cos(dot(detailXZ, wind) * k0 + time * oceanOmega(k0, 1.0)) * aa0);
+          micro += d1 * (0.08 * k1 * cos(dot(detailXZ, d1) * k1 - time * oceanOmega(k1, 1.0)) * aa1);
+          micro += d2 * (0.05 * k2 * cos(dot(detailXZ, d2) * k2 + time * oceanOmega(k2, 1.0)) * aa2);
           // Two capillary bands add cross-wind facets at close range. Their
           // derivative filters fade the bands before they become glitter.
-          micro += d3 * (0.018 * k3 * cos(dot(xz, d3) * k3 + time * 4.2) * aa3);
-          micro += d4 * (0.010 * k4 * cos(dot(xz, d4) * k4 - time * 5.7) * aa4);
+          micro += d3 * (0.018 * k3 * cos(dot(detailXZ, d3) * k3 + time * oceanOmega(k3, 1.0)) * aa3);
+          micro += d4 * (0.010 * k4 * cos(dot(detailXZ, d4) * k4 - time * oceanOmega(k4, 1.0)) * aa4);
 
           // Use a finite-difference gradient of advected value noise rather
           // than a scrolling scalar tint; this produces broken, natural
           // facets while preserving a coherent normal field.
-          vec2 noiseUvA = xz * 0.075 + wind * time * 0.03;
-          vec2 noiseUvB = xz * 0.14 - crossWind * time * 0.021;
+          vec2 noiseUvA = detailXZ * 0.075 + wind * time * 0.03;
+          vec2 noiseUvB = detailXZ * 0.14 - crossWind * time * 0.021;
           float noiseA = noise(noiseUvA);
           float noiseB = noise(noiseUvB);
           float noiseStepA = 0.12;
@@ -272,7 +323,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           micro += noiseGradientB * (0.012 * aa2);
 
           vec3 resolved = normalize(macro + vec3(-micro.x * 0.58, 0.0, -micro.y * 0.58));
-          crest = clamp((1.0 - resolved.y) * (1.35 + 0.35 * phaseEnergy / max(totalAmplitude, 0.001)), 0.0, 1.0);
+          float fold = smoothstep(0.92, 0.24, jacobian);
+          crest = clamp((1.0 - resolved.y) * (1.35 + 0.35 * phaseEnergy / max(totalAmplitude, 0.001)) + fold * 0.42, 0.0, 1.0);
           return resolved;
         }
 
@@ -320,7 +372,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
 
         void main() {
           float crest = 0.0;
-          vec3 normal = uOceanMode ? waveNormal(vOceanXZ, uTime, crest) : normalize(vNormalVary);
+          float jacobian = 1.0;
+          vec3 normal = uOceanMode ? waveNormal(vOceanXZ, uTime, crest, jacobian) : normalize(vNormalVary);
           if (uCameraUnderwater && normal.y > 0.0) normal = -normal;
           if (!uCameraUnderwater && normal.y < 0.0) normal = -normal;
           vec3 viewDirection = normalize(cameraPosition - vWorld);
@@ -365,13 +418,28 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             // inside the water-to-air cone, and keep a bright upwelling body
             // outside it so the critical rim reads as total internal
             // reflection instead of a dark pasted band.
-            vec3 tirBody = mix(uFogColor, uSkyAerosol, 0.45) * (0.58 + 0.20 * max(dot(normal, viewDirection), 0.0));
-            tirBody += uColor * 0.30;
+            float viewUpness = smoothstep(-0.55, 0.72, viewDirection.y);
+            vec3 ambientDown = vec3(0.012, 0.035, 0.055);
+            vec3 ambientUp = vec3(0.035, 0.120, 0.160);
+            vec3 mediumAmbient = mix(ambientDown, ambientUp, viewUpness);
+            float upwellingSun = pow(max(dot(normalize(reflect(incident, normal)), normalize(uSunDir)), 0.0), 6.0) * 0.06;
+            vec3 tirBody = mediumAmbient * (0.66 + 0.18 * max(dot(normal, viewDirection), 0.0));
+            tirBody += uColor * 0.28 + uSunColor * upwellingSun;
             if (!tir) {
               vec3 windowDirection = normalize(refractedDirection);
               vec3 window = skyRadiance(windowDirection);
+              // Snell stretch broadens the transmitted sun lobe at grazing
+              // incidence.  Derivative filtering keeps the lobe stable while
+              // preserving a sharp disc at normal incidence.
+              float snellEta = etaIncident / max(etaTransmitted, 0.001);
+              float snellStretch = max(snellEta * cosIncident / max(transmittedCos, 0.04), 1.0);
+              float normalVariation = max(length(dFdx(normal)), length(dFdy(normal)));
+              float snellSpread = (snellStretch - 1.0) * normalVariation * 0.5;
+              float lobeExponent = 1.0 / max(1.0 / 700.0 + snellSpread * snellSpread, 0.0001);
               float windowSun = max(dot(windowDirection, normalize(uSunDir)), 0.0);
-              window += uSunColor * (pow(windowSun, 260.0) * 0.65 + pow(windowSun, 18.0) * 0.08);
+              float transmittedSun = pow(windowSun, lobeExponent) * lobeExponent * (24.0 / 700.0);
+              float transmittedHalo = pow(windowSun, 24.0) * 0.08;
+              window += uSunColor * (transmittedSun + transmittedHalo);
               transmitted = window;
             } else {
               transmitted = tirBody;
@@ -392,8 +460,25 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float specular = pow(max(dot(normal, halfVector), 0.0), mix(180.0, 1200.0, 1.0 - clamp(uRoughness, 0.0, 1.0))) * uSpecular;
           if (!uCameraUnderwater) color += uSunColor * specular;
 
-          float foamNoise = noise(vWorld.xz * 0.9 + uTime * vec2(uFoamDrift, uFoamDrift * 0.5));
-          float foam = smoothstep(uFoamThreshold, 1.0, crest * mix(0.65, 1.35, foamNoise * uFoamNoise));
+          float foamFold = uOceanMode ? smoothstep(0.92, 0.20, jacobian) : 0.0;
+          float foamNoiseLarge = noise(vWorld.xz * 0.115 + uTime * vec2(uFoamDrift * 0.24, -uFoamDrift * 0.16));
+          float foamNoiseFine = noise(vWorld.xz * 0.68 - uTime * vec2(uFoamDrift * 0.82, uFoamDrift * 0.54));
+          float foamBreakup = mix(foamNoiseLarge, foamNoiseFine, 0.48);
+          // Coastal breaker band: the boundary is a broad shoaling zone, not
+          // a hard rectangular stripe.  A directional low-frequency train is
+          // gated by the live fold/crest field, then broken up by the same
+          // foam history surrogate used in the open sea.
+          float coastDistance = min(
+            min(abs(vWorld.x - uInnerMinX), abs(vWorld.x - uInnerMaxX)),
+            min(abs(vWorld.z - uInnerMinZ), abs(vWorld.z - uInnerMaxZ))
+          );
+          float coastMask = uOceanMode ? (1.0 - smoothstep(3.0, 28.0, coastDistance)) : 0.0;
+          vec2 breakerWind = normalize(vec2(0.78, 0.63));
+          float breakerTrain = 0.5 + 0.5 * sin(dot(vWorld.xz, breakerWind) * 0.24 - uTime * 0.78 + sin(vWorld.x * 0.075) * 0.75);
+          float breaker = coastMask * smoothstep(0.50, 0.90, breakerTrain)
+            * smoothstep(0.18, 0.82, crest + foamFold * 0.42);
+          float foamPotential = max(max(foamFold, crest * 0.72), breaker);
+          float foam = smoothstep(uFoamThreshold * 0.72, 0.92, foamPotential * mix(0.66, 1.38, foamBreakup * uFoamNoise));
           color = mix(color, vec3(0.92, 0.98, 1.0), foam * uFoamIntensity);
           color = mix(color, color * uNightTint, (1.0 - clamp(uAmbientIntensity, 0.0, 1.0)) * 0.45);
           color *= mix(0.20, 1.0, clamp(uAmbientIntensity, 0.0, 1.0));

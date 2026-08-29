@@ -155,6 +155,11 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float waterCausticLevel;
       uniform float waterCausticIntensity;
       uniform float waterCausticTime;
+      uniform sampler2D waterCausticMap;
+      uniform bool waterCausticMapEnabled;
+      uniform vec2 waterCausticOrigin;
+      uniform float waterCausticExtent;
+      uniform vec2 waterCausticResolution;
 
       // Specular anti-aliasing: broaden roughness near high normal gradients
       float specularAARoughness(float r, vec3 N) {
@@ -314,11 +319,31 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       }
 
       float waterCausticField(vec2 worldXZ, float time) {
-          vec2 p = worldXZ * 0.22;
-          float a = sin(p.x * 1.7 + time * 1.9) + sin(p.y * 1.3 - time * 1.45);
-          float b = sin((p.x + p.y) * 2.35 + time * 1.15) + sin((p.x - p.y) * 2.9 - time * 1.7);
-          float c = 0.5 + 0.5 * sin(a * 1.55 + b * 0.75);
-          return pow(clamp(c, 0.0, 1.0), 5.0);
+          vec2 p = worldXZ * 0.34;
+          float bendA = 0.55 * sin(dot(p, vec2(0.31, 0.47)) + time * 0.12);
+          float bendB = 0.42 * sin(dot(p, vec2(-0.53, 0.27)) - time * 0.08);
+          float ridgeA = 1.0 - smoothstep(0.035, 0.24, abs(sin(dot(p, vec2(1.63, 2.21)) + bendA)));
+          float ridgeB = 1.0 - smoothstep(0.035, 0.24, abs(sin(dot(p, vec2(-2.07, 1.19)) + bendB)));
+          float ridgeC = 1.0 - smoothstep(0.035, 0.24, abs(sin(dot(p, vec2(0.79, -2.67)) + bendA * 0.6 - bendB * 0.3)));
+          return clamp(max(max(ridgeA, ridgeB * 0.88), ridgeC * 0.72), 0.0, 1.0);
+      }
+
+      // The caustic pass is a differential-area projection of the live wave
+      // surface.  Sample three nearby channels so the focused web has the
+      // slight chromatic separation seen through real water.  The source is a
+      // world-anchored 17 m tile, so wrapping (rather than clamping to a
+      // camera-following rectangle) keeps the pattern continuous at the map
+      // boundary and prevents the old snap-induced flashes.
+      vec3 sampleWaterCaustics(vec2 worldXZ) {
+          vec2 causticCoord = (worldXZ - waterCausticOrigin) / max(waterCausticExtent, 1.0) + 0.5;
+          vec2 uv = fract(causticCoord);
+          vec2 texel = 1.0 / max(waterCausticResolution, vec2(1.0));
+          float footprint = max(length(dFdx(causticCoord)), length(dFdy(causticCoord))) * max(waterCausticResolution.x, waterCausticResolution.y);
+          float footprintFade = 1.0 - smoothstep(1.2, 5.0, footprint);
+          float r = texture2D(waterCausticMap, fract(uv + texel * vec2(0.65, -0.45))).r;
+          float g = texture2D(waterCausticMap, fract(uv + texel * vec2(-0.35, 0.70))).r;
+          float b = texture2D(waterCausticMap, fract(uv + texel * vec2(-0.85, -0.25))).r;
+          return mix(vec3(0.18), vec3(r, g, b), footprintFade);
       }
 
       void main() {
@@ -339,8 +364,17 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           if (waterCausticEnabled) {
             float submerged = 1.0 - smoothstep(waterCausticLevel - 0.75, waterCausticLevel + 0.25, vWorldPosition.y);
             float upward = smoothstep(0.10, 0.85, max(vNormal.y, 0.0));
-            float caustic = waterCausticField(vWorldPosition.xz, waterCausticTime);
-            color += vec3(0.06, 0.16, 0.18) * caustic * submerged * upward * waterCausticIntensity;
+            float depthFade = exp(-max(waterCausticLevel - vWorldPosition.y, 0.0) * 0.055);
+            if (waterCausticMapEnabled) {
+              vec3 caustic = sampleWaterCaustics(vWorldPosition.xz);
+              float gain = max(dot(caustic, vec3(0.2126, 0.7152, 0.0722)) - 0.18, 0.0);
+              float response = gain * submerged * upward * depthFade * waterCausticIntensity;
+              color *= 1.0 + response * 0.85;
+              color += vec3(0.025, 0.090, 0.115) * response;
+            } else {
+              float caustic = waterCausticField(vWorldPosition.xz, waterCausticTime);
+              color += vec3(0.06, 0.16, 0.18) * caustic * submerged * upward * waterCausticIntensity;
+            }
           }
           
           // Small blue-noise-ish dithering in scene-linear space to reduce
@@ -387,6 +421,11 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           waterCausticLevel: { value: 43.0 },
           waterCausticIntensity: { value: 0.0 },
           waterCausticTime: { value: 0.0 },
+          waterCausticMap: { value: createWhiteTexture() },
+          waterCausticMapEnabled: { value: false },
+          waterCausticOrigin: { value: new THREE.Vector2(0, 0) },
+          waterCausticExtent: { value: 256.0 },
+          waterCausticResolution: { value: new THREE.Vector2(256, 256) },
           // Anti-aliasing defaults
           aaEnabled: { value: true },
           aaStrength: { value: 1.0 },
@@ -500,6 +539,16 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     uniforms.waterCausticLevel.value = waterLevel;
     uniforms.waterCausticIntensity.value = Math.max(0, intensity);
     uniforms.waterCausticTime.value = time;
+  }
+
+  /** Bind the render-only differential-area caustic field. */
+  setWaterCausticTexture(texture: THREE.Texture | null, origin: { x: number; y: number }, extent: number, resolution: { x: number; y: number }): void {
+    const uniforms = this.uniforms as Record<string, { value: unknown }>;
+    uniforms.waterCausticMap.value = texture;
+    uniforms.waterCausticMapEnabled.value = !!texture;
+    (uniforms.waterCausticOrigin.value as THREE.Vector2).set(origin.x, origin.y);
+    uniforms.waterCausticExtent.value = Math.max(1, extent);
+    (uniforms.waterCausticResolution.value as THREE.Vector2).set(Math.max(1, resolution.x), Math.max(1, resolution.y));
   }
 
 }

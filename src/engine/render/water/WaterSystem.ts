@@ -4,6 +4,7 @@ import { CHUNK_SIZE } from '../../../config/constants'
 import { getHeightAtPosition } from '../../world/TerrainGenerator'
 import { getOceanMaxAmplitude, OCEAN_WATER_CENTER_OFFSET, sampleOceanHeight } from './OceanWaveField'
 import { WaterSurfaceMaterial } from './WaterSurfaceMaterial'
+import { CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
 import sandTextureUrl from '../../../assets/textures/sand.png'
 
 export interface WaterSystemOptions {
@@ -15,6 +16,8 @@ export interface WaterSystemOptions {
   color?: THREE.Color | number | string
   blockMaterialSource?: BlockMaterial
   anisotropy?: number
+  /** WebGL renderer used for the render-only differential-area caustic map. */
+  renderer?: THREE.WebGLRenderer
 }
 
 type Vec3Tuple = [number, number, number]
@@ -30,6 +33,7 @@ export class WaterSystem {
   private readonly group: THREE.Group
   private readonly oceanGroup: THREE.Group
   private readonly material: WaterSurfaceMaterial
+  private readonly caustics: WaterCaustics | null
   private seabedMaterial: BlockMaterial | null = null
   private seabedGroup: THREE.Group | null = null
   private time = 0
@@ -61,14 +65,33 @@ export class WaterSystem {
       ocean: true,
     })
     this.material.setWaterLevel(surfaceY)
-    this.material.setRefraction(0.18, 1.0 / 1.333, 1.0, 1.0, 0.02)
+    this.material.setRefraction(0.18, 1.0 / 1.333, 1.0, 1.0, 0.0)
     this.material.setAlpha(1)
+
+    let caustics: WaterCaustics | null = null
+    if (options.renderer) {
+      try {
+        caustics = new WaterCaustics(options.renderer, {
+          resolution: 256,
+          extent: CAUSTIC_TILE_SIZE,
+          patchExtent: CAUSTIC_TILE_SIZE * 1.35,
+          projectDepth: 24,
+        })
+      } catch (error) {
+        console.warn('[WaterSystem] Differential-area caustics unavailable:', error)
+      }
+    }
+    this.caustics = caustics
 
     const far = Math.max(128, options.farDistance)
     const innerSize = Math.min(512, Math.max(256, far * 0.42))
     const outerSize = far * 2.05
     const innerSegments = innerSize <= 320 ? 128 : 160
-    const outerSegments = Math.max(48, Math.min(128, Math.ceil(outerSize / 16)))
+    // Keep the horizon strips sampled often enough that long swells do not
+    // collapse into broad, parallel quads.  Their shader still fades the
+    // shortest detail by footprint; this budget only preserves the cascade's
+    // large directional shape at distance.
+    const outerSegments = Math.max(64, Math.min(192, Math.ceil(outerSize / 10)))
 
     const inner = new THREE.Mesh(this.createGridGeometry(innerSize, innerSegments), this.material)
     inner.name = 'OceanSurfaceInner'
@@ -105,6 +128,14 @@ export class WaterSystem {
 
   isCameraUnderwater(): boolean { return this.cameraUnderwater }
 
+  getCausticTexture(): THREE.Texture | null { return this.caustics?.getTexture() ?? null }
+
+  getCausticOrigin(): { x: number; y: number } { return this.caustics?.getOrigin() ?? { x: 0, y: 0 } }
+
+  getCausticExtent(): number { return this.caustics?.getExtent() ?? 256 }
+
+  getCausticResolution(): { x: number; y: number } { return this.caustics?.getResolution() ?? { x: 1, y: 1 } }
+
   setSeed(seed: number): void {
     if (this.options.seed === seed || this.disposed) return
     this.options.seed = seed
@@ -132,6 +163,7 @@ export class WaterSystem {
 
   setSun(direction: THREE.Vector3, color?: THREE.Color): void {
     this.material.setSun(direction, color)
+    this.caustics?.setSun(direction)
     if (this.seabedMaterial) this.seabedMaterial.setSunUniforms(direction, color ?? new THREE.Color(1, 1, 1))
   }
 
@@ -165,6 +197,10 @@ export class WaterSystem {
     this.material.setCameraUnderwater(this.cameraUnderwater)
 
     this.syncSeabedMaterial()
+    if (this.caustics) {
+      this.caustics.update(this.time, camera.position.x, camera.position.z)
+      this.applyCaustics()
+    }
   }
 
   getDiagnostics(): Record<string, unknown> {
@@ -177,6 +213,7 @@ export class WaterSystem {
       oceanMeshes: this.oceanGroup.children.length,
       seabedReady: !!this.seabedGroup,
       seabedMeshes: seabedMeshes.length,
+      caustics: this.caustics?.getDiagnostics() ?? null,
       sceneInputs: { color: !!this.sceneColor, depth: !!this.sceneDepth, resolution: this.resolution.toArray(), near: this.cameraNear, far: this.cameraFar },
     }
   }
@@ -189,6 +226,7 @@ export class WaterSystem {
     if (this.seabedGroup) this.disposeGroup(this.seabedGroup)
     this.material.dispose()
     this.seabedMaterial?.dispose()
+    this.caustics?.dispose()
   }
 
   private disposeGroup(group: THREE.Group): void {
@@ -277,7 +315,7 @@ export class WaterSystem {
       this.seabedMaterial.setAntialiasing(true, 1.0)
       this.seabedMaterial.setAALodBias(true, 0.9)
       this.seabedMaterial.setMaterialProperties(0.8, 0.0, 0.3)
-      this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.55)
+      this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.80)
       this.syncSeabedMaterial()
 
       if (this.disposed || buildToken !== this.seabedBuildToken) {
@@ -499,6 +537,16 @@ export class WaterSystem {
         if (sourceUniforms[key] && targetUniforms[key]) targetUniforms[key].value = sourceUniforms[key].value
       }
     }
-    this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.55, this.time)
+    this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.80, this.time)
+  }
+
+  private applyCaustics(): void {
+    if (!this.caustics) return
+    const texture = this.caustics.getTexture()
+    const origin = this.caustics.getOrigin()
+    const extent = this.caustics.getExtent()
+    const resolution = this.caustics.getResolution()
+    this.options.blockMaterialSource?.setWaterCausticTexture(texture, origin, extent, resolution)
+    this.seabedMaterial?.setWaterCausticTexture(texture, origin, extent, resolution)
   }
 }

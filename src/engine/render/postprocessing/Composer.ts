@@ -222,6 +222,11 @@ export class Composer {
 
   setUnderwaterWaterLevel(level: number): void { this.underwater.setWaterLevel(level) }
 
+  /** Share the live render-only caustic field with the underwater medium. */
+  setUnderwaterCaustics(texture: THREE.Texture | null, origin: { x: number; y: number }, extent: number, resolution: { x: number; y: number }): void {
+    this.underwater.setCaustics(texture, origin, extent, resolution)
+  }
+
   update(camera: THREE.PerspectiveCamera, sunDirWorld: THREE.Vector3, sunColor?: THREE.Color, atmosphere?: AtmosphereState) {
     // Render depth prepass into separate target to avoid feedback
     const shadowStates = this.setShadowSamplingEnabled(false);
@@ -271,6 +276,7 @@ export class Composer {
   dispose(): void {
     this.voxelSunShadow?.dispose()
     this.depthTarget.dispose()
+    this.underwater.dispose()
     this.composer.dispose()
   }
 }
