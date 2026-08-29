@@ -103,8 +103,11 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
         geometry.setIndex(new THREE.BufferAttribute(buf.indices, 1));
       }
 
-      target.castShadow = !isTransparent;
-      target.receiveShadow = !isTransparent;
+      // Native Three.js shadow maps are disabled. Sun visibility is resolved
+      // from voxel occupancy in VoxelSunShadowPass, so mesh shadow flags must
+      // not silently re-enable a second raster shadow representation.
+      target.castShadow = false;
+      target.receiveShadow = false;
       if (isTransparent) target.renderOrder = 2; // draw after opaque
       return target;
     };

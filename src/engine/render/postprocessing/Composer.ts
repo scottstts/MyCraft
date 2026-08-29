@@ -10,6 +10,7 @@ import { VolumetricLightingPass } from './passes/VolumetricLightingPass'
 import { BloomWrapperPass } from './passes/BloomPass'
 import { FogPass } from './passes/FogPass'
 import { LensFlarePass } from './passes/LensFlarePass'
+import type { VoxelSunShadowPass } from '../lighting/VoxelSunShadowPass.js'
 
 export class Composer {
   private composer: EffectComposer
@@ -22,6 +23,7 @@ export class Composer {
   private depthTarget: THREE.WebGLRenderTarget
   private renderer: THREE.WebGLRenderer
   private scene: THREE.Scene
+  private voxelSunShadow: VoxelSunShadowPass | null = null
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, width: number, height: number) {
     // Use default internal ping-pong color buffers for composer
@@ -89,6 +91,7 @@ export class Composer {
       this.depthTarget.depthTexture.image.height = effective.height
       this.depthTarget.depthTexture.needsUpdate = true
     }
+    this.voxelSunShadow?.setSize(size.x, size.y)
   }
 
   setSize(w: number, h: number) {
@@ -105,6 +108,17 @@ export class Composer {
     this.vol.setSize(effective.width, effective.height)
     this.bloom.setSize(effective.width, effective.height)
     this.lens.setSize(effective.width, effective.height)
+    this.voxelSunShadow?.setSize(w, h)
+  }
+
+  /** Attach the sole sun-visibility producer and share the depth prepass. */
+  setVoxelSunShadowPass(pass: VoxelSunShadowPass | null): void {
+    this.voxelSunShadow = pass
+    if (pass && this.depthTarget.depthTexture) pass.setDepthTexture(this.depthTarget.depthTexture)
+  }
+
+  getDepthTexture(): THREE.DepthTexture {
+    return this.depthTarget.depthTexture as THREE.DepthTexture
   }
   update(camera: THREE.PerspectiveCamera, sunDirWorld: THREE.Vector3, sunColor?: THREE.Color) {
     // Render depth prepass into separate target to avoid feedback
@@ -113,6 +127,10 @@ export class Composer {
     this.renderer.clear(true, true, true)
     this.renderer.render(this.scene, camera)
     this.renderer.setRenderTarget(prev)
+
+    // Resolve voxel visibility after depth is current and before the color
+    // RenderPass samples its screen-space mask.
+    this.voxelSunShadow?.update(camera, sunDirWorld)
 
     // Update per-pass uniforms
     this.ssao.setCamera(camera)
@@ -133,4 +151,10 @@ export class Composer {
   setFogDayLight(v: number) { this.fog.setDayLight(v) }
   setColorGrading(exposure: number, contrast: number, saturation: number) { this.fog.setColorGrading({ exposure, contrast, saturation }) }
   render() { this.composer.render() }
+
+  dispose(): void {
+    this.voxelSunShadow?.dispose()
+    this.depthTarget.dispose()
+    this.composer.dispose()
+  }
 }

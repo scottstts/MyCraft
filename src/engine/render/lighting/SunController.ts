@@ -1,18 +1,27 @@
 /**
- * SunController: Time-of-day driven sun + minimal night ambient
- * - Owns a DirectionalLight (sun) and a HemisphereLight (night fallback)
- * - Advances time with a configurable cycle length (default 180s)
- * - Exposes sun direction/color and elevation
+ * SunController: continuous time-of-day lighting.
+ *
+ * Cast visibility is intentionally not owned here. The old implementation
+ * coupled this controller to a native directional-light shadow camera and
+ * quantized its transform. VoxelSunShadowPass now consumes the continuous
+ * direction directly, so this class only owns illumination and the small
+ * compatibility settings surface used by the debug panel.
  */
 import * as THREE from 'three';
 
 export interface SunControllerOptions {
-  cycleSeconds?: number; // default 180
+  cycleSeconds?: number;
   paused?: boolean;
-  initialTime?: number; // [0,1)
+  initialTime?: number;
   enableShadows?: boolean;
 }
 
+/**
+ * Compatibility shape for the existing debug panel. Resolution, softness,
+ * bias, and normalBias no longer affect a shadow map; voxel visibility has no
+ * raster map or depth-bias term. `shadowDistance` and `intensity` remain
+ * meaningful to VoxelSunShadowPass/material integration.
+ */
 export interface ShadowSettings {
   enabled: boolean;
   resolution: number;
@@ -23,212 +32,88 @@ export interface ShadowSettings {
   intensity: number;
 }
 
-export interface ShadowBounds {
-  minX: number;
-  maxX: number;
-  minZ: number;
-  maxZ: number;
-  minY?: number;
-  maxY?: number;
-}
-
 const DEFAULT_SHADOW_SETTINGS: ShadowSettings = {
   enabled: true,
-  resolution: 4096,
+  resolution: 2048,
   shadowDistance: 300,
-  softness: 0.5,
-  // The terrain is an open shell of outward-facing voxel faces. A small
-  // receiver-side bias removes native depth quantization acne on those
-  // coplanar faces without moving the caster silhouette (unlike a custom
-  // depth-position offset, which causes peter-panning).
-  bias: -0.001,
+  softness: 0,
+  bias: 0,
   normalBias: 0,
-  intensity: 1.0,
+  intensity: 1,
 };
 
 const TWO_PI = Math.PI * 2;
-// Shadow-map rasterization is discrete. Keep authored sunlight continuous,
-// but commit the shadow camera/map only after the direction advances by one
-// texel-sized angular step at the fixed world bounds. This prevents
-// sub-texel shadow-map crawling while preserving smooth direct lighting.
-const SHADOW_DIRECTION_TEXELS = 1;
 
 export class SunController {
   readonly sun: THREE.DirectionalLight;
   readonly hemi: THREE.HemisphereLight;
 
-  private t: number = 0; // [0,1)
-  private paused: boolean = false;
-  private cycleSeconds: number = 180;
-  private sunDir: THREE.Vector3 = new THREE.Vector3(1, 1, 1).normalize();
-  private sunColor: THREE.Color = new THREE.Color(0xffffff);
+  private t = 0;
+  private paused = false;
+  private cycleSeconds = 180;
+  private sunDir = new THREE.Vector3(1, 1, 1).normalize();
+  private sunColor = new THREE.Color(0xffffff);
   private readonly shadowsSupported: boolean;
   private shadowSettings: ShadowSettings = { ...DEFAULT_SHADOW_SETTINGS };
-  private shadowBounds: Required<ShadowBounds> = {
-    minX: -48,
-    maxX: 48,
-    minY: 0,
-    maxY: 96,
-    minZ: -48,
-    maxZ: 48,
-  };
-  private shadowFocus = new THREE.Vector3(0, 48, 0);
-  private shadowDirty = true;
-  private shadowDirection = new THREE.Vector3();
   private readonly east = new THREE.Vector3(Math.cos(Math.PI * 0.25), 0, Math.sin(Math.PI * 0.25));
   private readonly up = new THREE.Vector3(0, 1, 0);
 
   constructor(scene: THREE.Scene, opts: SunControllerOptions = {}) {
     this.cycleSeconds = opts.cycleSeconds ?? 180;
     this.paused = !!opts.paused;
-    this.t = (opts.initialTime ?? 0.25) % 1; // default morning
+    this.t = (opts.initialTime ?? 0.25) % 1;
     this.shadowsSupported = opts.enableShadows ?? true;
 
-    // Directional sun light
+    // Keep one directional light for authored illumination and compatibility
+    // with any non-voxel scene elements, but never ask Three.js to rasterize a
+    // shadow map. VoxelSunShadowPass is the sole visibility authority.
     this.sun = new THREE.DirectionalLight(0xffffff, 1.0);
-    this.sun.castShadow = this.shadowsSupported && this.shadowSettings.enabled;
-    this.sun.shadow.autoUpdate = false;
-    this.sun.shadow.mapSize.set(this.shadowSettings.resolution, this.shadowSettings.resolution);
-    this.sun.shadow.radius = this.shadowSettings.softness;
-    this.sun.shadow.bias = this.shadowSettings.bias;
-    this.sun.shadow.normalBias = this.shadowSettings.normalBias;
-    this.sun.shadow.intensity = this.shadowSettings.intensity;
+    this.sun.castShadow = false;
     scene.add(this.sun);
-    // DirectionalLight uses this object when computing both illumination and
-    // its shadow camera. It must be in the scene graph for non-default targets.
     scene.add(this.sun.target);
 
-    // Minimal hemisphere for night readability
     this.hemi = new THREE.HemisphereLight(0x223344, 0x101010, 0.05);
     this.hemi.position.set(0, 1, 0);
     scene.add(this.hemi);
 
-    // Initialize
     this.recomputeLighting();
   }
 
   update(dtSeconds: number): void {
-    if (!this.paused) {
-      const deltaT = dtSeconds / Math.max(1e-3, this.cycleSeconds);
-      this.t = (this.t + deltaT) % 1;
-      this.recomputeLighting();
-    }
-  }
-
-  setTime(t: number): void {
-    // clamp-wrap
-    this.t = ((t % 1) + 1) % 1;
-    // A direct user edit must update the shadow immediately, including while
-    // the simulation is paused.
+    if (this.paused) return;
+    this.t = (this.t + dtSeconds / Math.max(1e-3, this.cycleSeconds)) % 1;
     this.recomputeLighting();
   }
 
-  pause(p: boolean): void {
-    this.paused = p;
+  setTime(t: number): void {
+    this.t = ((t % 1) + 1) % 1;
+    this.recomputeLighting();
   }
 
-  setCycleSeconds(sec: number): void {
-    this.cycleSeconds = Math.max(1, sec | 0);
-  }
-
+  pause(value: boolean): void { this.paused = value; }
+  setCycleSeconds(seconds: number): void { this.cycleSeconds = Math.max(1, seconds | 0); }
   getTime(): number { return this.t; }
   isPaused(): boolean { return this.paused; }
+  getSunDirection(target: THREE.Vector3 = new THREE.Vector3()): THREE.Vector3 { return target.copy(this.sunDir); }
+  getSunColor(target: THREE.Color = new THREE.Color()): THREE.Color { return target.copy(this.sunColor); }
+  getElevationRadians(): number { return Math.asin(Math.sin(this.t * TWO_PI)); }
 
-  getSunDirection(target: THREE.Vector3 = new THREE.Vector3()): THREE.Vector3 {
-    return target.copy(this.sunDir);
-  }
-
-  getSunColor(target: THREE.Color = new THREE.Color()): THREE.Color {
-    return target.copy(this.sunColor);
-  }
-
-  getElevationRadians(): number {
-    // Map t ∈ [0,1) to elevation via sin(2πt)
-    return Math.asin(Math.sin(this.t * Math.PI * 2));
-  }
-
-  /**
-   * Set a fixed receiver/caster region for the native directional shadow.
-   * The world is finite, so keeping this projection fixed avoids the
-   * fractional-texel motion and shadow crawling caused by camera-following
-   * shadow boxes.
-   */
-  setShadowBounds(bounds: ShadowBounds): void {
-    this.shadowBounds = {
-      minX: Math.min(bounds.minX, bounds.maxX),
-      maxX: Math.max(bounds.minX, bounds.maxX),
-      minY: Math.min(bounds.minY ?? 0, bounds.maxY ?? 96),
-      maxY: Math.max(bounds.minY ?? 0, bounds.maxY ?? 96),
-      minZ: Math.min(bounds.minZ, bounds.maxZ),
-      maxZ: Math.max(bounds.minZ, bounds.maxZ),
-    };
-    this.shadowFocus.set(
-      (this.shadowBounds.minX + this.shadowBounds.maxX) * 0.5,
-      (this.shadowBounds.minY + this.shadowBounds.maxY) * 0.5,
-      (this.shadowBounds.minZ + this.shadowBounds.maxZ) * 0.5,
-    );
-    this.shadowDirection.copy(this.getQuantizedShadowDirection());
-    this.updateShadowTransform(this.shadowDirection);
-    this.markShadowNeedsUpdate();
+  /** Compatibility no-op retained for callers that used to fit a shadow map. */
+  setShadowBounds(_bounds: { minX: number; maxX: number; minZ: number; maxZ: number; minY?: number; maxY?: number }): void {
+    // Voxel visibility is bounded by VoxelOccupancyVolume, not a light frustum.
   }
 
   setShadowSettings(settings: Partial<ShadowSettings>): void {
-    const previous = { ...this.shadowSettings };
     if (settings.enabled !== undefined) this.shadowSettings.enabled = !!settings.enabled;
     if (settings.resolution !== undefined) this.shadowSettings.resolution = normalizeShadowResolution(settings.resolution);
-    if (settings.shadowDistance !== undefined) this.shadowSettings.shadowDistance = THREE.MathUtils.clamp(settings.shadowDistance, 50, 2000);
+    if (settings.shadowDistance !== undefined) this.shadowSettings.shadowDistance = THREE.MathUtils.clamp(settings.shadowDistance, 1, 2000);
     if (settings.softness !== undefined) this.shadowSettings.softness = THREE.MathUtils.clamp(settings.softness, 0, 8);
     if (settings.bias !== undefined) this.shadowSettings.bias = THREE.MathUtils.clamp(settings.bias, -0.01, 0.01);
     if (settings.normalBias !== undefined) this.shadowSettings.normalBias = THREE.MathUtils.clamp(settings.normalBias, 0, 1);
     if (settings.intensity !== undefined) this.shadowSettings.intensity = THREE.MathUtils.clamp(settings.intensity, 0, 1);
-
-    this.sun.castShadow = this.shadowsSupported && this.shadowSettings.enabled;
-    this.sun.shadow.mapSize.set(this.shadowSettings.resolution, this.shadowSettings.resolution);
-    this.sun.shadow.radius = this.shadowSettings.softness;
-    this.sun.shadow.bias = this.shadowSettings.bias;
-    this.sun.shadow.normalBias = this.shadowSettings.normalBias;
-    this.sun.shadow.intensity = this.shadowSettings.intensity;
-
-    // Three creates the native target lazily and does not recreate an
-    // existing target just because mapSize changed. Dispose that target so a
-    // runtime resolution change is applied on the next shadow render.
-    if (previous.resolution !== this.shadowSettings.resolution) {
-      this.sun.shadow.map?.dispose();
-      // Some native filters own a secondary target; dispose both targets so a
-      // runtime resolution change is applied on the next render.
-      this.sun.shadow.mapPass?.dispose();
-      this.sun.shadow.map = null;
-      this.sun.shadow.mapPass = null;
-    }
-
-    const changed =
-      previous.enabled !== this.shadowSettings.enabled ||
-      previous.resolution !== this.shadowSettings.resolution ||
-      previous.shadowDistance !== this.shadowSettings.shadowDistance ||
-      previous.softness !== this.shadowSettings.softness ||
-      previous.bias !== this.shadowSettings.bias ||
-      previous.normalBias !== this.shadowSettings.normalBias ||
-      previous.intensity !== this.shadowSettings.intensity;
-    if (changed) {
-      this.shadowDirection.copy(this.getQuantizedShadowDirection());
-      this.updateShadowTransform(this.shadowDirection);
-      this.markShadowNeedsUpdate();
-    }
   }
 
-  getShadowSettings(): ShadowSettings {
-    return { ...this.shadowSettings };
-  }
-
-  markShadowNeedsUpdate(): void {
-    this.shadowDirty = true;
-  }
-
-  consumeShadowDirty(): boolean {
-    const dirty = this.shadowDirty;
-    this.shadowDirty = false;
-    return dirty;
-  }
+  getShadowSettings(): ShadowSettings { return { ...this.shadowSettings }; }
 
   dispose(): void {
     this.sun.dispose();
@@ -239,102 +124,32 @@ export class SunController {
   }
 
   private recomputeLighting(): void {
-    // Parametric sun path: rotate in the plane spanned by world up and an east vector
-    // t in [0,1) -> theta in [0, 2π); theta=π/2 ≈ zenith (default initialTime=0.25)
     const theta = this.t * TWO_PI;
+    this.sunDir.copy(this.east)
+      .multiplyScalar(Math.cos(theta))
+      .addScaledVector(this.up, Math.sin(theta))
+      .normalize();
 
-    // Sun direction on the unit circle in the east-up plane
-    this.sunDir.copy(this.east).multiplyScalar(Math.cos(theta)).addScaledVector(this.up, Math.sin(theta)).normalize();
-
-    // The direct light remains continuous, but the shadow map is a discrete
-    // raster. Commit a new shadow transform only after the quantized direction
-    // crosses a texel-sized angular step; otherwise the map remains stable
-    // while the sun moves between texels.
-    const shadowDirection = this.getQuantizedShadowDirection();
-    if (this.shadowDirection.lengthSq() === 0 || this.shadowDirection.dot(shadowDirection) < 1 - 1e-12) {
-      this.shadowDirection.copy(shadowDirection);
-      this.updateShadowTransform(this.shadowDirection);
-      this.markShadowNeedsUpdate();
-    }
-
+    // Keep the light's conventional direction valid for auxiliary materials;
+    // castShadow remains false and no shadow camera is ever updated.
+    this.sun.target.position.set(0, 0, 0);
+    this.sun.position.copy(this.sunDir).multiplyScalar(100);
+    this.sun.updateMatrixWorld();
     this.sun.target.updateMatrixWorld();
 
-    // Elevation for color/intensity control (clamped to [0,1] for day metrics)
     const y = Math.sin(theta);
     const yDay = THREE.MathUtils.clamp(y, 0, 1);
-
-    // Compute a plausible sun color by elevation
     this.sunColor.copy(elevationToSunColor(yDay));
-
-    // Intensity: brighter mid-day, near-zero at night
-    const intensity = THREE.MathUtils.lerp(0.0, 1.1, smoothStep(0.0, 0.7, yDay));
-    this.sun.intensity = intensity;
+    this.sun.intensity = this.shadowsSupported
+      ? THREE.MathUtils.lerp(0.0, 1.1, smoothStep(0.0, 0.7, yDay))
+      : 0;
     this.sun.color.copy(this.sunColor);
 
-    // Night ambient via hemi (stronger when below horizon)
     const nightAmt = 1.0 - smoothStep(0.05, 0.2, yDay);
     this.hemi.intensity = THREE.MathUtils.lerp(0.05, 0.15, nightAmt);
     this.hemi.color.setRGB(0.16, 0.20, 0.26);
     this.hemi.groundColor.setRGB(0.05, 0.05, 0.06);
   }
-
-  private updateShadowTransform(direction: THREE.Vector3 = this.sunDir): void {
-    this.sun.target.position.copy(this.shadowFocus);
-
-    this.updateLightPosition(direction);
-    this.updateShadowProjection();
-  }
-
-  private updateLightPosition(direction: THREE.Vector3): void {
-    this.sun.target.position.copy(this.shadowFocus);
-
-    const extent = this.getShadowExtent();
-    const lightDistance = Math.max(200, this.shadowSettings.shadowDistance, extent + 32);
-
-    this.sun.position.copy(this.shadowFocus).addScaledVector(direction, lightDistance);
-    this.sun.updateMatrixWorld();
-    this.sun.target.updateMatrixWorld();
-  }
-
-  private updateShadowProjection(): void {
-    // A bounding sphere projected onto the light's two orthographic axes is
-    // conservative for every sun azimuth/elevation, including low sun.
-    const extent = this.getShadowExtent();
-    const lightDistance = Math.max(200, this.shadowSettings.shadowDistance, extent + 32);
-
-    if (!this.shadowsSupported) return;
-
-    const shadowCamera = this.sun.shadow.camera;
-    // Use one continuous up axis for this authored sun path. World-Z is never
-    // parallel to the path's light direction, including at zenith, so the
-    // shadow camera cannot roll-jump when the sun crosses the overhead band.
-    shadowCamera.up.set(0, 0, 1);
-    shadowCamera.left = -extent;
-    shadowCamera.right = extent;
-    shadowCamera.top = extent;
-    shadowCamera.bottom = -extent;
-    shadowCamera.near = Math.max(0.1, lightDistance - extent - 8);
-    shadowCamera.far = lightDistance + extent + 8;
-    shadowCamera.updateProjectionMatrix();
-  }
-
-  private getShadowExtent(): number {
-    const spanX = this.shadowBounds.maxX - this.shadowBounds.minX;
-    const spanY = this.shadowBounds.maxY - this.shadowBounds.minY;
-    const spanZ = this.shadowBounds.maxZ - this.shadowBounds.minZ;
-    return Math.max(8, 0.5 * Math.sqrt(spanX * spanX + spanY * spanY + spanZ * spanZ) + 8);
-  }
-
-  private getQuantizedShadowDirection(target: THREE.Vector3 = new THREE.Vector3()): THREE.Vector3 {
-    const theta = this.t * TWO_PI;
-    const step = (2 * SHADOW_DIRECTION_TEXELS) / Math.max(256, this.shadowSettings.resolution);
-    const quantizedTheta = Math.round(theta / step) * step;
-    return target.copy(this.east)
-      .multiplyScalar(Math.cos(quantizedTheta))
-      .addScaledVector(this.up, Math.sin(quantizedTheta))
-      .normalize();
-  }
-
 }
 
 function normalizeShadowResolution(value: number): number {
@@ -343,21 +158,16 @@ function normalizeShadowResolution(value: number): number {
 }
 
 function smoothStep(edge0: number, edge1: number, x: number): number {
-  const t = THREE.MathUtils.clamp((x - edge0) / Math.max(1e-5, (edge1 - edge0)), 0, 1);
+  const t = THREE.MathUtils.clamp((x - edge0) / Math.max(1e-5, edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
 }
 
 function elevationToSunColor(y: number): THREE.Color {
-  // y ∈ [0,1]; low elevation -> warmer
-  // Simple gradient between warm horizon and neutral white
-  const warm = new THREE.Color(1.0, 0.58, 0.25); // deep orange
-  const mid = new THREE.Color(1.0, 0.95, 0.90); // warm white
-  const cool = new THREE.Color(1.0, 1.0, 0.98); // nearly neutral
-
-  // Two-stage blend for a smoother transition
-  const tWarm = smoothStep(0.0, 0.25, y); // 0 near horizon
-  const tCool = smoothStep(0.25, 0.8, y); // 0 at low, 1 near mid-high
-
+  const warm = new THREE.Color(1.0, 0.58, 0.25);
+  const mid = new THREE.Color(1.0, 0.95, 0.90);
+  const cool = new THREE.Color(1.0, 1.0, 0.98);
+  const tWarm = smoothStep(0.0, 0.25, y);
+  const tCool = smoothStep(0.25, 0.8, y);
   const c1 = warm.clone().lerp(mid, tWarm);
   const c2 = mid.clone().lerp(cool, tCool);
   return c1.lerp(c2, tCool);

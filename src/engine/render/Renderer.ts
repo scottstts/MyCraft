@@ -11,14 +11,6 @@ const MAX_RENDER_PIXELS = 1_650_000;
 const MAX_PIXEL_RATIO = 1.5;
 const MIN_PIXEL_RATIO = 1;
 
-// Keep the WebGL shadow filter in one place so runtime settings cannot switch
-// the renderer back to a different filter than the initial renderer setup.
-// PCFShadowMap uses a fixed native comparison kernel. PCFSoftShadowMap derives
-// fractional sample weights from the moving shadow UV and turns sub-texel
-// directional motion into visible crawling. The fixed kernel is also required
-// for the requested crisp, hard-edged sunlight.
-export const NATIVE_WEBGL_SHADOW_MAP_TYPE = THREE.PCFShadowMap;
-
 type CanvasSyncState = {
   width: number;
   height: number;
@@ -79,15 +71,10 @@ export class Renderer {
       (this.renderer as THREE.WebGLRenderer).useLegacyLights = false;
     }
 
-    // Native WebGL shadows are configured here. The engine marks the single
-    // sun shadow dirty when its committed projection or caster set changes,
-    // so the map is rendered once and reused by the color/depth passes.
-    if (!this.isWebGPU) {
-      const gl = this.renderer as THREE.WebGLRenderer;
-      gl.shadowMap.enabled = true;
-      gl.shadowMap.autoUpdate = false;
-      gl.shadowMap.type = NATIVE_WEBGL_SHADOW_MAP_TYPE;
-    }
+    // Sun visibility for terrain is resolved by the voxel DDA pass. The
+    // renderer starts with native maps disabled; Engine enables them only for
+    // the isolated grass alpha-caster light once that system is installed.
+    if (!this.isWebGPU) (this.renderer as THREE.WebGLRenderer).shadowMap.enabled = false;
   }
 
   private syncCanvasSize(canvas: HTMLCanvasElement): CanvasSyncState {

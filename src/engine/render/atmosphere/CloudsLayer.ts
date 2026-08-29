@@ -92,7 +92,7 @@ export class CloudsLayer {
     });
 
     this.mesh = new THREE.Mesh(geom, this.material);
-    // Keep the transparent cloud layer out of the native shadow map.
+    // Transparent clouds are not voxel casters for the sun visibility pass.
     this.mesh.castShadow = false;
     this.mesh.receiveShadow = false;
     this.mesh.renderOrder = 1;

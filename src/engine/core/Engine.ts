@@ -6,7 +6,7 @@
  */
 
 import * as THREE from 'three';
-import { NATIVE_WEBGL_SHADOW_MAP_TYPE, Renderer } from '../render/Renderer';
+import { Renderer } from '../render/Renderer';
 import { createScene, createPlayerCamera } from '../render/SceneBuilder';
 import { World } from '../world/World';
 import type { ChunkPipelineEvents } from '../world/ChunkPipeline';
@@ -43,6 +43,8 @@ import { CHUNK_SIZE as CONST_CHUNK_SIZE } from '../../config/constants';
 import { getInventorySlots } from '../../state/inventory';
 import FirstPersonBody from '../render/FirstPersonBody';
 import { applyDiagnosticCameraPose, type DiagnosticCameraId } from '../../diagnostics/cameras';
+import { VoxelOccupancyVolume } from '../render/lighting/VoxelOccupancyVolume.js';
+import { VoxelSunShadowPass } from '../render/lighting/VoxelSunShadowPass.js';
 
 let rafId: number | null = null;
 let running = false;
@@ -80,10 +82,9 @@ let playerBody: FirstPersonBody | null = null;
 let lastMoveActive = false;
 let diagnosticMode = false;
 let diagnosticView: DiagnosticCameraId | null = null;
-// Native WebGL shadow updates are explicitly throttled (autoUpdate=false).
-// Keep one warm-up request independent of the controller's dirty flag so a
-// fresh diagnostic navigation can never render its first scene without a map.
-let shadowMapWarmupPending = true;
+let voxelShadowVolumeReported = false;
+let voxelShadowVolume: VoxelOccupancyVolume | null = null;
+let voxelSunShadowPass: VoxelSunShadowPass | null = null;
 // Frame counter for coordinating mesh swaps
 let frameCounter = 0;
 // Queue incoming chunk meshes; apply in small batches to avoid border flicker
@@ -93,6 +94,7 @@ declare global {
   interface Window {
     __WORLD_SNAPSHOT?: WorldSavePayload;
     __saveWorld?: () => void;
+    __getVoxelShadowDiagnostics?: () => unknown;
     // UI can set this before triggering save to make the browser show a native save dialog.
     // We avoid tight typing here to keep DOM lib compatibility across environments.
     __nextSaveFileHandle?: unknown;
@@ -112,30 +114,6 @@ function computeBoundsFromChunkCount(totalChunks: number) {
   } as const;
   const worldRadius = Math.max(Math.abs(bounds.maxX - bounds.minX), Math.abs(bounds.maxZ - bounds.minZ)) / 2;
   return { bounds, worldRadius };
-}
-
-function getWebGLRenderer(): THREE.WebGLRenderer | null {
-  const baseRenderer = renderer?.getRenderer();
-  if (!baseRenderer || (baseRenderer as { isWebGPURenderer?: boolean }).isWebGPURenderer === true) return null;
-  return baseRenderer as THREE.WebGLRenderer;
-}
-
-function markNativeShadowMapDirty(): void {
-  sunController?.markShadowNeedsUpdate();
-}
-
-function prepareNativeShadowMap(): void {
-  const glRenderer = getWebGLRenderer();
-  if (!glRenderer || !sunController) return;
-  const dirty = sunController.consumeShadowDirty();
-  if (!dirty && !shadowMapWarmupPending) return;
-
-  // Both flags are required when auto-updates are disabled: the renderer
-  // gate and the individual LightShadow gate must agree before the next
-  // scene render builds the native depth map.
-  glRenderer.shadowMap.needsUpdate = true;
-  sunController.sun.shadow.needsUpdate = true;
-  shadowMapWarmupPending = false;
 }
 
 function downloadJson(filename: string, data: unknown): void {
@@ -269,7 +247,7 @@ function update(dtSeconds: number) {
         const entry = pendingChunkMeshes.get(key);
         if (!entry) continue;
         try { chunkRenderer.handleChunkMesh(entry.response); } catch (e) { console.error('Apply chunk mesh failed', e); }
-        finally { markNativeShadowMapDirty(); }
+        finally { /* voxel occupancy is updated from World events, not mesh raster state */ }
         pendingChunkMeshes.delete(key);
       }
     }
@@ -367,10 +345,6 @@ function update(dtSeconds: number) {
     }
   }
 
-  // Mark the native map before the first depth/color render in the frame.
-  // Composer's depth prepass consumes this update; its later color pass then
-  // reuses the same map instead of rebuilding it a second time.
-  prepareNativeShadowMap();
   // Update block materials with sun uniforms
   if (blockMaterial && sunController) {
     const sdir = sunController.getSunDirection();
@@ -490,7 +464,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
 
   diagnosticView = options.diagnosticView ?? null;
   diagnosticMode = diagnosticView !== null;
-  shadowMapWarmupPending = true;
+  voxelShadowVolumeReported = false;
   
   // Initialize renderer
   renderer = new Renderer(canvas);
@@ -610,13 +584,13 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     postProcessor = null;
   }
 
-  // Initialize the sun controller (day/night cycle) and let Three.js own the
-  // WebGL shadow map. WebGPU remains outside this material/shadow path.
+  // Initialize the continuous sun illumination. WebGL voxel visibility is
+  // resolved by VoxelSunShadowPass; WebGPU remains outside this path.
   sunController = new SunController(scene, {
     cycleSeconds: 180,
     // A fresh diagnostic URL must be immediately sunlit. At t=0 the authored
     // sun is exactly on the horizon and its direct intensity is zero, which
-    // makes a correctly rendered shadow map look as if shadows were missing.
+    // makes correctly rendered voxel visibility look as if shadows were missing.
     // Keep normal gameplay's existing dawn start unchanged.
     // 0.125 puts the sun at a 45° elevation: direct light is already at its
     // full daytime intensity, while cast shadows are long enough to inspect
@@ -661,23 +635,51 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   const totalChunks = Math.max(1, Math.floor(useUIStore.getState().chunkCount || 9));
   const { bounds, worldRadius } = computeBoundsFromChunkCount(totalChunks);
 
-  // Fit one native orthographic shadow projection to the finite generated
-  // world. Its center remains fixed for the whole world lifetime, avoiding
-  // camera-following shadow crawl while retaining coverage for tree casters.
-  sunController?.setShadowBounds({
-    ...bounds,
-    minY: 0,
-    maxY: CHUNK_SIZE.y,
-  });
+  // The voxel shadow volume is the sole caster representation. It is fixed to
+  // the generated world bounds, so sun motion never changes a projection grid.
+  if (!isWebGPU) {
+    const glRenderer = baseRenderer as THREE.WebGLRenderer;
+    voxelShadowVolume = new VoxelOccupancyVolume({
+      minX: bounds.minX,
+      maxX: bounds.maxX,
+      minY: 0,
+      maxY: CHUNK_SIZE.y,
+      minZ: bounds.minZ,
+      maxZ: bounds.maxZ,
+    });
+    voxelSunShadowPass = new VoxelSunShadowPass(glRenderer, canvasSize.width, canvasSize.height, voxelShadowVolume);
+    const shadowResolution = voxelSunShadowPass.getDiagnostics().resolution;
+    blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), shadowResolution.width, shadowResolution.height, true);
+    composer?.setVoxelSunShadowPass(voxelSunShadowPass);
+    if (diagnosticMode) console.info('[VoxelSunShadow]', JSON.stringify(voxelSunShadowPass.getDiagnostics()));
+
+    // Occupancy follows authoritative World events, including block edits and
+    // chunk replacement/removal. Mesh arrival is intentionally irrelevant.
+    world.on('CHUNK_ADDED', ({ key, chunk }) => {
+      voxelShadowVolume?.updateChunk(key, chunk);
+      if (diagnosticMode && !voxelShadowVolumeReported && voxelShadowVolume) {
+        voxelShadowVolumeReported = true;
+        console.info('[VoxelSunShadowVolume]', JSON.stringify(voxelShadowVolume.getDiagnostics()));
+      }
+    });
+    world.on('CHUNK_REMOVED', ({ key }) => voxelShadowVolume?.clearChunk(key));
+    world.on('BLOCK_CHANGED', ({ worldX, worldY, worldZ, newBlockId }) => {
+      voxelShadowVolume?.updateBlock(worldX, worldY, worldZ, newBlockId);
+    });
+  }
   sunController?.setShadowSettings({
     enabled: !isWebGPU,
-    resolution: 4096,
     shadowDistance: 300,
-    softness: 0.5,
-    bias: -0.001,
+    resolution: 2048,
+    softness: 0,
+    bias: 0,
     normalBias: 0,
     intensity: 1.0,
   });
+  if (voxelSunShadowPass && sunController) {
+    const settings = sunController.getShadowSettings();
+    voxelSunShadowPass.setSettings({ enabled: settings.enabled, maxDistance: settings.shadowDistance });
+  }
 
   // Update water material edge bounds for consistent seam blend
   if (waterMaterial) {
@@ -746,8 +748,10 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   
   // Interaction system (mine/place + re-mesh)
   interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);
-  // Decorative grass system (instanced billboards)
+  // Decorative grass system (instanced billboards). Grass caster occupancy is
+  // mirrored into the voxel DDA volume and tested against this same texture.
   grassSystem = new GrassBillboardSystem(scene, world, getBlockIdByName('grass_tuft') ?? 9);
+  voxelSunShadowPass?.setGrassTexture(grassSystem.getTexture());
   
   // Sound effects
   sfx = new SoundEffects(world, camera, inputSystem, playerController);
@@ -842,7 +846,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
  * Serialize startup. CanvasHost is mounted under React StrictMode in
  * development, and its effect can be invoked twice while atlas/worker setup
  * is still awaiting. Without this gate both starts mutate the same module
- * globals and install duplicate sun lights/shadow maps in one scene.
+ * globals and install duplicate sun lights/visibility passes in one scene.
  */
 async function start(canvas: HTMLCanvasElement, options: EngineStartOptions = {}): Promise<void> {
   if (running) return;
@@ -861,7 +865,7 @@ function stop() {
   running = false;
   diagnosticMode = false;
   diagnosticView = null;
-  shadowMapWarmupPending = true;
+  voxelShadowVolumeReported = false;
   lastPaused = false;
   if (rafId !== null) {
     cancelAnimationFrame(rafId);
@@ -894,6 +898,19 @@ function stop() {
   if (postProcessor) {
     postProcessor.dispose();
     postProcessor = null;
+  }
+
+  if (composer) {
+    composer.dispose();
+    composer = null;
+    voxelSunShadowPass = null;
+  } else if (voxelSunShadowPass) {
+    voxelSunShadowPass.dispose();
+    voxelSunShadowPass = null;
+  }
+  if (voxelShadowVolume) {
+    voxelShadowVolume.dispose();
+    voxelShadowVolume = null;
   }
 
   // Clean up native sun/light resources
@@ -996,16 +1013,22 @@ function updatePostProcessingSettings(settings: PostProcessorSettings) {
 
 // Global function for UI to update shadow settings
 function updateShadowSettings(settings: ShadowSettings) {
-  const glRenderer = getWebGLRenderer();
-  if (!glRenderer || !sunController) return;
-
+  if (!sunController) return;
   sunController.setShadowSettings(settings);
-  // The controller accepts partial updates; use its merged state so changing
-  // bias, intensity, or resolution cannot implicitly turn the renderer off.
   const shadowSettings = sunController.getShadowSettings();
-  glRenderer.shadowMap.enabled = shadowSettings.enabled;
-  glRenderer.shadowMap.autoUpdate = false;
-  glRenderer.shadowMap.type = NATIVE_WEBGL_SHADOW_MAP_TYPE;
+  voxelSunShadowPass?.setSettings({
+    enabled: shadowSettings.enabled,
+    maxDistance: shadowSettings.shadowDistance,
+  });
+  if (blockMaterial && voxelSunShadowPass) {
+    const resolution = voxelSunShadowPass.getDiagnostics().resolution;
+    blockMaterial.setVoxelShadowTexture(
+      voxelSunShadowPass.getTexture(),
+      resolution.width,
+      resolution.height,
+      shadowSettings.enabled,
+    );
+  }
 }
 
 // Global function for UI to update graphics settings (time of day, exposure, etc.)
@@ -1056,6 +1079,10 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
 
 // Expose save function for UI
 (window as Window & { __saveWorld?: () => void }).__saveWorld = () => { void saveWorldToFile(); };
+
+// Read-only hook used by the local diagnostics page and validation tooling.
+(window as Window & { __getVoxelShadowDiagnostics?: () => unknown }).__getVoxelShadowDiagnostics = () =>
+  voxelSunShadowPass?.getDiagnostics() ?? null;
 
 // console.log('[Engine] Global functions exposed to window:', {
 //   updatePostProcessingSettings: !!(window as Window & { updatePostProcessingSettings?: unknown }).updatePostProcessingSettings,

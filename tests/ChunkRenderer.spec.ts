@@ -15,8 +15,8 @@ function makeBuffers(positions: number[]): MeshBuffers {
   };
 }
 
-describe('native voxel shadow caster setup', () => {
-  it('uses the native depth caster without a displaced shadow silhouette', () => {
+describe('voxel shadow integration', () => {
+  it('keeps native shadow-map flags disabled because occupancy owns casting', () => {
     const scene = new THREE.Scene();
     const opaqueMaterial = new THREE.MeshBasicMaterial();
     const transparentMaterial = new THREE.MeshBasicMaterial();
@@ -36,8 +36,8 @@ describe('native voxel shadow caster setup', () => {
 
     const mesh = renderer.getChunkMesh('0,0,0');
     expect(mesh).toBeDefined();
-    expect(mesh?.castShadow).toBe(true);
-    expect(mesh?.receiveShadow).toBe(true);
+    expect(mesh?.castShadow).toBe(false);
+    expect(mesh?.receiveShadow).toBe(false);
 
     expect(mesh?.customDepthMaterial).toBeUndefined();
 

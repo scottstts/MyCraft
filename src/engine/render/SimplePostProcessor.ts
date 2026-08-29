@@ -281,7 +281,7 @@ export class SimplePostProcessor {
           
           // Apply SSAO only to the shadow-independent indirect component
           // encoded by BlockMaterial's opaque alpha channel. This keeps
-          // direct sun contrast and native shadow coverage from being
+          // direct sun contrast and voxel shadow coverage from being
           // mistaken for ambient visibility.
           vec4 source = texture2D(tDiffuse, vUv);
           float indirectMask = clamp(1.0 - source.a, 0.0, 1.0);
