@@ -5,7 +5,9 @@
 export const RENDER_STYLE = {
   dayNightCycleSeconds: 1200,
   ssao: {
-    enabled: true,
+    // Screen-space AO is intentionally disabled. The depth-only pass caused
+    // camera-dependent dark regions; voxel/per-vertex AO remains active.
+    enabled: false,
     intensity: 0.35,
     radius: 1.25,
   },
@@ -25,6 +27,8 @@ export const RENDER_STYLE = {
     intensity: 0.10,
   },
   exposure: {
+    // Kept as authored tuning data for compatibility/diagnostics. The active
+    // pipeline uses the renderer's fixed toneMappingExposure instead.
     minimum: 0.45,
     maximum: 1.45,
     middleGray: 0.18,

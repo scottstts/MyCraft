@@ -63,7 +63,7 @@ The main game engine orchestrates all subsystems:
 
 ### Rendering Pipeline (`src/engine/render/`)
 - **Three.js WebGL renderer** with custom materials and shaders
-- **Authored post-processing** including SSAO, aerial perspective, exposure, bloom, and lens flare
+- **Authored post-processing** including aerial perspective, fixed exposure, bloom, and lens flare
 - **Dynamic lighting** with a fixed 10-minute day / 10-minute night cycle and voxel sun visibility
 - **Atmospheric effects** including an analytic Rayleigh/Mie sky, solar/lunar discs, and stars
 - **Water rendering** with reflections, refractions, and horizon effects
@@ -203,7 +203,7 @@ stop() � Cleanup and dispose resources
 #### Rendering System (`src/engine/render/Renderer.ts`)
 - **Scene Builder**: Constructs Three.js scene with lighting
 - **Material System**: Custom block materials with atlas texturing  
-- **Post-Processing**: Fixed scene-linear pipeline with SSAO, aerial perspective, exposure, bloom, lens flare, and output mapping
+- **Post-Processing**: Fixed scene-linear pipeline with aerial perspective, fixed exposure, bloom, lens flare, and output mapping
 - **Atmospheric Rendering**: Analytic Rayleigh/Mie sky, solar/lunar discs, and deterministic stars
 
 #### Input System (`src/engine/systems/Input.ts`)
@@ -225,12 +225,10 @@ The engine uses one authored WebGL composer. Rendering stays scene-linear until
 the final `OutputPass` applies the display transform:
 
 1. **Geometry Pass**: Render terrain, water, grass, and the analytic sky
-2. **SSAO Pass**: Screen-space ambient occlusion (fixed authored settings)
-3. **Aerial Perspective Pass**: Depth-aware distance scattering using the shared atmosphere state
-4. **Exposure Meter**: Fixed 64×36 luminance meter with bounded adaptation
-5. **Bloom Pass**: Subtle HDR highlight bloom
-6. **Lens Flare Pass**: Restrained sun flare
-7. **Output Pass**: Single AgX tone map and sRGB conversion
+2. **Aerial Perspective Pass**: Depth-aware distance scattering using the shared atmosphere state
+3. **Bloom Pass**: Subtle HDR highlight bloom
+4. **Lens Flare Pass**: Restrained sun flare
+5. **Output Pass**: Single AgX tone map and sRGB conversion with fixed renderer exposure
 
 Voxel sun visibility remains the sole terrain-shadow authority; its occupancy
 volume and screen-space reconstruction are kept separate from the sky pipeline.

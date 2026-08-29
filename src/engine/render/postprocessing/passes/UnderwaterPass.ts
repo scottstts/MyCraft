@@ -15,6 +15,11 @@ function createCausticFallback(): THREE.DataTexture {
  * Cheap, depth-aware participating-water composite for the WebGL renderer.
  * The surface material owns interface optics; this pass owns the camera-side
  * water segment so terrain and sky acquire the same extinction/in-scatter.
+ *
+ * The medium is resolved per ray rather than from a camera-side boolean. At
+ * the waterline, a single frame can contain rays that never enter water and
+ * rays that cross it; treating the whole frame as one medium creates the
+ * familiar full-screen underwater kick.
  */
 export class UnderwaterPass extends ShaderPass {
   private readonly causticFallback: THREE.DataTexture
@@ -71,9 +76,15 @@ export class UnderwaterPass extends ShaderPass {
         uniform vec2 causticOrigin;
         uniform float causticExtent;
         uniform vec2 causticResolution;
+        // underwater means that a water system is present and this pass is
+        // allowed to run. It is deliberately not the camera's medium state:
+        // the camera can be above the surface while individual view rays are
+        // already travelling through water.
         uniform bool underwater;
         uniform int debugMode;
         varying vec2 vUv;
+
+        const float WATERLINE_TRANSITION = 0.65;
 
         float readViewDepth(float rawDepth) {
           if (rawDepth >= 0.999999) return cameraFar;
@@ -109,10 +120,47 @@ export class UnderwaterPass extends ShaderPass {
           vec3 ray = worldRay(viewRay);
           float sceneViewDepth = readViewDepth(texture2D(tDepth, vUv).r);
           float sceneDistance = sceneViewDepth / max(-viewRay.z, 0.02);
-          float surfaceDistance = cameraFar;
-          if (ray.y > 0.001) surfaceDistance = max(0.0, (waterLevel - uCameraPosition.y) / ray.y);
-          float waterDistance = min(sceneDistance, surfaceDistance);
-          waterDistance = min(waterDistance, cameraFar);
+
+          // Integrate the below-surface part of this ray. This is the same
+          // segment solve from either side of the interface:
+          //   above camera + downward crossing -> scene - crossing
+          //   below camera + upward crossing   -> crossing
+          //   below camera with no crossing    -> scene
+          //   above camera with no crossing    -> zero
+          // The crossing is only considered when it lies in front of the
+          // camera. A ray parallel to the plane never enters the medium.
+          float surfaceDistance = -1.0;
+          if (abs(ray.y) > 0.001) {
+            surfaceDistance = (waterLevel - uCameraPosition.y) / ray.y;
+          }
+          float crossingAhead = max(
+            step(0.001, surfaceDistance),
+            // At the exact waterline t is zero for both ray directions. Only
+            // the downward ray starts by entering the medium.
+            step(abs(surfaceDistance), 0.001) * step(0.0, -ray.y)
+          );
+          float cameraBelow = step(0.001, waterLevel - uCameraPosition.y);
+          float crossedDistance = clamp(surfaceDistance, 0.0, sceneDistance);
+          float waterDistance = cameraBelow > 0.5
+            ? (crossingAhead > 0.5 ? crossedDistance : sceneDistance)
+            : (crossingAhead > 0.5 ? max(sceneDistance - crossedDistance, 0.0) : 0.0);
+          waterDistance = min(max(waterDistance, 0.0), cameraFar);
+          float waterStart = cameraBelow < 0.5 && crossingAhead > 0.5
+            ? crossedDistance
+            : 0.0;
+
+          // Fade the *camera-side contribution*, not the ray classification.
+          // At the waterline this gives a stable mixed-medium frame: rays
+          // above the interface have zero water path, while rays below it
+          // receive a half-strength medium. Once the camera is clearly above,
+          // the pass is optically neutral; once clearly below, it is full
+          // strength. The width is expressed in world units and is close to
+          // one voxel block in the authored world.
+          float cameraWaterBlend = smoothstep(
+            -WATERLINE_TRANSITION,
+            WATERLINE_TRANSITION,
+            waterLevel - uCameraPosition.y
+          );
 
           vec3 transmittance = exp(-absorption * waterDistance);
           // Use the green-channel extinction as the optical transport scalar,
@@ -126,7 +174,7 @@ export class UnderwaterPass extends ShaderPass {
           vec3 ambient = mix(vec3(0.012, 0.035, 0.055), vec3(0.035, 0.12, 0.16), upness) * cameraDim;
           float sunward = pow(max(dot(ray, normalize(uSunDirection)), 0.0), 6.0) * 0.06;
           vec3 inScatter = (ambient + uSunColor * sunward) * scatter * fogStrength;
-          if (causticMapEnabled) {
+          if (causticMapEnabled && cameraWaterBlend > 0.001 && waterDistance > 0.001) {
             // A short jitter-free march is enough for the low-frequency
             // caustic glow; the seabed material carries the high-frequency
             // web.  Four independent samples avoid painting one 2-D pattern
@@ -135,16 +183,17 @@ export class UnderwaterPass extends ShaderPass {
             float causticAccum = 0.0;
             for (int i = 0; i < 4; i++) {
               float t = marchLength * (float(i) + 0.5) * 0.25;
-              causticAccum += sampleCausticLuma(uCameraPosition + ray * t);
+              causticAccum += sampleCausticLuma(uCameraPosition + ray * (waterStart + t));
             }
             float causticGain = max(causticAccum * 0.25 - 0.18, 0.0);
             inScatter += uSunColor * causticGain * scatter * fogStrength * 0.065;
           }
           vec3 color = source.rgb * transmittance + inScatter;
+          color = mix(source.rgb, color, cameraWaterBlend);
 
-          if (debugMode == 1) color = vec3(clamp(waterDistance / 64.0, 0.0, 1.0));
-          else if (debugMode == 2) color = transmittance;
-          else if (debugMode == 3) color = vec3(scatter);
+          if (debugMode == 1) color = vec3(clamp(waterDistance / 64.0, 0.0, 1.0) * cameraWaterBlend);
+          else if (debugMode == 2) color = mix(vec3(1.0), transmittance, cameraWaterBlend);
+          else if (debugMode == 3) color = vec3(scatter * cameraWaterBlend);
 
           gl_FragColor = vec4(max(color, vec3(0.0)), source.a);
         }

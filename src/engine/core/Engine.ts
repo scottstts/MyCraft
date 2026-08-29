@@ -388,7 +388,11 @@ function update(dtSeconds: number) {
     waterSystem.update(dtSeconds, camera);
     waterMaterial?.setTime(waterSystem.getTime());
     waterMaterial?.setCameraUnderwater(waterSystem.isCameraUnderwater());
-    composer?.setUnderwater(waterSystem.isCameraUnderwater());
+    // Keep the medium pass active on both sides of the interface. It now
+    // resolves the below-water segment per view ray and fades the camera-side
+    // contribution over the waterline, so toggling it at the camera threshold
+    // would reintroduce the full-screen underwater kick.
+    composer?.setUnderwater(true);
     if (composer) {
       composer.setUnderwaterCaustics(
         waterSystem.getCausticTexture(),
@@ -404,8 +408,8 @@ function update(dtSeconds: number) {
     const sdir = sunController.getSunDirection();
     composer.update(camera, sdir, atmosphereState.sunColor, atmosphereState);
     // Feed the same bounded frame delta used by the simulation into the
-    // composer. EffectComposer otherwise measures its own uncapped clock;
-    // after a hitch or tab resume that would let exposure adapt in one jump.
+    // composer so any time-based post effects remain synchronized with the
+    // rest of the frame.
     composer.render(dtSeconds);
   } else if (renderer && scene && camera) {
     // Fallback to basic rendering
@@ -521,11 +525,9 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   if (!isWebGPU) {
     const glRenderer = baseRenderer as THREE.WebGLRenderer;
     composer = new Composer(glRenderer, scene, camera, canvasSize.width, canvasSize.height);
-    composer.setSSAO(RENDER_STYLE.ssao.enabled, RENDER_STYLE.ssao.intensity, RENDER_STYLE.ssao.radius);
     composer.setBloom(RENDER_STYLE.bloom.enabled, RENDER_STYLE.bloom.strength, RENDER_STYLE.bloom.threshold);
     composer.setLens(RENDER_STYLE.lens.enabled, RENDER_STYLE.lens.intensity);
     composer.setAerialPerspective(true, aerialPerspectiveDistance);
-    composer.setSSAOWaterLevel(VISUAL_WATER_LEVEL);
     composer.setUnderwaterWaterLevel(VISUAL_WATER_LEVEL);
   } else {
     composer = null;

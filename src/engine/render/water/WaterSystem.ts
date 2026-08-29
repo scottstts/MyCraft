@@ -8,6 +8,11 @@ import { CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
 import sandTextureUrl from '../../../assets/textures/sand.png'
 
 const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
+// Keep the surface material on one optical side until the camera is clearly
+// across the interface. UnderwaterPass blends the participating medium over
+// this same band, so the material branch cannot flip while the view is still
+// visibly split by the waterline.
+const CAMERA_OPTICS_THRESHOLD = 0.65
 
 function createTerrainHeightTexture(
   bounds: WaterSystemOptions['bounds'],
@@ -239,7 +244,7 @@ export class WaterSystem {
     this.oceanGroup.position.z = Math.floor(camera.position.z / snap) * snap
 
     const waveSurface = this.surfaceY + sampleOceanHeight(camera.position.x, camera.position.z, this.time)
-    this.cameraUnderwater = camera.position.y < waveSurface - 0.02
+    this.cameraUnderwater = camera.position.y < waveSurface - CAMERA_OPTICS_THRESHOLD
     this.material.setCameraUnderwater(this.cameraUnderwater)
 
     this.syncSeabedMaterial()

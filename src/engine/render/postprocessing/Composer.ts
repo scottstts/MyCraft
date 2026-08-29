@@ -1,32 +1,27 @@
 /**
  * WebGL post-processing pipeline built on EffectComposer.
- * The pass order is RenderPass -> SSAO -> AerialPerspective -> Underwater
- * medium -> ExposureMeter -> Bloom -> LensFlare -> OutputPass. SSAO and
- * voxel shadow ownership remain unchanged; atmosphere and output transforms
- * are centralized here.
+ * The active pass order is RenderPass -> AerialPerspective -> Underwater
+ * medium -> Bloom -> LensFlare -> OutputPass. Screen-space AO and adaptive
+ * exposure are intentionally not part of the active chain: voxel/per-vertex
+ * AO owns local grounding, and exposure remains a fixed renderer setting.
  */
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
-import { SSAOPass } from './passes/SSAOPass'
 import { BloomWrapperPass } from './passes/BloomPass'
 import { LensFlarePass } from './passes/LensFlarePass'
 import { AerialPerspectivePass } from './passes/AerialPerspectivePass'
-import { ExposureMeterPass } from './passes/ExposureMeterPass'
 import { UnderwaterPass } from './passes/UnderwaterPass'
 import type { AtmosphereState } from '../atmosphere/AtmosphereModel'
-import { RENDER_STYLE } from '../settings/RenderStyle'
 import type { VoxelSunShadowPass } from '../lighting/VoxelSunShadowPass.js'
 
 export class Composer {
   private composer: EffectComposer
   private renderPass: RenderPass
-  private ssao: SSAOPass
   private aerial: AerialPerspectivePass
   private bloom: BloomWrapperPass
   private lens: LensFlarePass
-  private meter: ExposureMeterPass
   private output: OutputPass
   private underwater: UnderwaterPass
   private depthTarget: THREE.WebGLRenderTarget
@@ -63,11 +58,6 @@ export class Composer {
     this.renderPass = new RenderPass(scene, camera)
     this.composer.addPass(this.renderPass)
 
-    this.ssao = new SSAOPass()
-    this.ssao.setDepthTexture(this.depthTarget.depthTexture)
-    this.ssao.setSize(effective.width, effective.height)
-    this.composer.addPass(this.ssao)
-
     this.aerial = new AerialPerspectivePass()
     this.aerial.setDepthTexture(this.depthTarget.depthTexture)
     this.aerial.setSize(effective.width, effective.height)
@@ -76,9 +66,6 @@ export class Composer {
     this.underwater = new UnderwaterPass()
     this.underwater.setDepthTexture(this.depthTarget.depthTexture)
     this.composer.addPass(this.underwater)
-
-    this.meter = new ExposureMeterPass(RENDER_STYLE.exposure, RENDER_STYLE.exposure.meterWidth, RENDER_STYLE.exposure.meterHeight)
-    this.composer.addPass(this.meter)
 
     this.bloom = new BloomWrapperPass(width, height)
     this.composer.addPass(this.bloom)
@@ -124,7 +111,6 @@ export class Composer {
       this.depthTarget.depthTexture.needsUpdate = true
     }
     this.composer.setSize(w, h)
-    this.ssao.setSize(effective.width, effective.height)
     this.aerial.setSize(effective.width, effective.height)
     this.bloom.setSize(effective.width, effective.height)
     this.lens.setSize(effective.width, effective.height)
@@ -247,7 +233,6 @@ export class Composer {
     this.voxelSunShadow?.update(camera, sunDirWorld)
 
     // Update per-pass uniforms
-    this.ssao.setCamera(camera)
     this.aerial.setCamera(camera)
     this.underwater.setCamera(camera)
     this.underwater.setSun(sunDirWorld, sunColor ?? new THREE.Color(1, 1, 0.95))
@@ -256,17 +241,35 @@ export class Composer {
     this.lens.setCamera(camera)
     this.lens.setSun(sunDirWorld, sunColor ?? new THREE.Color(1,1,0.95), camera)
   }
-  setSSAOWaterLevel(y: number){ this.ssao.setWaterLevel(y) }
-  setSSAO(enabled: boolean, intensity: number, radius: number) { this.ssao.setSettings({ enabled, intensity, radius }) }
+  /**
+   * Kept for callers that still provide the old SSAO settings. Screen-space
+   * AO is deliberately bypassed in this renderer; voxel/per-vertex AO remains
+   * the active local-occlusion signal.
+   */
+  setSSAOWaterLevel(y: number): void { void y }
+  setSSAO(enabled: boolean, intensity: number, radius: number): void {
+    void enabled
+    void intensity
+    void radius
+  }
   setBloom(enabled: boolean, strength: number, threshold: number) { this.bloom.setSettings({ enabled, strength, threshold }) }
   setLens(enabled: boolean, intensity: number) { this.lens.setEnabled(enabled); this.lens.setIntensity(intensity) }
   setAerialPerspective(enabled: boolean, maxDistance: number) { this.aerial.setSettings({ enabled, maxDistance }) }
-  getExposureDiagnostics() { return this.meter.getDiagnostics() }
-  resetExposure() { this.meter.reset() }
+  getExposureDiagnostics() {
+    return {
+      enabled: false,
+      averageLuminance: 0.18,
+      targetExposure: 1,
+      currentExposure: this.renderer.toneMappingExposure,
+      pending: false,
+      readbackFailures: 0,
+    }
+  }
+  resetExposure() { this.renderer.toneMappingExposure = 1 }
   render(deltaSeconds = 0) {
     // Never let EffectComposer fall back to its own wall-clock delta. The
     // engine supplies the bounded simulation delta; callers that omit it get
-    // a deterministic zero instead of an exposure jump after a stall.
+    // a deterministic zero for any future time-based post effect.
     const boundedDelta = Number.isFinite(deltaSeconds)
       ? Math.min(0.1, Math.max(0, deltaSeconds))
       : 0
