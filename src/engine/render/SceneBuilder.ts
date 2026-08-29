@@ -17,7 +17,12 @@ export function createScene(): THREE.Scene {
   return scene;
 }
 
-export function createCamera(aspect: number = 1): THREE.PerspectiveCamera {
+/**
+ * Canonical first-person camera factory. Gameplay and local diagnostics must
+ * both use this function so projection, clipping, and FPS rotation ownership
+ * cannot drift between the two paths.
+ */
+export function createPlayerCamera(aspect: number = 1): THREE.PerspectiveCamera {
   const camera = new THREE.PerspectiveCamera(
     70,    // fov
     aspect, // aspect ratio
@@ -28,4 +33,10 @@ export function createCamera(aspect: number = 1): THREE.PerspectiveCamera {
   camera.position.set(0, 80, 0); // Start well above terrain (BASE_HEIGHT=32 + AMPLITUDE=16)
   
   return camera;
+}
+
+// Backwards-compatible name for existing callers. Keeping this as a wrapper
+// makes the shared player-camera contract explicit without changing callers.
+export function createCamera(aspect: number = 1): THREE.PerspectiveCamera {
+  return createPlayerCamera(aspect);
 }

@@ -351,6 +351,23 @@ CHUNK_RADIUS = 6                         // World generation radius
 
 ## Development Workflow
 
+### Local camera diagnostics
+
+The render pipeline can be captured from deterministic camera poses while
+running locally:
+
+```
+http://localhost:5173/?debug=1&view=overview
+http://localhost:5173/?debug=1&view=player-spawn
+http://localhost:5173/?debug=1&view=player-ridge
+http://localhost:5173/?debug=1&view=player-gully
+```
+
+The route is accepted only for loopback hostnames (`localhost`, `127.0.0.1`,
+or `::1`); deployed hosts fall through to the normal game. Each view uses the
+same `createPlayerCamera` factory, `Engine` renderer, materials, shadows, and
+post-processing as gameplay. Only the world-space pose changes.
+
 ### Getting Started
 1. `npm install` - Install dependencies
 2. `npm run dev` - Start development server

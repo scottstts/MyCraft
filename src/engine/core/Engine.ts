@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { NATIVE_WEBGL_SHADOW_MAP_TYPE, Renderer } from '../render/Renderer';
-import { createScene, createCamera } from '../render/SceneBuilder';
+import { createScene, createPlayerCamera } from '../render/SceneBuilder';
 import { World } from '../world/World';
 import type { ChunkPipelineEvents } from '../world/ChunkPipeline';
 import type { ChunkMeshResponse, ChunkKey } from '../../types/workers';
@@ -42,9 +42,11 @@ import { base64FromBytes, signPayload, encryptPayload, SAVE_ENC_ALG, SAVE_SIGNAT
 import { CHUNK_SIZE as CONST_CHUNK_SIZE } from '../../config/constants';
 import { getInventorySlots } from '../../state/inventory';
 import FirstPersonBody from '../render/FirstPersonBody';
+import { applyDiagnosticCameraPose, type DiagnosticCameraId } from '../../diagnostics/cameras';
 
 let rafId: number | null = null;
 let running = false;
+let startPromise: Promise<void> | null = null;
 
 // Engine subsystems
 let renderer: Renderer | null = null;
@@ -76,6 +78,12 @@ let dynamicFogDistance = 600; // default, updated based on world size
 let playerRigRoot: THREE.Group | null = null;
 let playerBody: FirstPersonBody | null = null;
 let lastMoveActive = false;
+let diagnosticMode = false;
+let diagnosticView: DiagnosticCameraId | null = null;
+// Native WebGL shadow updates are explicitly throttled (autoUpdate=false).
+// Keep one warm-up request independent of the controller's dirty flag so a
+// fresh diagnostic navigation can never render its first scene without a map.
+let shadowMapWarmupPending = true;
 // Frame counter for coordinating mesh swaps
 let frameCounter = 0;
 // Queue incoming chunk meshes; apply in small batches to avoid border flicker
@@ -118,13 +126,16 @@ function markNativeShadowMapDirty(): void {
 
 function prepareNativeShadowMap(): void {
   const glRenderer = getWebGLRenderer();
-  if (!glRenderer || !sunController || !sunController.consumeShadowDirty()) return;
+  if (!glRenderer || !sunController) return;
+  const dirty = sunController.consumeShadowDirty();
+  if (!dirty && !shadowMapWarmupPending) return;
 
   // Both flags are required when auto-updates are disabled: the renderer
   // gate and the individual LightShadow gate must agree before the next
   // scene render builds the native depth map.
   glRenderer.shadowMap.needsUpdate = true;
   sunController.sun.shadow.needsUpdate = true;
+  shadowMapWarmupPending = false;
 }
 
 function downloadJson(filename: string, data: unknown): void {
@@ -287,7 +298,7 @@ function update(dtSeconds: number) {
   if (lastPaused && !paused && inGame) {
     inputSystem?.requestPointerLock?.();
   }
-  if (inGame && !paused) {
+  if (inGame && !paused && !diagnosticMode) {
     if (inputSystem) {
       inputSystem.update();
     }
@@ -470,8 +481,16 @@ function tick(now: number) {
   rafId = requestAnimationFrame(tick);
 }
 
-async function start(canvas: HTMLCanvasElement) {
-  if (running) return;
+export interface EngineStartOptions {
+  /** When set, render a fixed local diagnostics pose through the normal pipeline. */
+  diagnosticView?: DiagnosticCameraId;
+}
+
+async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOptions = {}) {
+
+  diagnosticView = options.diagnosticView ?? null;
+  diagnosticMode = diagnosticView !== null;
+  shadowMapWarmupPending = true;
   
   // Initialize renderer
   renderer = new Renderer(canvas);
@@ -481,7 +500,9 @@ async function start(canvas: HTMLCanvasElement) {
   // Initialize scene and camera
   scene = createScene();
   const aspect = canvas.clientWidth / canvas.clientHeight;
-  camera = createCamera(aspect);
+  // This is the same camera instance used by gameplay. Diagnostics only apply
+  // a different world-space pose after the normal world/render setup exists.
+  camera = createPlayerCamera(aspect);
   
   // Initialize world
   world = new World();
@@ -593,7 +614,14 @@ async function start(canvas: HTMLCanvasElement) {
   // WebGL shadow map. WebGPU remains outside this material/shadow path.
   sunController = new SunController(scene, {
     cycleSeconds: 180,
-    initialTime: 0.0,
+    // A fresh diagnostic URL must be immediately sunlit. At t=0 the authored
+    // sun is exactly on the horizon and its direct intensity is zero, which
+    // makes a correctly rendered shadow map look as if shadows were missing.
+    // Keep normal gameplay's existing dawn start unchanged.
+    // 0.125 puts the sun at a 45° elevation: direct light is already at its
+    // full daytime intensity, while cast shadows are long enough to inspect
+    // in every diagnostic pose instead of hiding directly beneath casters.
+    initialTime: diagnosticMode ? 0.125 : 0.0,
     enableShadows: !isWebGPU,
   });
 
@@ -680,9 +708,17 @@ async function start(canvas: HTMLCanvasElement) {
   // Set world radius in chunk pipeline for terrain generation
   world.chunkPipeline.setWorldRadius(worldRadius);
 
-  // Set camera spawn position above ground  
+  // Set camera spawn position above ground. Diagnostic views replace only this
+  // pose; projection, renderer, materials, post-processing, and light setup
+  // remain the exact gameplay path above.
   const spawnPos = findSpawnPosition(world.getSeed(), 0, 0, worldRadius);
   camera.position.set(spawnPos.x, spawnPos.y, spawnPos.z);
+  if (diagnosticView) {
+    applyDiagnosticCameraPose(camera, diagnosticView, {
+      seed: world.getSeed(),
+      worldRadius,
+    });
+  }
 
   // Add far ocean ring outside world bounds to visually extend water to horizon
   if (USE_OCEAN_HORIZON) {
@@ -802,8 +838,30 @@ async function start(canvas: HTMLCanvasElement) {
   rafId = requestAnimationFrame(tick);
 }
 
+/**
+ * Serialize startup. CanvasHost is mounted under React StrictMode in
+ * development, and its effect can be invoked twice while atlas/worker setup
+ * is still awaiting. Without this gate both starts mutate the same module
+ * globals and install duplicate sun lights/shadow maps in one scene.
+ */
+async function start(canvas: HTMLCanvasElement, options: EngineStartOptions = {}): Promise<void> {
+  if (running) return;
+  if (startPromise) return startPromise;
+
+  const pending = startInternal(canvas, options);
+  startPromise = pending;
+  try {
+    await pending;
+  } finally {
+    if (startPromise === pending) startPromise = null;
+  }
+}
+
 function stop() {
   running = false;
+  diagnosticMode = false;
+  diagnosticView = null;
+  shadowMapWarmupPending = true;
   lastPaused = false;
   if (rafId !== null) {
     cancelAnimationFrame(rafId);
