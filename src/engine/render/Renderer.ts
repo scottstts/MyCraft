@@ -71,9 +71,8 @@ export class Renderer {
       (this.renderer as THREE.WebGLRenderer).useLegacyLights = false;
     }
 
-    // Sun visibility for terrain is resolved by the voxel DDA pass. The
-    // renderer starts with native maps disabled; Engine enables them only for
-    // the isolated grass alpha-caster light once that system is installed.
+    // Sun visibility is resolved by the voxel DDA pass. Native shadow maps
+    // remain disabled so there is no second, unsynchronised raster grid.
     if (!this.isWebGPU) (this.renderer as THREE.WebGLRenderer).shadowMap.enabled = false;
   }
 

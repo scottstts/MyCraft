@@ -36,6 +36,55 @@ export class GrassMaterial extends THREE.ShaderMaterial {
       uniform float dayLight;  // 0..1
       uniform float starLight; // 0..1 small boost at night
       uniform float alphaCutoff;
+      uniform sampler2D voxelShadowMask;
+      uniform sampler2D voxelShadowDepth;
+      uniform vec2 voxelShadowResolution;
+      uniform float voxelShadowCameraNear;
+      uniform float voxelShadowCameraFar;
+      uniform bool voxelShadowEnabled;
+
+      float decodeVoxelShadowDepth(float raw) {
+        if (raw >= 0.999999) return voxelShadowCameraFar;
+        return (voxelShadowCameraNear * voxelShadowCameraFar) /
+          ((voxelShadowCameraFar - voxelShadowCameraNear) * raw - voxelShadowCameraFar);
+      }
+
+      float sampleVoxelShadowDepth(vec2 uv) {
+        return -decodeVoxelShadowDepth(texture2D(voxelShadowDepth, clamp(uv, vec2(0.0), vec2(1.0))).r);
+      }
+
+      float sampleVoxelShadow(vec2 uv) {
+        return texture2D(voxelShadowMask, clamp(uv, vec2(0.0), vec2(1.0))).r;
+      }
+
+      float getVoxelShadowMask() {
+        if (!voxelShadowEnabled) return 1.0;
+        vec2 uv = gl_FragCoord.xy / max(voxelShadowResolution, vec2(1.0));
+        float center = sampleVoxelShadow(uv);
+        float uncertainty = smoothstep(0.02, 0.98, 4.0 * center * (1.0 - center));
+        if (uncertainty <= 0.0) return center;
+        vec2 texel = 1.0 / max(voxelShadowResolution, vec2(1.0));
+        // Keep reconstruction on the same receiver surface. Grass is alpha
+        // cutout geometry, so an ordinary four-neighbour blur would otherwise
+        // leak terrain visibility into a blade silhouette.
+        float referenceDepth = -vViewPos.z;
+        vec2 offsets[4];
+        offsets[0] = vec2(texel.x, 0.0);
+        offsets[1] = vec2(-texel.x, 0.0);
+        offsets[2] = vec2(0.0, texel.y);
+        offsets[3] = vec2(0.0, -texel.y);
+        float weighted = 0.0;
+        float weightSum = 0.0;
+        for (int i = 0; i < 4; i++) {
+          float neighbourDepth = sampleVoxelShadowDepth(uv + offsets[i]);
+          float tolerance = max(0.025, referenceDepth * 0.015);
+          float weight = 1.0 - smoothstep(tolerance, tolerance * 4.0, abs(neighbourDepth - referenceDepth));
+          weighted += sampleVoxelShadow(uv + offsets[i]) * weight;
+          weightSum += weight;
+        }
+        if (weightSum <= 1e-4) return center;
+        return mix(center, weighted / weightSum, 0.55 * uncertainty);
+      }
 
       void main(){
         vec4 tex = texture2D(map, vUv);
@@ -51,7 +100,7 @@ export class GrassMaterial extends THREE.ShaderMaterial {
         vec3 starAmb = vec3(0.02, 0.025, 0.04) * 0.35 * clamp(starLight, 0.0, 1.0);
         vec3 ambient = ambBase + starAmb;
 
-        vec3 diffuse = sunColor * NdotL * clamp(dayLight, 0.0, 1.0);
+        vec3 diffuse = sunColor * NdotL * clamp(dayLight, 0.0, 1.0) * getVoxelShadowMask();
 
         // Subtle fresnel rim to keep thin blades readable against dark backgrounds
         // N and the lighting direction are world-space, so keep the view
@@ -83,6 +132,12 @@ export class GrassMaterial extends THREE.ShaderMaterial {
         dayLight: { value: 1.0 },
         starLight: { value: 0.0 },
         alphaCutoff: { value: 0.15 },
+        voxelShadowMask: { value: null },
+        voxelShadowDepth: { value: null },
+        voxelShadowResolution: { value: new THREE.Vector2(1, 1) },
+        voxelShadowCameraNear: { value: 0.1 },
+        voxelShadowCameraFar: { value: 1024.0 },
+        voxelShadowEnabled: { value: false },
       }
     });
   }
@@ -100,4 +155,16 @@ export class GrassMaterial extends THREE.ShaderMaterial {
     (this.uniforms.starLight as { value: number }).value = THREE.MathUtils.clamp(star, 0, 1);
   }
   setAlphaCutoff(c: number) { (this.uniforms.alphaCutoff as { value: number }).value = THREE.MathUtils.clamp(c, 0, 1); }
+
+  setVoxelShadowTexture(texture: THREE.Texture, width: number, height: number, enabled = true): void {
+    (this.uniforms.voxelShadowMask as { value: THREE.Texture }).value = texture;
+    (this.uniforms.voxelShadowResolution as { value: THREE.Vector2 }).value.set(Math.max(1, width), Math.max(1, height));
+    (this.uniforms.voxelShadowEnabled as { value: boolean }).value = enabled;
+  }
+
+  setVoxelShadowDepthTexture(texture: THREE.Texture, near: number, far: number): void {
+    (this.uniforms.voxelShadowDepth as { value: THREE.Texture }).value = texture;
+    (this.uniforms.voxelShadowCameraNear as { value: number }).value = near;
+    (this.uniforms.voxelShadowCameraFar as { value: number }).value = far;
+  }
 }

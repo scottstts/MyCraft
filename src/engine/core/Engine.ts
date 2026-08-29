@@ -649,7 +649,8 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     });
     voxelSunShadowPass = new VoxelSunShadowPass(glRenderer, canvasSize.width, canvasSize.height, voxelShadowVolume);
     const shadowResolution = voxelSunShadowPass.getDiagnostics().resolution;
-    blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), shadowResolution.width, shadowResolution.height, true);
+    blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), shadowResolution.width, shadowResolution.height, !!composer);
+    if (composer) blockMaterial?.setVoxelShadowDepthTexture(composer.getDepthTexture(), camera.near, camera.far);
     composer?.setVoxelSunShadowPass(voxelSunShadowPass);
     if (diagnosticMode) console.info('[VoxelSunShadow]', JSON.stringify(voxelSunShadowPass.getDiagnostics()));
 
@@ -748,10 +749,15 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   
   // Interaction system (mine/place + re-mesh)
   interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);
-  // Decorative grass system (instanced billboards). Grass caster occupancy is
-  // mirrored into the voxel DDA volume and tested against this same texture.
+  // Decorative grass system (instanced billboards). Its direct sun visibility
+  // uses the same screen-space voxel result as terrain; the caster side uses
+  // the matching crossed-card proxy inside VoxelSunShadowPass.
   grassSystem = new GrassBillboardSystem(scene, world, getBlockIdByName('grass_tuft') ?? 9);
-  voxelSunShadowPass?.setGrassTexture(grassSystem.getTexture());
+  if (voxelSunShadowPass) {
+    const resolution = voxelSunShadowPass.getDiagnostics().resolution;
+    grassSystem.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
+    if (composer) grassSystem.setVoxelShadowDepthTexture(composer.getDepthTexture(), camera.near, camera.far);
+  }
   
   // Sound effects
   sfx = new SoundEffects(world, camera, inputSystem, playerController);
@@ -829,6 +835,11 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
         composer.setSize(size.width, size.height);
       } else if (postProcessor) {
         postProcessor.setSize(size.width, size.height);
+      }
+      if (voxelSunShadowPass) {
+        const resolution = voxelSunShadowPass.getDiagnostics().resolution;
+        blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
+        grassSystem?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
       }
     }
   };
@@ -1023,6 +1034,12 @@ function updateShadowSettings(settings: ShadowSettings) {
   if (blockMaterial && voxelSunShadowPass) {
     const resolution = voxelSunShadowPass.getDiagnostics().resolution;
     blockMaterial.setVoxelShadowTexture(
+      voxelSunShadowPass.getTexture(),
+      resolution.width,
+      resolution.height,
+      shadowSettings.enabled,
+    );
+    grassSystem?.setVoxelShadowTexture(
       voxelSunShadowPass.getTexture(),
       resolution.width,
       resolution.height,

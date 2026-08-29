@@ -5,7 +5,9 @@
  * traverses the authoritative occupancy volume with grid DDA toward the
  * current (continuous) sun direction and writes one visibility value per
  * screen pixel.  No light camera, shadow map, projection fitting, or texel
- * snapping participates in this path.
+ * snapping participates in this path.  Opaque blocks are traced as voxels;
+ * grass occupancy is traced as a small analytic crossed-blade proxy rather
+ * than point-sampling the source PNG as micro-geometry.
  */
 
 import * as THREE from 'three';
@@ -70,8 +72,6 @@ export class VoxelSunShadowPass {
         uVoxelOccupancy: { value: volume.texture },
         uBrickOccupancy: { value: volume.brickTexture },
         uGrassOccupancy: { value: volume.grassTexture },
-        uGrassTexture: { value: null },
-        uGrassAlphaCutoff: { value: 0.15 },
         uVolumeOrigin: { value: volume.origin.clone() },
         uVolumeSize: { value: volume.dimensions.clone() },
         uBrickGridSize: { value: volume.brickDimensions.clone() },
@@ -100,8 +100,6 @@ export class VoxelSunShadowPass {
         uniform sampler3D uVoxelOccupancy;
         uniform sampler3D uBrickOccupancy;
         uniform sampler3D uGrassOccupancy;
-        uniform sampler2D uGrassTexture;
-        uniform float uGrassAlphaCutoff;
         uniform vec3 uVolumeOrigin;
         uniform vec3 uVolumeSize;
         uniform vec3 uBrickGridSize;
@@ -142,35 +140,65 @@ export class VoxelSunShadowPass {
           return texture(uGrassOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
         }
 
+        // A grass tuft is rendered as two crossed billboard planes.  For
+        // shadows we use a compact vector silhouette made from seven tapered
+        // blades on each plane.  This deliberately does not turn every alpha
+        // texel in grass_leaves.png into a separate caster: at grazing sun
+        // angles that representation projects source scanlines onto the
+        // receiver and creates the striped artifact this pass is designed to
+        // avoid.
+        float taperedBlade(vec2 uv, float baseX, float tip, float lean, float baseWidth) {
+          if (uv.y < 0.0 || uv.y > tip) return 0.0;
+          float t = clamp(uv.y / max(tip, 1e-4), 0.0, 1.0);
+          float center = baseX + lean * t;
+          float width = mix(baseWidth, 0.010, t);
+          return 1.0 - smoothstep(width * 0.55, width, abs(uv.x - center));
+        }
+
+        float bladeCoverage(vec2 uv) {
+          if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+          float coverage = 0.0;
+          // base, tip, lean, base width for a deliberately irregular tuft.
+          coverage = max(coverage, taperedBlade(uv, 0.16, 0.78, -0.08, 0.045));
+          coverage = max(coverage, taperedBlade(uv, 0.29, 0.96,  0.03, 0.055));
+          coverage = max(coverage, taperedBlade(uv, 0.43, 0.88, -0.05, 0.060));
+          coverage = max(coverage, taperedBlade(uv, 0.55, 1.00,  0.08, 0.065));
+          coverage = max(coverage, taperedBlade(uv, 0.68, 0.91, -0.03, 0.052));
+          coverage = max(coverage, taperedBlade(uv, 0.80, 0.72,  0.04, 0.045));
+          coverage = max(coverage, taperedBlade(uv, 0.91, 0.56, -0.02, 0.040));
+          return coverage;
+        }
+
         bool grassBladeHit(vec3 local, vec3 direction, ivec3 cell, float maxTravel) {
           vec3 cellMin = vec3(cell);
           const float base = 0.04;
           const float extent = 0.92;
           const float height = 0.90;
           const float epsilon = 1e-4;
+          const float selfHitEpsilon = 0.01;
 
-          // Plane A: x is fixed, z/y carry the grass image coordinates.
-          if (abs(direction.x) > epsilon) {
-            float travelX = (cellMin.x + 0.5 - local.x) / direction.x;
-            if (travelX >= -epsilon && travelX <= maxTravel + epsilon) {
-              vec3 point = local + direction * travelX;
+          // First billboard plane: z is fixed, x/y carry the silhouette UV.
+          if (abs(direction.z) > epsilon) {
+            float travelZ = (cellMin.z + 0.5 - local.z) / direction.z;
+            if (travelZ > selfHitEpsilon && travelZ <= maxTravel + epsilon) {
+              vec3 point = local + direction * travelZ;
               if (point.y >= cellMin.y - epsilon && point.y <= cellMin.y + height + epsilon &&
-                  point.z >= cellMin.z + base - epsilon && point.z <= cellMin.z + base + extent + epsilon) {
-                vec2 uv = vec2((point.z - cellMin.z - base) / extent, 1.0 - (point.y - cellMin.y) / height);
-                if (texture(uGrassTexture, clamp(uv, vec2(0.0), vec2(1.0))).a >= uGrassAlphaCutoff) return true;
+                  point.x >= cellMin.x + base - epsilon && point.x <= cellMin.x + base + extent + epsilon) {
+                vec2 uv = vec2((point.x - cellMin.x - base) / extent, (point.y - cellMin.y) / height);
+                if (bladeCoverage(uv) > 0.5) return true;
               }
             }
           }
 
-          // Plane B: z is fixed, x/y carry the grass image coordinates.
-          if (abs(direction.z) > epsilon) {
-            float travelZ = (cellMin.z + 0.5 - local.z) / direction.z;
-            if (travelZ >= -epsilon && travelZ <= maxTravel + epsilon) {
-              vec3 point = local + direction * travelZ;
+          // Second billboard plane: x is fixed, z/y carry the same silhouette.
+          if (abs(direction.x) > epsilon) {
+            float travelX = (cellMin.x + 0.5 - local.x) / direction.x;
+            if (travelX > selfHitEpsilon && travelX <= maxTravel + epsilon) {
+              vec3 point = local + direction * travelX;
               if (point.y >= cellMin.y - epsilon && point.y <= cellMin.y + height + epsilon &&
-                  point.x >= cellMin.x + base - epsilon && point.x <= cellMin.x + base + extent + epsilon) {
-                vec2 uv = vec2((point.x - cellMin.x - base) / extent, 1.0 - (point.y - cellMin.y) / height);
-                if (texture(uGrassTexture, clamp(uv, vec2(0.0), vec2(1.0))).a >= uGrassAlphaCutoff) return true;
+                  point.z >= cellMin.z + base - epsilon && point.z <= cellMin.z + base + extent + epsilon) {
+                vec2 uv = vec2((point.z - cellMin.z - base) / extent, (point.y - cellMin.y) / height);
+                if (bladeCoverage(uv) > 0.5) return true;
               }
             }
           }
@@ -209,6 +237,10 @@ export class VoxelSunShadowPass {
             abs(direction.y) < 1e-5 ? (direction.y < 0.0 ? -1e-5 : 1e-5) : direction.y,
             abs(direction.z) < 1e-5 ? (direction.z < 0.0 ? -1e-5 : 1e-5) : direction.z
           );
+          // Start just outside the receiver.  Opaque self-intersection is
+          // suppressed by cell identity, while grass is tested independently
+          // below so a tuft rooted directly on a terrain face remains a valid
+          // caster even when it shares the receiver's integer cell.
           vec3 local = receiverWorld + direction * 0.002 - uVolumeOrigin;
           ivec3 receiverCell = ivec3(floor(receiverWorld - uVolumeOrigin));
           ivec3 cell = ivec3(floor(local));
@@ -221,10 +253,10 @@ export class VoxelSunShadowPass {
 
             if (!insideVolume(cell)) return 1.0;
 
-            // The receiver voxel itself is intentionally skipped. This is the
-            // geometric self-intersection rule that replaces depth bias.
-            bool differentCell = any(notEqual(cell, receiverCell));
-            if (differentCell && voxelAt(cell) > 0.5) return 0.0;
+            // Preserve the established opaque self-intersection rule.  Grass
+            // does not use this gate; it has its own minimum hit distance.
+            bool differentOpaqueCell = any(notEqual(cell, receiverCell));
+            if (differentOpaqueCell && voxelAt(cell) > 0.5) return 0.0;
 
             ivec3 brick = cell / BRICK_SIZE;
             if (insideBrickGrid(brick) && brickAt(brick) < 0.5) {
@@ -251,7 +283,7 @@ export class VoxelSunShadowPass {
             travelled += travel;
             if (travelled > uMaxDistance || travel >= 1e29) return 1.0;
 
-            if (differentCell && grassAt(cell) > 0.5 && grassBladeHit(local, direction, cell, travel)) return 0.0;
+            if (grassAt(cell) > 0.5 && grassBladeHit(local, direction, cell, travel)) return 0.0;
 
             if (voxelDistance.x <= voxelDistance.y && voxelDistance.x <= voxelDistance.z) {
               cell.x += int(stepAxis.x);
@@ -265,6 +297,30 @@ export class VoxelSunShadowPass {
           return 1.0;
         }
 
+        float traceSolarDisc(vec3 receiver, vec3 sun, vec3 tangentA, vec3 tangentB) {
+          // Five cheap probes are used only as a boundary classifier.  If all
+          // agree, the receiver is in stable umbra/full light and no extra
+          // rays are needed.  Mixed probes trigger equal-area disc sampling.
+          float center = traceVisibility(receiver, sun);
+          float sideA = traceVisibility(receiver, normalize(sun + tangentA * uSunAngularRadius));
+          float sideB = traceVisibility(receiver, normalize(sun - tangentA * uSunAngularRadius));
+          float sideC = traceVisibility(receiver, normalize(sun + tangentB * uSunAngularRadius));
+          float sideD = traceVisibility(receiver, normalize(sun - tangentB * uSunAngularRadius));
+          if (center == sideA && center == sideB && center == sideC && center == sideD) return center;
+
+          const int DISC_SAMPLES = 16;
+          const float GOLDEN_ANGLE = 2.39996323;
+          float sum = center + sideA + sideB + sideC + sideD;
+          for (int i = 0; i < DISC_SAMPLES; i++) {
+            float fraction = (float(i) + 0.5) / float(DISC_SAMPLES);
+            float radius = sqrt(fraction) * uSunAngularRadius;
+            float angle = (float(i) + 0.5) * GOLDEN_ANGLE;
+            vec2 disk = vec2(cos(angle), sin(angle)) * radius;
+            sum += traceVisibility(receiver, normalize(sun + tangentA * disk.x + tangentB * disk.y));
+          }
+          return sum / float(5 + DISC_SAMPLES);
+        }
+
         void main() {
           float viewDepth = readViewDepth(vUv);
           if (!uEnabled || viewDepth >= uCameraFar * 0.999) {
@@ -273,20 +329,15 @@ export class VoxelSunShadowPass {
           }
           vec3 receiver = reconstructWorldPosition(vUv, viewDepth);
           vec3 sun = normalize(uSunDirection);
-          vec3 tangentUp = abs(sun.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-          vec3 tangentA = normalize(cross(sun, tangentUp));
+          // Project a fixed world-up vector onto the solar-disc tangent plane.
+          // Only the singular straight-up case needs a fallback; there is no
+          // arbitrary |sun.y| threshold that can rotate the kernel in flight.
+          vec3 tangentSeed = vec3(0.0, 1.0, 0.0);
+          vec3 tangentA = tangentSeed - sun * dot(tangentSeed, sun);
+          if (dot(tangentA, tangentA) < 1e-6) tangentA = vec3(1.0, 0.0, 0.0);
+          tangentA = normalize(tangentA);
           vec3 tangentB = normalize(cross(sun, tangentA));
-          vec3 spreadA = tangentA * uSunAngularRadius;
-          vec3 spreadB = tangentB * uSunAngularRadius;
-          // Fixed five-ray quadrature samples a small solar disc. The center
-          // ray preserves hard contact/umbra while the four ring rays create
-          // a stable, directionally complete penumbra with no random noise.
-          float center = traceVisibility(receiver, sun);
-          float sideA = traceVisibility(receiver, normalize(sun + spreadA));
-          float sideB = traceVisibility(receiver, normalize(sun - spreadA));
-          float sideC = traceVisibility(receiver, normalize(sun + spreadB));
-          float sideD = traceVisibility(receiver, normalize(sun - spreadB));
-          float visibility = center * 0.4 + (sideA + sideB + sideC + sideD) * 0.15;
+          float visibility = traceSolarDisc(receiver, sun, tangentA, tangentB);
           outColor = vec4(visibility, 0.0, 0.0, 1.0);
         }
       `,
@@ -306,10 +357,6 @@ export class VoxelSunShadowPass {
   setDepthTexture(texture: THREE.Texture): void {
     this.depthTexture = texture;
     this.quadMaterial.uniforms.tDepth.value = texture;
-  }
-
-  setGrassTexture(texture: THREE.Texture): void {
-    this.quadMaterial.uniforms.uGrassTexture.value = texture;
   }
 
   setSize(width: number, height: number): void {

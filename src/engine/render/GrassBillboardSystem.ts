@@ -88,8 +88,9 @@ export class GrassBillboardSystem {
 
     // Build instanced mesh
     const mesh = new THREE.InstancedMesh(this.geometry, this.material, instances.length)
-    // Grass silhouettes are traced from the alpha texture by VoxelSunShadowPass.
-    // Native shadow-map casting stays disabled to avoid a second unstable grid.
+    // Native shadow-map casting stays disabled.  Grass casting is resolved by
+    // the stable voxel sun-visibility pass using the same crossed-card layout
+    // as this mesh, while this material consumes that pass for receiving.
     mesh.castShadow = false
     mesh.receiveShadow = false
     // Draw after opaque blocks but before transparent water
@@ -156,4 +157,10 @@ export class GrassBillboardSystem {
   setSunUniforms(dir: THREE.Vector3, color: THREE.Color): void { this.material.setSun(dir, color) }
   setDayNight(day: number, star: number): void { this.material.setDayNight(day, star) }
   getTexture(): THREE.Texture { return (this.material.uniforms.map as { value: THREE.Texture }).value }
+  setVoxelShadowTexture(texture: THREE.Texture, width: number, height: number, enabled = true): void {
+    this.material.setVoxelShadowTexture(texture, width, height, enabled)
+  }
+  setVoxelShadowDepthTexture(texture: THREE.Texture, near: number, far: number): void {
+    this.material.setVoxelShadowDepthTexture(texture, near, far)
+  }
 }

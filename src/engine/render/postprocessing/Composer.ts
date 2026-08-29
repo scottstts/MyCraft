@@ -117,16 +117,82 @@ export class Composer {
     if (pass && this.depthTarget.depthTexture) pass.setDepthTexture(this.depthTarget.depthTexture)
   }
 
+  /**
+   * The depth prepass owns `depthTarget.depthTexture` as its framebuffer
+   * attachment.  Custom terrain/grass materials also sample that texture for
+   * edge-aware shadow reconstruction in the final color pass; sampling it
+   * during this prepass would form a WebGL feedback loop.  Temporarily turn
+   * the complete voxel-shadow lookup off while writing depth, then restore
+   * each material's previous state before the visibility pass and final draw.
+   */
+  private setShadowSamplingEnabled(enabled: boolean): Array<{
+    enabledUniform: { value: unknown };
+    enabledValue: unknown;
+    depthUniform: { value: unknown } | undefined;
+    depthValue: unknown;
+  }> {
+    const states: Array<{
+      enabledUniform: { value: unknown };
+      enabledValue: unknown;
+      depthUniform: { value: unknown } | undefined;
+      depthValue: unknown;
+    }> = [];
+    const seen = new Set<object>();
+    this.scene.traverse((object) => {
+      const material = (object as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      const materials = Array.isArray(material) ? material : material ? [material] : [];
+      for (const entry of materials) {
+        const uniforms = (entry as THREE.ShaderMaterial).uniforms as Record<string, { value: unknown }> | undefined;
+        const enabledUniform = uniforms?.voxelShadowEnabled;
+        if (!enabledUniform) continue;
+        // Chunk meshes share one BlockMaterial (and grass chunks share one
+        // GrassMaterial).  Save each uniform exactly once; otherwise later
+        // duplicate entries would restore the already-disabled value.
+        if (seen.has(enabledUniform)) continue;
+        seen.add(enabledUniform);
+        const depthUniform = uniforms?.voxelShadowDepth;
+        states.push({
+          enabledUniform,
+          enabledValue: enabledUniform.value,
+          depthUniform,
+          depthValue: depthUniform?.value,
+        });
+        enabledUniform.value = enabled;
+        // Detach the actual framebuffer texture. WebGL validates feedback
+        // loops from sampler bindings even when the shader branch is false.
+        if (depthUniform) depthUniform.value = null;
+      }
+    });
+    return states;
+  }
+
+  private restoreShadowSampling(states: Array<{
+    enabledUniform: { value: unknown };
+    enabledValue: unknown;
+    depthUniform: { value: unknown } | undefined;
+    depthValue: unknown;
+  }>): void {
+    for (const state of states) {
+      state.enabledUniform.value = state.enabledValue;
+      if (state.depthUniform) state.depthUniform.value = state.depthValue;
+    }
+  }
+
   getDepthTexture(): THREE.DepthTexture {
     return this.depthTarget.depthTexture as THREE.DepthTexture
   }
   update(camera: THREE.PerspectiveCamera, sunDirWorld: THREE.Vector3, sunColor?: THREE.Color) {
     // Render depth prepass into separate target to avoid feedback
+    const shadowStates = this.setShadowSamplingEnabled(false);
     const prev = this.renderer.getRenderTarget()
-    this.renderer.setRenderTarget(this.depthTarget)
-    this.renderer.clear(true, true, true)
-    this.renderer.render(this.scene, camera)
-    this.renderer.setRenderTarget(prev)
+    try {
+      this.renderer.setRenderTarget(this.depthTarget)
+      this.renderer.clear(true, true, true)
+      this.renderer.render(this.scene, camera)
+    } finally {
+      this.renderer.setRenderTarget(prev)
+      this.restoreShadowSampling(shadowStates);
+    }
 
     // Resolve voxel visibility after depth is current and before the color
     // RenderPass samples its screen-space mask.
