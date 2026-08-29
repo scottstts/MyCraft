@@ -34,22 +34,24 @@ export interface ShadowBounds {
 
 const DEFAULT_SHADOW_SETTINGS: ShadowSettings = {
   enabled: true,
-  resolution: 2048,
+  resolution: 4096,
   shadowDistance: 300,
-  softness: 1.0,
-  // Native WebGL shadow comparison adds this value to receiver depth. A
-  // small negative value keeps coplanar voxel receivers on the lit side of
-  // the comparison without creating a visible gap at contact points.
-  bias: -0.0001,
-  // Caster depth is separated in ChunkRenderer immediately before Three packs
-  // the native shadow-map depth. Do not additionally move the receiver along
-  // its world normal: that changes the lookup position on every rotating-light
-  // frame and creates a second, face-dependent source of edge shimmer.
+  softness: 0.5,
+  // The terrain is an open shell of outward-facing voxel faces. A small
+  // receiver-side bias removes native depth quantization acne on those
+  // coplanar faces without moving the caster silhouette (unlike a custom
+  // depth-position offset, which causes peter-panning).
+  bias: -0.001,
   normalBias: 0,
   intensity: 1.0,
 };
 
 const TWO_PI = Math.PI * 2;
+// Shadow-map rasterization is discrete. Keep authored sunlight continuous,
+// but commit the shadow camera/map only after the direction advances by one
+// texel-sized angular step at the fixed world bounds. This prevents
+// sub-texel shadow-map crawling while preserving smooth direct lighting.
+const SHADOW_DIRECTION_TEXELS = 1;
 
 export class SunController {
   readonly sun: THREE.DirectionalLight;
@@ -72,6 +74,7 @@ export class SunController {
   };
   private shadowFocus = new THREE.Vector3(0, 48, 0);
   private shadowDirty = true;
+  private shadowDirection = new THREE.Vector3();
   private readonly east = new THREE.Vector3(Math.cos(Math.PI * 0.25), 0, Math.sin(Math.PI * 0.25));
   private readonly up = new THREE.Vector3(0, 1, 0);
 
@@ -164,7 +167,8 @@ export class SunController {
       (this.shadowBounds.minY + this.shadowBounds.maxY) * 0.5,
       (this.shadowBounds.minZ + this.shadowBounds.maxZ) * 0.5,
     );
-    this.updateShadowTransform(this.sunDir);
+    this.shadowDirection.copy(this.getQuantizedShadowDirection());
+    this.updateShadowTransform(this.shadowDirection);
     this.markShadowNeedsUpdate();
   }
 
@@ -206,7 +210,8 @@ export class SunController {
       previous.normalBias !== this.shadowSettings.normalBias ||
       previous.intensity !== this.shadowSettings.intensity;
     if (changed) {
-      this.updateShadowTransform(this.sunDir);
+      this.shadowDirection.copy(this.getQuantizedShadowDirection());
+      this.updateShadowTransform(this.shadowDirection);
       this.markShadowNeedsUpdate();
     }
   }
@@ -241,13 +246,16 @@ export class SunController {
     // Sun direction on the unit circle in the east-up plane
     this.sunDir.copy(this.east).multiplyScalar(Math.cos(theta)).addScaledVector(this.up, Math.sin(theta)).normalize();
 
-    // Keep the shadow camera and map synchronized with the same direction as
-    // the authored lighting. A native shadow map is otherwise a snapshot: if
-    // the light moves every frame but the map is refreshed on a coarser
-    // threshold, the receiver sees a repeated old/new projection jump.
-    this.updateLightPosition(this.sunDir);
-    this.updateShadowProjection();
-    this.markShadowNeedsUpdate();
+    // The direct light remains continuous, but the shadow map is a discrete
+    // raster. Commit a new shadow transform only after the quantized direction
+    // crosses a texel-sized angular step; otherwise the map remains stable
+    // while the sun moves between texels.
+    const shadowDirection = this.getQuantizedShadowDirection();
+    if (this.shadowDirection.lengthSq() === 0 || this.shadowDirection.dot(shadowDirection) < 1 - 1e-12) {
+      this.shadowDirection.copy(shadowDirection);
+      this.updateShadowTransform(this.shadowDirection);
+      this.markShadowNeedsUpdate();
+    }
 
     this.sun.target.updateMatrixWorld();
 
@@ -315,6 +323,16 @@ export class SunController {
     const spanY = this.shadowBounds.maxY - this.shadowBounds.minY;
     const spanZ = this.shadowBounds.maxZ - this.shadowBounds.minZ;
     return Math.max(8, 0.5 * Math.sqrt(spanX * spanX + spanY * spanY + spanZ * spanZ) + 8);
+  }
+
+  private getQuantizedShadowDirection(target: THREE.Vector3 = new THREE.Vector3()): THREE.Vector3 {
+    const theta = this.t * TWO_PI;
+    const step = (2 * SHADOW_DIRECTION_TEXELS) / Math.max(256, this.shadowSettings.resolution);
+    const quantizedTheta = Math.round(theta / step) * step;
+    return target.copy(this.east)
+      .multiplyScalar(Math.cos(quantizedTheta))
+      .addScaledVector(this.up, Math.sin(quantizedTheta))
+      .normalize();
   }
 
 }

@@ -9,16 +9,6 @@ import { EventEmitter } from '../utils/EventEmitter.js';
 import type { ChunkKey, ChunkMeshResponse } from '../../types/workers.js';
 import { CHUNK_SIZE } from '../../config/constants.js';
 
-// Three's MeshDepthMaterial packs a high-precision copy of clip-space depth
-// into the shadow-map color target. A WebGL polygon offset changes the depth
-// buffer, but not that packed color value, so acne separation must be applied
-// to gl_Position before the depth material packs it.
-// This is a normalized shadow-depth separation, not a world-space block
-// offset. At the default finite-world frustum it is only a few centimetres,
-// keeping contact shadows attached while covering the native PCF comparison
-// error on the exposed voxel planes.
-const SHADOW_DEPTH_CLIP_OFFSET = 0.0002;
-
 export interface ChunkRendererEvents extends Record<string, unknown> {
   MESH_CREATED: { key: ChunkKey; mesh: THREE.Mesh };
   MESH_UPDATED: { key: ChunkKey; mesh: THREE.Mesh };
@@ -29,11 +19,6 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
   private scene: THREE.Scene;
   private materialOpaque: THREE.Material;
   private materialTransparent: THREE.Material;
-  // The voxel mesh intentionally casts from outward faces (rather than
-  // Three's default back-face shadow policy, which can drop open terrain
-  // surfaces). Offset only the depth written to the native shadow map so
-  // those same faces do not self-shadow with diagonal acne.
-  private shadowDepthMaterial: THREE.MeshDepthMaterial;
   private chunkMeshes: Map<ChunkKey, THREE.Mesh> = new Map();
   private chunkGroups: Map<ChunkKey, THREE.Group> = new Map();
   
@@ -42,26 +27,6 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     this.scene = scene;
     this.materialOpaque = materials.opaque;
     this.materialTransparent = materials.transparent;
-    this.shadowDepthMaterial = new THREE.MeshDepthMaterial({
-      depthPacking: THREE.RGBADepthPacking,
-    });
-    this.shadowDepthMaterial.onBeforeCompile = (shader) => {
-      // Add a small positive normalized depth offset for the normal WebGL
-      // depth convention. Reversed depth uses the opposite sign. This is a
-      // depth-only change: shadow-map XY coverage and caster silhouettes are
-      // unchanged, while the receiver's native bias has room to compare as
-      // lit on the coplanar caster surface.
-      const marker = 'vHighPrecisionZW = gl_Position.zw;';
-      shader.vertexShader = shader.vertexShader.replace(
-        marker,
-        `#ifdef USE_REVERSEDEPTHBUF
-          gl_Position.z -= ${SHADOW_DEPTH_CLIP_OFFSET * 2} * gl_Position.w;
-        #else
-          gl_Position.z += ${SHADOW_DEPTH_CLIP_OFFSET * 2} * gl_Position.w;
-        #endif
-        ${marker}`,
-      );
-    };
   }
   
   /**
@@ -140,10 +105,6 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
 
       target.castShadow = !isTransparent;
       target.receiveShadow = !isTransparent;
-      // Use one shared depth-only material for opaque voxel casters. It keeps
-      // the native Three.js shadow map/filter path, while its packed-depth
-      // offset prevents the outward face from self-shadowing.
-      target.customDepthMaterial = isTransparent ? undefined : this.shadowDepthMaterial;
       if (isTransparent) target.renderOrder = 2; // draw after opaque
       return target;
     };
@@ -250,6 +211,5 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
    */
   destroy(): void {
     this.clear();
-    this.shadowDepthMaterial.dispose();
   }
 }

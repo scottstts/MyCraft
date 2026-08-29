@@ -5,11 +5,11 @@ import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 import { NATIVE_WEBGL_SHADOW_MAP_TYPE } from '../src/engine/render/Renderer';
 
 describe('native WebGL shadow stability', () => {
-  it('uses the native PCF-soft filter', () => {
-    expect(NATIVE_WEBGL_SHADOW_MAP_TYPE).toBe(THREE.PCFSoftShadowMap);
+  it('uses a fixed-kernel native PCF filter', () => {
+    expect(NATIVE_WEBGL_SHADOW_MAP_TYPE).toBe(THREE.PCFShadowMap);
   });
 
-  it('refreshes the native map whenever the moving sun changes', () => {
+  it('holds the shadow raster between texel steps and refreshes at a boundary', () => {
     const scene = new THREE.Scene();
     const controller = new SunController(scene, {
       initialTime: 0,
@@ -21,27 +21,30 @@ describe('native WebGL shadow stability', () => {
     expect(controller.consumeShadowDirty()).toBe(true);
 
     const previousLightPosition = controller.sun.position.clone();
-    for (let i = 0; i < 6; i++) {
-      controller.update(1 / 120);
-      expect(controller.consumeShadowDirty()).toBe(true);
-    }
-    expect(controller.sun.position.distanceTo(previousLightPosition)).toBeGreaterThan(0);
     controller.update(1 / 120);
-    expect(controller.consumeShadowDirty()).toBe(true);
     expect(controller.consumeShadowDirty()).toBe(false);
+
+    let refreshed = false;
+    for (let i = 0; i < 20; i++) {
+      controller.update(1 / 120);
+      refreshed = controller.consumeShadowDirty() || refreshed;
+    }
+    expect(refreshed).toBe(true);
+    expect(controller.sun.position.distanceTo(previousLightPosition)).toBeGreaterThan(0);
 
     const shadowDirection = controller.sun.position
       .clone()
       .sub(controller.sun.target.position)
       .normalize();
-    expect(shadowDirection.dot(controller.getSunDirection())).toBeGreaterThan(1 - 1e-10);
+    expect(shadowDirection.dot(controller.getSunDirection())).toBeGreaterThan(0.999999);
 
     controller.dispose();
   });
 
   it('uses a small negative native depth bias by default', () => {
     const controller = new SunController(new THREE.Scene(), { enableShadows: true });
-    expect(controller.sun.shadow.bias).toBe(-0.0001);
+    expect(controller.sun.shadow.bias).toBe(-0.001);
+    expect(controller.sun.shadow.radius).toBe(0);
     expect(controller.sun.shadow.normalBias).toBe(0);
     controller.dispose();
   });

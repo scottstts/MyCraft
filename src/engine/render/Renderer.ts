@@ -13,10 +13,11 @@ const MIN_PIXEL_RATIO = 1;
 
 // Keep the WebGL shadow filter in one place so runtime settings cannot switch
 // the renderer back to a different filter than the initial renderer setup.
-// Use Three's native percentage-closer filter. Unlike VSM, this compares the
-// unfiltered shadow depth directly and does not introduce a blurred moment
-// distribution between adjacent voxel surfaces.
-export const NATIVE_WEBGL_SHADOW_MAP_TYPE = THREE.PCFSoftShadowMap;
+// PCFShadowMap uses a fixed native comparison kernel. PCFSoftShadowMap derives
+// fractional sample weights from the moving shadow UV and turns sub-texel
+// directional motion into visible crawling. The fixed kernel is also required
+// for the requested crisp, hard-edged sunlight.
+export const NATIVE_WEBGL_SHADOW_MAP_TYPE = THREE.PCFShadowMap;
 
 type CanvasSyncState = {
   width: number;

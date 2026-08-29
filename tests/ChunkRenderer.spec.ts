@@ -16,7 +16,7 @@ function makeBuffers(positions: number[]): MeshBuffers {
 }
 
 describe('native voxel shadow caster setup', () => {
-  it('uses a depth-only packed-depth offset while preserving the voxel shadow silhouette', () => {
+  it('uses the native depth caster without a displaced shadow silhouette', () => {
     const scene = new THREE.Scene();
     const opaqueMaterial = new THREE.MeshBasicMaterial();
     const transparentMaterial = new THREE.MeshBasicMaterial();
@@ -39,19 +39,7 @@ describe('native voxel shadow caster setup', () => {
     expect(mesh?.castShadow).toBe(true);
     expect(mesh?.receiveShadow).toBe(true);
 
-    const depthMaterial = mesh?.customDepthMaterial;
-    expect(depthMaterial).toBeInstanceOf(THREE.MeshDepthMaterial);
-    const typedDepthMaterial = depthMaterial as THREE.MeshDepthMaterial;
-    expect(typedDepthMaterial.depthPacking).toBe(THREE.RGBADepthPacking);
-
-    const shaderParameters = {
-      vertexShader: 'void main() { vHighPrecisionZW = gl_Position.zw; }',
-      fragmentShader: '',
-      uniforms: {},
-    } as unknown as Parameters<THREE.Material['onBeforeCompile']>[0];
-    typedDepthMaterial.onBeforeCompile(shaderParameters, null as unknown as THREE.WebGLRenderer);
-    expect(shaderParameters.vertexShader).toContain('gl_Position.z += 0.0004 * gl_Position.w;');
-    expect(shaderParameters.vertexShader).toContain('gl_Position.z -= 0.0004 * gl_Position.w;');
+    expect(mesh?.customDepthMaterial).toBeUndefined();
 
     renderer.destroy();
     opaqueMaterial.dispose();

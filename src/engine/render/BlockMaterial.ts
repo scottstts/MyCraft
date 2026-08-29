@@ -59,6 +59,42 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       #include <shadowmap_pars_fragment>
       #include <shadowmask_pars_fragment>
 
+      // Native PCF compares the receiver against one discrete depth texel.
+      // On the steep light-space slopes exposed by voxel walls, adjacent
+      // texels legitimately differ by more depth than a constant bias can
+      // cover, so the self-shadowed triangles appear as diagonal bands. Use
+      // a bounded slope-scale receiver bias for the single directional sun;
+      // unlike a caster displacement, this does not move the shadow silhouette.
+      float getVoxelShadowMask() {
+        float shadow = 1.0;
+        #ifdef USE_SHADOWMAP
+          #if NUM_DIR_LIGHT_SHADOWS > 0
+            DirectionalLightShadow sunShadow = directionalLightShadows[ 0 ];
+            vec4 shadowCoord = vDirectionalShadowCoord[ 0 ];
+            vec3 projectedShadowCoord = shadowCoord.xyz / shadowCoord.w;
+            vec2 shadowDx = dFdx(projectedShadowCoord.xy);
+            vec2 shadowDy = dFdy(projectedShadowCoord.xy);
+            float depthDx = abs(dFdx(projectedShadowCoord.z));
+            float depthDy = abs(dFdy(projectedShadowCoord.z));
+            // Convert screen-space depth change into depth change per shadow
+            // texel (the standard slope-scale depth-bias measurement).
+            float slopeX = depthDx / max(length(shadowDx), 1e-5);
+            float slopeY = depthDy / max(length(shadowDy), 1e-5);
+            float depthSlopePerTexel = max(slopeX, slopeY) / max(min(sunShadow.shadowMapSize.x, sunShadow.shadowMapSize.y), 1.0);
+            float slopeBias = min(0.01, depthSlopePerTexel);
+            shadow = getShadow(
+              directionalShadowMap[ 0 ],
+              sunShadow.shadowMapSize,
+              sunShadow.shadowIntensity,
+              sunShadow.shadowBias - slopeBias,
+              sunShadow.shadowRadius,
+              shadowCoord
+            );
+          #endif
+        #endif
+        return shadow;
+      }
+
       varying vec2 vUv;
       varying vec3 vNormal;
       varying vec3 vWorldPosition;
@@ -216,7 +252,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           // diffuse. The post-process SSAO mask is derived below from the
           // unshadowed lighting, so shadow coverage cannot amplify screen-space
           // AO at cube edges.
-          float shadowFactor = getShadowMask();
+          float shadowFactor = getVoxelShadowMask();
           
           // Apply shadow to diffuse lighting
           // Crisper sun diffuse for stronger, clearer shadows

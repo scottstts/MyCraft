@@ -671,10 +671,10 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   });
   sunController?.setShadowSettings({
     enabled: !isWebGPU,
-    resolution: 2048,
+    resolution: 4096,
     shadowDistance: 300,
-    softness: 1.0,
-    bias: -0.0001,
+    softness: 0.5,
+    bias: -0.001,
     normalBias: 0,
     intensity: 1.0,
   });
