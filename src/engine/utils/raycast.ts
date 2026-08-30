@@ -20,6 +20,8 @@ export interface VoxelRaycastHit {
   t?: number;
 }
 
+export type VoxelRaycastPredicate = (world: World, x: number, y: number, z: number) => boolean;
+
 /** Clamp vector to unit length to avoid overspeed issues. */
 function normalizeSafe(x: number, y: number, z: number): { x: number; y: number; z: number } {
   const len = Math.hypot(x, y, z);
@@ -41,7 +43,8 @@ export function raycastVoxels(
   world: World,
   origin: THREE.Vector3,
   direction: THREE.Vector3,
-  maxDistance: number = INTERACTION.reach
+  maxDistance: number = INTERACTION.reach,
+  predicate?: VoxelRaycastPredicate,
 ): VoxelRaycastHit {
   // Normalize direction
   const dir = normalizeSafe(direction.x, direction.y, direction.z);
@@ -123,9 +126,14 @@ export function raycastVoxels(
     if (t > maxDistance) break;
 
     // Check voxel solidity/selectability at new cell
-    const id = world.getBlock(x, y, z);
-    const def = getBlock(id);
-    const selectable = !!def && (world.isBlockSolid(x, y, z) || def.name === 'grass_tuft');
+    let selectable: boolean;
+    if (predicate) {
+      selectable = predicate(world, x, y, z);
+    } else {
+      const id = world.getBlock(x, y, z);
+      const def = getBlock(id);
+      selectable = !!def && (world.isBlockSolid(x, y, z) || def.name === 'grass_tuft');
+    }
     if (selectable) {
       return {
         hit: true,
@@ -138,4 +146,3 @@ export function raycastVoxels(
 
   return { hit: false };
 }
-

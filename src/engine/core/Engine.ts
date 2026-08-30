@@ -680,13 +680,22 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
 
   // Player controller (movement + gravity + collisions)
   playerController = new PlayerController(camera, world, inputSystem, bounds);
+  const activeCamera = camera;
   playerBody?.setController(playerController);
   // Diagnostic URLs retain their authored camera pose; use the real rig in
   // first person there so the camera is not moved by the gameplay orbit.
   if (diagnosticMode) playerBody?.setFirstPerson(true);
   
   // Selection system (raycast + debug outline). Pass world bounds so selection highlights don't appear outside.
-  selectionSystem = new SelectionSystem(camera, world, scene, bounds);
+  selectionSystem = new SelectionSystem(
+    camera,
+    world,
+    scene,
+    bounds,
+    (target) => playerBody?.isFirstPersonView()
+      ? activeCamera.getWorldPosition(target)
+      : playerController?.getEyePosition(target) ?? activeCamera.getWorldPosition(target),
+  );
   
   // Interaction system (mine/place + re-mesh)
   interactionSystem = new InteractionSystem(

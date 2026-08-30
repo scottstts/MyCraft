@@ -815,6 +815,9 @@ export class PlayerController {
   getHeight(): number { return this.height; }
   getWidth(): number { return this.width; }
 
+  /** Read-only world access for camera collision owned by the visual rig. */
+  getWorld(): World { return this.world; }
+
   isUnderwater(): boolean { return this.underwater; }
 
   getMovementState(): PlayerMovementState {

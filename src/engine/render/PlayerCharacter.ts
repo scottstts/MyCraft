@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { SWING_CYCLE_SECONDS } from '../../config/constants';
 import type { InputSystem } from '../systems/Input';
 import type { PlayerController, PlayerMovementState } from '../systems/PlayerController';
+import { constrainCameraToSolidVoxels } from '../utils/cameraCollision';
 import type { CharacterShadowBox } from './lighting/CharacterShadowBox';
 
 import swingSfxUrl from '../../assets/sounds/sound_effects/swing.mp3';
@@ -165,6 +166,8 @@ const CFG = {
   // preserving the reference orbit distance and character readability.
   thirdPersonShoulderOffset: 0.8,
   thirdPersonAimDistance: 8,
+  cameraCollisionRadius: 0.2,
+  cameraCollisionPadding: 0.04,
   swingDuration: SWING_CYCLE_SECONDS,
 } as const;
 
@@ -218,6 +221,8 @@ export class PlayerCharacter {
   private readonly scratchPosition = new THREE.Vector3();
   private readonly scratchDirection = new THREE.Vector3();
   private readonly scratchTarget = new THREE.Vector3();
+  private readonly scratchCameraCandidate = new THREE.Vector3();
+  private readonly scratchFeetPosition = new THREE.Vector3();
   private readonly scratchAmbient = new THREE.Color();
   private readonly scratchAmbientContribution = new THREE.Color();
   private readonly scratchBaseEmission = new THREE.Color();
@@ -416,6 +421,8 @@ export class PlayerCharacter {
   faceTowards(direction: THREE.Vector3): void {
     if (this.isFirstPerson || direction.lengthSq() < 1e-6) return;
     this.forcedFacingYaw = Math.atan2(-direction.x, -direction.z);
+    this.bodyYaw = this.forcedFacingYaw;
+    this.character.rotation.y = this.bodyYaw;
     this.forcedFacingTime = CFG.swingDuration + 0.18;
   }
 
@@ -478,8 +485,14 @@ export class PlayerCharacter {
     const { yaw, pitch } = input.getOrientation();
 
     if (this.isFirstPerson) {
+      if (state.isMoving) {
+        // Movement owns the first-person body heading. Apply it without a
+        // turn blend so W/A/S/D immediately rotates the rig toward its actual
+        // world-space travel direction while the camera keeps its look yaw.
+        this.bodyYaw = Math.atan2(-state.moveDirection.x, -state.moveDirection.z);
+      }
       let lookDiff = shortestAngle(yaw - this.bodyYaw);
-      if (Math.abs(lookDiff) > MAX_HEAD_TURN) {
+      if (!state.isMoving && Math.abs(lookDiff) > MAX_HEAD_TURN) {
         const excess = lookDiff > 0 ? lookDiff - MAX_HEAD_TURN : lookDiff + MAX_HEAD_TURN;
         this.bodyYaw += excess * Math.min(1, dt * 10);
         lookDiff = shortestAngle(yaw - this.bodyYaw);
@@ -624,11 +637,29 @@ export class PlayerCharacter {
     // at the character rather than giving the player a useful world aim point.
     desiredCamera.x += Math.cos(yaw) * CFG.thirdPersonShoulderOffset;
     desiredCamera.z -= Math.sin(yaw) * CFG.thirdPersonShoulderOffset;
-    desiredCamera.y = Math.max(0.1, desiredCamera.y);
     // Match the reference's responsive orbit follow with a frame-rate
     // independent equivalent of its per-frame 0.4 interpolation.
     const alpha = 1 - Math.exp(-30 * Math.max(0, Math.min(0.1, dt)));
-    camera.position.lerp(desiredCamera, alpha);
+    this.scratchCameraCandidate.copy(camera.position).lerp(desiredCamera, alpha);
+    if (this.controller) {
+      // Keep the orbit center above the character's terrain-contact plane,
+      // including when the camera extends past a cliff into otherwise empty
+      // air. The voxel sweep below handles raised terrain and overhangs.
+      const minimumCameraY = this.controller.getFeetPosition(this.scratchFeetPosition).y
+        + CFG.cameraCollisionRadius;
+      constrainCameraToSolidVoxels(
+        this.controller.getWorld(),
+        this.scratchTarget,
+        this.scratchCameraCandidate,
+        CFG.cameraCollisionRadius,
+        CFG.cameraCollisionPadding,
+        minimumCameraY,
+      );
+    }
+    // Collision is a hard post-follow constraint. Copy the constrained pose
+    // directly so smoothing can never leave the camera under terrain for a
+    // frame while recovering from an invalid orbit position.
+    camera.position.copy(this.scratchCameraCandidate);
     this.scratchDirection.set(
       -Math.sin(yaw) * cosPitch,
       Math.sin(pitch),

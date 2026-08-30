@@ -31,8 +31,6 @@ export class InteractionSystem {
   private onActionDirection: ((direction: THREE.Vector3) => void) | null;
   private readonly actionDirection = new THREE.Vector3();
   private readonly playerPosition = new THREE.Vector3();
-  private readonly actionRayOrigin = new THREE.Vector3();
-  private readonly actionRayDirection = new THREE.Vector3();
 
   private readonly airId: number = 0;
   private readonly waterId: number = getBlockIdByName('water') ?? 5;
@@ -420,21 +418,15 @@ export class InteractionSystem {
 
   private notifyActionDirection(cell: { x: number; y: number; z: number }): void {
     if (!this.onActionDirection) return;
-    // Use the same center ray that selected the block. In third person this
-    // is intentionally independent of the character's current heading: an
-    // action turns the character toward the reticle, never the camera toward
-    // the character. A vertical-looking ray has no horizontal heading, so
-    // use the selected cell as the deterministic fallback in that case.
-    this.selection.getCenterRay(this.actionRayOrigin, this.actionRayDirection);
-    this.actionDirection.copy(this.actionRayDirection).setY(0);
-    if (this.actionDirection.lengthSq() < 1e-6) {
-      const origin = this.playerController?.getEyePosition(this.playerPosition) ?? this.camera.position;
-      this.actionDirection.set(
-        cell.x + 0.5 - origin.x,
-        0,
-        cell.z + 0.5 - origin.z,
-      );
-    }
+    // Selection comes from the exact center-camera ray, while body facing is
+    // owned by the action location. This makes a shoulder camera converge on
+    // the reticle target without rotating the orbit when the body turns.
+    const origin = this.playerController?.getEyePosition(this.playerPosition) ?? this.camera.position;
+    this.actionDirection.set(
+      cell.x + 0.5 - origin.x,
+      0,
+      cell.z + 0.5 - origin.z,
+    );
     if (this.actionDirection.lengthSq() < 1e-6) return;
     this.onActionDirection(this.actionDirection.normalize());
   }
