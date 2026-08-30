@@ -7,7 +7,7 @@
  */
 
 import * as THREE from 'three';
-import { SWING_CYCLE_SECONDS } from '../../config/constants';
+import { PLAYER, SWING_CYCLE_SECONDS } from '../../config/constants';
 import type { InputSystem } from '../systems/Input';
 import type { PlayerController, PlayerMovementState } from '../systems/PlayerController';
 import { constrainCameraToSolidVoxels } from '../utils/cameraCollision';
@@ -16,6 +16,10 @@ import type { CharacterShadowBox } from './lighting/CharacterShadowBox';
 import swingSfxUrl from '../../assets/sounds/sound_effects/swing.mp3';
 
 const MAX_HEAD_TURN = THREE.MathUtils.degToRad(65);
+
+const LEG_LENGTH = 0.75;
+const LEG_PIVOT_Y = 0.65;
+const HEAD_PIVOT_Y = 1.4;
 
 /** Deterministic equivalent of the reference's pixel-texture generator. */
 const TextureGen = {
@@ -161,7 +165,13 @@ const TextureGen = {
 const CFG = {
   torso: { width: 0.5, depth: 0.25, height: 0.75 },
   arm: { width: 0.25, depth: 0.25, length: 0.75 },
-  leg: { width: 0.25, depth: 0.25, length: 0.75 },
+  leg: { width: 0.25, depth: 0.25, length: LEG_LENGTH, pivotY: LEG_PIVOT_Y },
+  // A leg box is centered half its length below the hip pivot, so its static
+  // bottom is pivotY - length. Lift the visual root by the derived amount so
+  // the actual foot bottom coincides with the controller's collision AABB
+  // base. Keeping this derived from the rig datum prevents a second hidden
+  // feet offset if the leg proportions change later.
+  visualFeetLift: LEG_LENGTH - LEG_PIVOT_Y,
   cameraDistance: 3.8,
   // A small shoulder offset keeps the centered reticle on world space while
   // preserving the reference orbit distance and character readability.
@@ -255,7 +265,7 @@ export class PlayerCharacter {
     );
     this.headMesh.position.y = 0.25;
     this.headPivot.name = 'HeadPivot';
-    this.headPivot.position.set(0, 1.4, 0);
+    this.headPivot.position.set(0, HEAD_PIVOT_Y, 0);
     this.headPivot.add(this.headMesh);
 
     this.hairBand = this.createMesh(
@@ -269,7 +279,14 @@ export class PlayerCharacter {
     // The eye is exactly the physical reference anchor: just beyond the
     // authored +Z face, which becomes gameplay -Z after the body correction.
     this.eyeAnchor.name = 'EyeAnchor';
-    this.eyeAnchor.position.set(0, 0.30, 0.26);
+    // The visual root is lifted to align the leg bottoms with the physics
+    // base. Counter-offset the eye anchor so first-person camera height stays
+    // exactly at the controller's physical eye position.
+    this.eyeAnchor.position.set(
+      0,
+      PLAYER.eyeHeight - CFG.visualFeetLift - HEAD_PIVOT_Y,
+      0.26,
+    );
     this.headPivot.add(this.eyeAnchor);
 
     this.torsoMesh = this.createMesh(
@@ -323,25 +340,25 @@ export class PlayerCharacter {
 
     this.leftLeg = new THREE.Group();
     this.leftLeg.name = 'LeftLegPivot';
-    this.leftLeg.position.set(0.13, 0.65, 0);
+    this.leftLeg.position.set(0.13, CFG.leg.pivotY, 0);
     this.leftLeg.add(this.createMesh(
       new THREE.BoxGeometry(CFG.leg.width, CFG.leg.length, CFG.leg.depth),
       pantsMat,
       'LeftLegMesh',
     ));
     const leftLegMesh = this.leftLeg.children[0] as THREE.Mesh;
-    leftLegMesh.position.y = -0.375;
+    leftLegMesh.position.y = -CFG.leg.length / 2;
 
     this.rightLeg = new THREE.Group();
     this.rightLeg.name = 'RightLegPivot';
-    this.rightLeg.position.set(-0.13, 0.65, 0);
+    this.rightLeg.position.set(-0.13, CFG.leg.pivotY, 0);
     this.rightLeg.add(this.createMesh(
       new THREE.BoxGeometry(CFG.leg.width, CFG.leg.length, CFG.leg.depth),
       pantsMat,
       'RightLegMesh',
     ));
     const rightLegMesh = this.rightLeg.children[0] as THREE.Mesh;
-    rightLegMesh.position.y = -0.375;
+    rightLegMesh.position.y = -CFG.leg.length / 2;
 
     this.body.add(
       this.headPivot,
@@ -421,7 +438,14 @@ export class PlayerCharacter {
     this.forcedFacingTime = Math.max(0, this.forcedFacingTime - dt);
 
     this.controller.getFeetPosition(this.scratchPosition);
-    this.character.position.set(this.scratchPosition.x, this.scratchPosition.y, this.scratchPosition.z);
+    // getFeetPosition() is the bottom of the physics AABB. The authored rig's
+    // leg geometry extends 0.10 below its root, so lift only the visual rig;
+    // the eye anchor is counter-offset above to preserve the physical camera.
+    this.character.position.set(
+      this.scratchPosition.x,
+      this.scratchPosition.y + CFG.visualFeetLift,
+      this.scratchPosition.z,
+    );
     this.updateFacing(dt, state);
     this.applyAnimation(dt, state);
 
