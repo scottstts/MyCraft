@@ -40,7 +40,7 @@ import type { WorldSavePayload, SavedChunk, SavedInventory, WorldSaveFile } from
 import { base64FromBytes, signPayload, encryptPayload, SAVE_ENC_ALG, SAVE_SIGNATURE_ALG, SAVE_PUBLIC_KEY_ID } from '../../shared/save';
 import { CHUNK_SIZE as CONST_CHUNK_SIZE } from '../../config/constants';
 import { getInventorySlots } from '../../state/inventory';
-import FirstPersonBody from '../render/FirstPersonBody';
+import PlayerCharacter from '../render/PlayerCharacter';
 import { applyDiagnosticCameraPose, type DiagnosticCameraId } from '../../diagnostics/cameras';
 import { VoxelOccupancyVolume } from '../render/lighting/VoxelOccupancyVolume.js';
 import { VoxelSunShadowPass } from '../render/lighting/VoxelSunShadowPass.js';
@@ -74,8 +74,7 @@ let lastPaused: boolean = false;
 let sfx: SoundEffects | null = null;
 let aerialPerspectiveDistance = 600; // default, updated based on world size
 let playerRigRoot: THREE.Group | null = null;
-let playerBody: FirstPersonBody | null = null;
-let lastMoveActive = false;
+let playerBody: PlayerCharacter | null = null;
 let diagnosticMode = false;
 let diagnosticView: DiagnosticCameraId | null = null;
 let voxelShadowVolumeReported = false;
@@ -281,9 +280,8 @@ function update(dtSeconds: number) {
     if (inputSystem) {
       inputSystem.update();
     }
-    // Feed right-click peeks to body animator; left clicks are driven by InteractionSystem to stay in sync
-    if (playerBody && inputSystem) {
-      if (inputSystem.peekRightClick?.()) playerBody.onSecondaryClick();
+    if (inputSystem?.consumeViewToggle()) {
+      playerBody?.toggleView();
     }
     // Handle number key slot selection (UI side-effect is fine here)
     if (inputSystem) {
@@ -296,14 +294,9 @@ function update(dtSeconds: number) {
     if (playerController) {
       playerController.update(dtSeconds);
     }
-    // Movement edge notifications for body rig
-    if (playerBody && inputSystem) {
-      const mv = inputSystem.getMoveInput?.() || { x: 0, z: 0 };
-      const active = (Math.hypot(mv.x, mv.z) > 0.01) || !!inputSystem.isJumpHeld?.();
-      if (active && !lastMoveActive) playerBody.onMovementInputStart?.();
-      if (!active && lastMoveActive) playerBody.onMovementInputEnd?.();
-      lastMoveActive = !!active;
-    }
+    // Update the character before selection/interaction so the active camera
+    // is already in its current third-/first-person pose for this frame.
+    playerBody?.update(dtSeconds);
     if (selectionSystem) {
       selectionSystem.update();
     }
@@ -315,9 +308,10 @@ function update(dtSeconds: number) {
   if (sfx) {
     sfx.update(dtSeconds, paused, inGame);
   }
-  // Update in-world body rig after movement update, before render
-  if (playerBody && inGame && !paused) {
-    playerBody.update(dtSeconds);
+  // Keep diagnostic camera poses authoritative while still drawing the full
+  // character rig at the corresponding player position.
+  if (playerBody && inGame && !paused && diagnosticMode) {
+    playerBody.update(dtSeconds, false);
   }
   
   // Time-of-day and lighting: pause only when UI paused
@@ -331,6 +325,7 @@ function update(dtSeconds: number) {
     : null;
   if (atmosphereState) {
     sunController?.setAtmosphereLighting(atmosphereState.sunColor, atmosphereState.sunIntensity);
+    playerBody?.setLighting(atmosphereState.skyIrradiance, atmosphereState.starVisibility);
     skyDome?.setAtmosphereState(atmosphereState);
     if (camera) skyDome?.setCameraPosition(camera.position);
   }
@@ -349,8 +344,6 @@ function update(dtSeconds: number) {
     if (grassSystem) grassSystem.setSunUniforms(sdir, atmosphereState.sunColor);
     if (grassSystem) grassSystem.setDayNight(dayLight, atmosphereState.starVisibility * 0.35);
     if (grassSystem) grassSystem.setSkyAmbient(atmosphereState.skyIrradiance);
-    if (playerBody) playerBody.setLighting(sdir, atmosphereState.sunColor, dayLight, atmosphereState.starVisibility * 0.35);
-    if (playerBody) playerBody.setSkyAmbient(atmosphereState.skyIrradiance);
   }
 
   // Update water materials with ambient lighting to match day/night cycle.
@@ -406,6 +399,7 @@ function update(dtSeconds: number) {
   // Update subsystems here (physics, input, etc.)
   if (composer && camera && sunController && atmosphereState) {
     const sdir = sunController.getSunDirection();
+    voxelSunShadowPass?.setCharacterShadowBoxes(playerBody?.getShadowBoxes() ?? []);
     composer.update(camera, sdir, atmosphereState.sunColor, atmosphereState);
     // Feed the same bounded frame delta used by the simulation into the
     // composer so any time-based post effects remain synchronized with the
@@ -517,8 +511,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   playerRigRoot = new THREE.Group();
   playerRigRoot.name = 'PlayerRigRoot';
   scene.add(playerRigRoot);
-  playerBody = new FirstPersonBody();
-  playerBody.init(playerRigRoot, camera);
+  playerBody = new PlayerCharacter();
 
   // Initialize the single active post-processing pipeline.
   const canvasSize = renderer.getCanvasSize();
@@ -570,6 +563,12 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       // If paused, remain inGame so UI can handle clicks
     }
   });
+  // InputSystem must exist before the character is initialized. The character
+  // owns the active camera follow, so passing the earlier null module value
+  // would leave both the body and camera frozen at their initial pose.
+  if (playerBody && playerRigRoot && camera) {
+    playerBody.init(playerRigRoot, camera, inputSystem);
+  }
 
   // Determine world size (total chunks -> NxN grid)
   const totalChunks = Math.max(1, Math.floor(useUIStore.getState().chunkCount || 9));
@@ -681,12 +680,24 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
 
   // Player controller (movement + gravity + collisions)
   playerController = new PlayerController(camera, world, inputSystem, bounds);
+  playerBody?.setController(playerController);
+  // Diagnostic URLs retain their authored camera pose; use the real rig in
+  // first person there so the camera is not moved by the gameplay orbit.
+  if (diagnosticMode) playerBody?.setFirstPerson(true);
   
   // Selection system (raycast + debug outline). Pass world bounds so selection highlights don't appear outside.
   selectionSystem = new SelectionSystem(camera, world, scene, bounds);
   
   // Interaction system (mine/place + re-mesh)
-  interactionSystem = new InteractionSystem(camera, world, inputSystem, selectionSystem, world.chunkPipeline, playerController);
+  interactionSystem = new InteractionSystem(
+    camera,
+    world,
+    inputSystem,
+    selectionSystem,
+    world.chunkPipeline,
+    playerController,
+    (direction) => playerBody?.faceTowards(direction),
+  );
   // Decorative grass system (instanced billboards). Its direct sun visibility
   // uses the same screen-space voxel result as terrain; the caster side uses
   // the matching crossed-card proxy inside VoxelSunShadowPass.
@@ -698,7 +709,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   }
   
   // Sound effects
-  sfx = new SoundEffects(world, camera, inputSystem, playerController);
+  sfx = new SoundEffects(world, inputSystem, playerController);
   
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', () => {

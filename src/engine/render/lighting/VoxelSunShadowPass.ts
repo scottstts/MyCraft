@@ -12,6 +12,7 @@
 
 import * as THREE from 'three';
 import { VoxelOccupancyVolume, VOXEL_SHADOW_BRICK_SIZE } from './VoxelOccupancyVolume.js';
+import type { CharacterShadowBox } from './CharacterShadowBox';
 
 const MAX_SHADER_STEPS = 512;
 // The real sun's angular radius is ~0.00465 rad (0.266 degrees). A restrained
@@ -19,6 +20,7 @@ const MAX_SHADER_STEPS = 512;
 // remaining a narrow outdoor-sun transition rather than a point-light blur.
 const SOLAR_ANGULAR_RADIUS = 0.00465;
 const SUN_ANGULAR_RADIUS = SOLAR_ANGULAR_RADIUS * 2.25;
+const MAX_CHARACTER_SHADOW_BOXES = 32;
 
 export interface VoxelSunShadowDiagnostics {
   enabled: boolean;
@@ -26,6 +28,7 @@ export interface VoxelSunShadowDiagnostics {
   resolution: { width: number; height: number };
   maxDistance: number;
   maxSteps: number;
+  characterShadowBoxes: number;
   sunDirection: { x: number; y: number; z: number };
   volume: ReturnType<VoxelOccupancyVolume['getDiagnostics']>;
 }
@@ -46,6 +49,19 @@ export class VoxelSunShadowPass {
   private maxDistance = 300;
   private maxSteps = MAX_SHADER_STEPS;
   private supported: boolean;
+  private readonly characterBoxInverse = Array.from(
+    { length: MAX_CHARACTER_SHADOW_BOXES },
+    () => new THREE.Matrix4(),
+  );
+  private readonly characterBoxCenters = Array.from(
+    { length: MAX_CHARACTER_SHADOW_BOXES },
+    () => new THREE.Vector3(),
+  );
+  private readonly characterBoxHalfSizes = Array.from(
+    { length: MAX_CHARACTER_SHADOW_BOXES },
+    () => new THREE.Vector3(),
+  );
+  private characterBoxCount = 0;
 
   constructor(renderer: THREE.WebGLRenderer, width: number, height: number, volume: VoxelOccupancyVolume) {
     this.renderer = renderer;
@@ -84,6 +100,10 @@ export class VoxelSunShadowPass {
         uMaxSteps: { value: this.maxSteps },
         uSunAngularRadius: { value: SUN_ANGULAR_RADIUS },
         uEnabled: { value: true },
+        uCharacterBoxCount: { value: 0 },
+        uCharacterBoxInverse: { value: this.characterBoxInverse },
+        uCharacterBoxCenters: { value: this.characterBoxCenters },
+        uCharacterBoxHalfSizes: { value: this.characterBoxHalfSizes },
       },
       vertexShader: `
         out vec2 vUv;
@@ -112,6 +132,10 @@ export class VoxelSunShadowPass {
         uniform int uMaxSteps;
         uniform float uSunAngularRadius;
         uniform bool uEnabled;
+        uniform int uCharacterBoxCount;
+        uniform mat4 uCharacterBoxInverse[${MAX_CHARACTER_SHADOW_BOXES}];
+        uniform vec3 uCharacterBoxCenters[${MAX_CHARACTER_SHADOW_BOXES}];
+        uniform vec3 uCharacterBoxHalfSizes[${MAX_CHARACTER_SHADOW_BOXES}];
 
         in vec2 vUv;
         layout(location = 0) out vec4 outColor;
@@ -230,8 +254,35 @@ export class VoxelSunShadowPass {
           return result;
         }
 
+        bool characterBoxHit(vec3 origin, vec3 direction, int index, float maxTravel) {
+          mat4 inverseBox = uCharacterBoxInverse[index];
+          vec3 localOrigin = (inverseBox * vec4(origin, 1.0)).xyz - uCharacterBoxCenters[index];
+          vec3 localDirection = (inverseBox * vec4(direction, 0.0)).xyz;
+          vec3 safeDirection = vec3(
+            abs(localDirection.x) < 1e-5 ? (localDirection.x < 0.0 ? -1e-5 : 1e-5) : localDirection.x,
+            abs(localDirection.y) < 1e-5 ? (localDirection.y < 0.0 ? -1e-5 : 1e-5) : localDirection.y,
+            abs(localDirection.z) < 1e-5 ? (localDirection.z < 0.0 ? -1e-5 : 1e-5) : localDirection.z
+          );
+          vec3 t0 = (-uCharacterBoxHalfSizes[index] - localOrigin) / safeDirection;
+          vec3 t1 = ( uCharacterBoxHalfSizes[index] - localOrigin) / safeDirection;
+          vec3 tMin = min(t0, t1);
+          vec3 tMax = max(t0, t1);
+          float entry = max(max(tMin.x, tMin.y), tMin.z);
+          float exit = min(min(tMax.x, tMax.y), tMax.z);
+          return exit >= max(entry, 0.004) && entry <= maxTravel;
+        }
+
+        bool traceCharacterBoxes(vec3 receiverWorld, vec3 direction) {
+          for (int index = 0; index < ${MAX_CHARACTER_SHADOW_BOXES}; index++) {
+            if (index >= uCharacterBoxCount) break;
+            if (characterBoxHit(receiverWorld, direction, index, uMaxDistance)) return true;
+          }
+          return false;
+        }
+
         float traceVisibility(vec3 receiverWorld, vec3 rayDirection) {
           vec3 direction = normalize(rayDirection);
+          if (traceCharacterBoxes(receiverWorld, direction)) return 0.0;
           vec3 directionSafe = vec3(
             abs(direction.x) < 1e-5 ? (direction.x < 0.0 ? -1e-5 : 1e-5) : direction.x,
             abs(direction.y) < 1e-5 ? (direction.y < 0.0 ? -1e-5 : 1e-5) : direction.y,
@@ -371,6 +422,24 @@ export class VoxelSunShadowPass {
     (this.quadMaterial.uniforms.uSunDirection.value as THREE.Vector3).copy(this.sunDirection);
   }
 
+  /** Update the animated full-character caster used by terrain receivers. */
+  setCharacterShadowBoxes(boxes: ReadonlyArray<CharacterShadowBox>): void {
+    this.characterBoxCount = Math.min(MAX_CHARACTER_SHADOW_BOXES, boxes.length);
+    for (let index = 0; index < MAX_CHARACTER_SHADOW_BOXES; index += 1) {
+      const source = boxes[index];
+      if (index < this.characterBoxCount && source) {
+        this.characterBoxInverse[index].copy(source.inverseMatrix);
+        this.characterBoxCenters[index].copy(source.center);
+        this.characterBoxHalfSizes[index].copy(source.halfSize);
+      } else {
+        this.characterBoxInverse[index].identity();
+        this.characterBoxCenters[index].set(0, 0, 0);
+        this.characterBoxHalfSizes[index].set(0, 0, 0);
+      }
+    }
+    this.quadMaterial.uniforms.uCharacterBoxCount.value = this.characterBoxCount;
+  }
+
   setSettings(settings: { enabled?: boolean; maxDistance?: number; maxSteps?: number }): void {
     if (settings.enabled !== undefined) this.enabled = !!settings.enabled;
     if (settings.maxDistance !== undefined) this.maxDistance = THREE.MathUtils.clamp(settings.maxDistance, 1, 2000);
@@ -403,6 +472,7 @@ export class VoxelSunShadowPass {
       resolution: { width: this.resolution.x, height: this.resolution.y },
       maxDistance: this.maxDistance,
       maxSteps: this.maxSteps,
+      characterShadowBoxes: this.characterBoxCount,
       sunDirection: { x: this.sunDirection.x, y: this.sunDirection.y, z: this.sunDirection.z },
       volume: this.volume.getDiagnostics(),
     };

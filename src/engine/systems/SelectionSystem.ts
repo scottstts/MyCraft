@@ -27,6 +27,8 @@ export class SelectionSystem {
 
   // Debug visualization
   private boxMesh: THREE.LineSegments | null = null;
+  private readonly rayOrigin = new THREE.Vector3();
+  private readonly rayDirection = new THREE.Vector3();
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -44,10 +46,24 @@ export class SelectionSystem {
     this.scene.add(this.boxMesh);
   }
 
+  /**
+   * Read the exact world-space ray through the viewport center. Both the
+   * selection pass and action-facing logic use this so the reticle never
+   * disagrees with the block that gameplay will affect.
+   */
+  getCenterRay(origin: THREE.Vector3, direction: THREE.Vector3): void {
+    this.camera.updateMatrixWorld(true);
+    this.camera.getWorldPosition(origin);
+    this.camera.getWorldDirection(direction);
+  }
+
   update(): void {
-    // Compute forward direction from camera
-    const dir = new THREE.Vector3(0, 0, -1).applyEuler(this.camera.rotation).normalize();
-    const origin = this.camera.position;
+    // Derive the ray from the camera's actual world transform. This is the
+    // exact center-of-viewport ray used by the screen crosshair, including the
+    // third-person shoulder orbit and any camera parent transform.
+    this.getCenterRay(this.rayOrigin, this.rayDirection);
+    const dir = this.rayDirection;
+    const origin = this.rayOrigin;
 
     const hit = raycastVoxels(this.world, origin, dir, this.reach);
 
@@ -107,4 +123,3 @@ export class SelectionSystem {
     return lines;
   }
 }
-

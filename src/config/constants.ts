@@ -11,6 +11,9 @@ export const CHUNK_SIZE = { x: 48, y: 96, z: 48 } as const;
 export const PLAYER = {
   height: 1.8,
   width: 0.6,
+  // Matches the eye anchor in ref/character.html. The visual character's
+  // feet sit at the physics base while the eye sits at 1.7 blocks.
+  eyeHeight: 1.7,
   speed: {
     walk: 4,
     sprint: 6,

@@ -1,5 +1,3 @@
-import type * as THREE from 'three'
-import { PLAYER } from '../../config/constants'
 import { WATER_LEVEL } from '../world/TerrainGenerator'
 import { getBlockIdByName } from '../world/blocks/BlockRegistry'
 import type { World } from '../world/World'
@@ -77,7 +75,6 @@ class OneShotLooper {
 
 export class SoundEffects {
   private world: World
-  private camera: THREE.PerspectiveCamera
   private input: InputSystem
   private player: PlayerController
 
@@ -99,14 +96,14 @@ export class SoundEffects {
   private oceanVolCurrent = 0 // smoothed volume
   private readonly waterId: number = getBlockIdByName('water') ?? 5
 
-  constructor(world: World, camera: THREE.PerspectiveCamera, input: InputSystem, player: PlayerController) {
+  constructor(world: World, input: InputSystem, player: PlayerController) {
     this.world = world
-    this.camera = camera
     this.input = input
     this.player = player
-    this.lastX = camera.position.x
-    this.lastY = camera.position.y
-    this.lastZ = camera.position.z
+    const position = player.getEyePosition()
+    this.lastX = position.x
+    this.lastY = position.y
+    this.lastZ = position.z
   }
 
   setVolume(v: number) {
@@ -175,17 +172,19 @@ export class SoundEffects {
       // Ocean follows same pause logic as BG music: pause when game paused/not in game
       this.setLoopPlaying(this.oceanLoop, false)
       // Update previous markers but do not trigger landing while paused
-      this.lastX = this.camera.position.x
-      this.lastY = this.camera.position.y
-      this.lastZ = this.camera.position.z
+      const position = this.player.getEyePosition()
+      this.lastX = position.x
+      this.lastY = position.y
+      this.lastZ = position.z
       this.lastGrounded = this.player.isGrounded()
       return
     }
 
     // Movement magnitude on XZ
-    const dx = this.camera.position.x - this.lastX
-    const dz = this.camera.position.z - this.lastZ
-    const dy = this.camera.position.y - this.lastY
+    const position = this.player.getEyePosition()
+    const dx = position.x - this.lastX
+    const dz = position.z - this.lastZ
+    const dy = position.y - this.lastY
     const speedXZ = dtSeconds > 0 ? Math.hypot(dx, dz) / dtSeconds : 0
 
     const grounded = this.player.isGrounded()
@@ -235,9 +234,9 @@ export class SoundEffects {
       this.playOneShot(footstepUrl, this.sfxVolume)
     }
 
-    this.lastX = this.camera.position.x
-    this.lastY = this.camera.position.y
-    this.lastZ = this.camera.position.z
+    this.lastX = position.x
+    this.lastY = position.y
+    this.lastZ = position.z
     this.lastGrounded = grounded
   }
 
@@ -264,8 +263,9 @@ export class SoundEffects {
 
   // Ray-sample around the player to estimate distance to ocean surface
   private sampleOceanProximity(): number {
-    const px = this.camera.position.x
-    const pz = this.camera.position.z
+    const position = this.player.getEyePosition()
+    const px = position.x
+    const pz = position.z
     const WATER_ID = 5
 
     // Cast rays in multiple directions, stepping outward until we find WATER at surface level
@@ -318,15 +318,16 @@ export class SoundEffects {
 
   private isTouchingWaterSurface(): boolean {
     // Player AABB
-    const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1)
-    const halfWidth = PLAYER.width / 2
-    const baseY = this.camera.position.y - eyeHeight
-    const minX = this.camera.position.x - halfWidth
-    const maxX = this.camera.position.x + halfWidth
-    const minZ = this.camera.position.z - halfWidth
-    const maxZ = this.camera.position.z + halfWidth
+    const eyeHeight = this.player.getEyeHeight()
+    const halfWidth = this.player.getWidth() / 2
+    const position = this.player.getEyePosition()
+    const baseY = position.y - eyeHeight
+    const minX = position.x - halfWidth
+    const maxX = position.x + halfWidth
+    const minZ = position.z - halfWidth
+    const maxZ = position.z + halfWidth
     const minY = baseY
-    const maxY = baseY + PLAYER.height
+    const maxY = baseY + this.player.getHeight()
 
     // Y-slab intersection with water surface layer [WATER_LEVEL, WATER_LEVEL+1)
     if (maxY <= WATER_LEVEL || minY >= WATER_LEVEL + 1) return false
@@ -348,16 +349,17 @@ export class SoundEffects {
   // Eyes/head below water surface: underwater if there's unobstructed water above OR literal water at head,
   // otherwise rely on flooded-air connectivity. This avoids triggering underwater in sealed tunnels under water.
   private isEyesInWater(): boolean {
-    const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1)
-    const headY = this.camera.position.y + (PLAYER.height - eyeHeight)
+    const eyeHeight = this.player.getEyeHeight()
+    const position = this.player.getEyePosition()
+    const headY = position.y + (this.player.getHeight() - eyeHeight)
     // Above or at the surface → not underwater for audio
     if (headY >= WATER_LEVEL + 1.0) return false
 
     const y = Math.floor(headY)
-    const half = PLAYER.width / 2
+    const half = this.player.getWidth() / 2
     const r = Math.min(0.18, half * 0.9)
-    const cx = this.camera.position.x
-    const cz = this.camera.position.z
+    const cx = position.x
+    const cz = position.z
     const samples: Array<[number, number]> = [[0,0],[ r,0],[-r,0],[0,r],[0,-r]]
 
     for (const [ox, oz] of samples) {
@@ -380,15 +382,16 @@ export class SoundEffects {
 
   // Eyes/head inside flooded air check (underwater volume) for audio
   private isEyesInFloodedAir(): boolean {
-    const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1)
-    const headY = this.camera.position.y + (PLAYER.height - eyeHeight)
+    const eyeHeight = this.player.getEyeHeight()
+    const position = this.player.getEyePosition()
+    const headY = position.y + (this.player.getHeight() - eyeHeight)
     // If head is at or above water top, not underwater
     if (headY >= WATER_LEVEL + 1.0) return false
     const y = Math.floor(headY)
-    const half = PLAYER.width / 2
+    const half = this.player.getWidth() / 2
     const r = Math.min(0.18, half * 0.9)
-    const cx = this.camera.position.x
-    const cz = this.camera.position.z
+    const cx = position.x
+    const cz = position.z
     const samples: Array<[number, number]> = [[0,0],[ r,0],[-r,0],[0,r],[0,-r]]
     for (const [ox, oz] of samples) {
       const x = Math.floor(cx + ox)

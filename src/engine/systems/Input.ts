@@ -1,6 +1,6 @@
 /**
  * Module: engine/systems/Input
- * Purpose: Handle pointer lock and mouse look (yaw/pitch) for first-person camera
+ * Purpose: Handle pointer lock, shared orbit/FPS look, and gameplay input
  * Callers: Engine creates an instance and calls update() each frame; destroyed on stop()
  * Invariants: No React imports; only interacts with provided canvas and camera
  */
@@ -11,7 +11,7 @@ export class InputSystem {
   private canvas: HTMLCanvasElement;
   private camera: THREE.PerspectiveCamera;
   private isPointerLocked: boolean = false;
-  private readonly mouseSensitivity: number = 0.002;
+  private readonly mouseSensitivity: number = 0.0022;
   private onPointerLockChangedCallback: ((locked: boolean) => void) | null = null;
 
   // Yaw (rotate around Y axis) and Pitch (rotate around X axis) in radians
@@ -39,6 +39,7 @@ export class InputSystem {
   private leftMouseHeld: boolean = false;
   private numSlotQueued: number | null = null;
   private pauseToggleQueued: boolean = false;
+  private viewToggleQueued: boolean = false;
 
   constructor(canvas: HTMLCanvasElement, camera: THREE.PerspectiveCamera) {
     this.canvas = canvas;
@@ -69,7 +70,8 @@ export class InputSystem {
    */
   update(): void {
     // Clamp pitch to avoid flipping (±89 degrees)
-    const maxPitch = THREE.MathUtils.degToRad(89);
+    // The reference camera stops just short of a vertical flip.
+    const maxPitch = Math.PI / 2.05;
     if (this.pitchRadians > maxPitch) this.pitchRadians = maxPitch;
     if (this.pitchRadians < -maxPitch) this.pitchRadians = -maxPitch;
 
@@ -180,6 +182,11 @@ export class InputSystem {
         this.numSlotQueued = parseInt(e.code.slice(-1), 10) - 1; break;
       case 'KeyP':
         this.pauseToggleQueued = true; break;
+      case 'KeyV':
+        // View changes are edge-triggered so key repeat cannot bounce between
+        // first- and third-person while the key is held.
+        if (!e.repeat) this.viewToggleQueued = true;
+        break;
       default:
         break;
     }
@@ -285,6 +292,15 @@ export class InputSystem {
   consumePauseToggle(): boolean {
     if (this.pauseToggleQueued) {
       this.pauseToggleQueued = false;
+      return true;
+    }
+    return false;
+  }
+
+  /** Edge-triggered first/third-person view toggle. */
+  consumeViewToggle(): boolean {
+    if (this.viewToggleQueued) {
+      this.viewToggleQueued = false;
       return true;
     }
     return false;

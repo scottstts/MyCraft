@@ -5,7 +5,7 @@
  * Invariants: No React imports; interacts with World and ChunkPipeline only
  */
 
-import type * as THREE from 'three';
+import * as THREE from 'three';
 import type { World } from '../world/World';
 import { InputSystem } from './Input';
 import { SelectionSystem } from './SelectionSystem';
@@ -28,6 +28,11 @@ export class InteractionSystem {
   private selection: SelectionSystem;
   private pipeline: ChunkPipeline;
   private playerController: PlayerController | null;
+  private onActionDirection: ((direction: THREE.Vector3) => void) | null;
+  private readonly actionDirection = new THREE.Vector3();
+  private readonly playerPosition = new THREE.Vector3();
+  private readonly actionRayOrigin = new THREE.Vector3();
+  private readonly actionRayDirection = new THREE.Vector3();
 
   private readonly airId: number = 0;
   private readonly waterId: number = getBlockIdByName('water') ?? 5;
@@ -54,7 +59,8 @@ export class InteractionSystem {
     input: InputSystem,
     selection: SelectionSystem,
     pipeline: ChunkPipeline,
-    playerController?: PlayerController
+    playerController?: PlayerController,
+    onActionDirection?: (direction: THREE.Vector3) => void,
   ) {
     this.camera = camera;
     this.world = world;
@@ -62,6 +68,7 @@ export class InteractionSystem {
     this.selection = selection;
     this.pipeline = pipeline;
     this.playerController = playerController ?? null;
+    this.onActionDirection = onActionDirection ?? null;
   }
 
   update(): void {
@@ -75,11 +82,12 @@ export class InteractionSystem {
         const bodyBusy = (window as WindowWithBodyHooks).__isBodySwingActive?.() ?? false;
         const canStart = !bodyBusy && (this.lastSwingStartAt === 0 || (nowSec - this.lastSwingStartAt) >= SWING_CYCLE_SECONDS);
         if (canStart) {
+          const sel = this.selection.getSelection();
+          if (sel.hit && sel.hitCell) this.notifyActionDirection(sel.hitCell);
           // Start swing and record cadence timestamp
           (window as WindowWithBodyHooks).__bodyPrimary?.();
           this.lastSwingStartAt = nowSec;
 
-          const sel = this.selection.getSelection();
           if (sel.hit && sel.hitCell) {
             const { x, y, z } = sel.hitCell;
             const blockId = this.world.getBlock(x, y, z);
@@ -105,7 +113,7 @@ export class InteractionSystem {
                   (window as WindowWithSfxHooks).__sfxBreak?.();
                 }
                 // Remove the block
-              this.world.setBlock(x, y, z, this.airId);
+                this.world.setBlock(x, y, z, this.airId);
                 // Water surface edge-fill: if this cell is at water surface level, open to air above,
                 // and adjacent to water at the same level, immediately fill with water.
                 if (wasSolid && this.shouldFillWithWater(x, y, z)) {
@@ -144,14 +152,16 @@ export class InteractionSystem {
           const placeId = getSelectedPlacementBlockId();
           const permission = this.evaluatePlacement(x, y, z, placeId ?? undefined);
           if (permission.canPlace) {
-            const placeId = getSelectedPlacementBlockId();
-            if (placeId !== null && consumeOneFromSelected()) {
+            const selectedPlaceId = getSelectedPlacementBlockId();
+            if (selectedPlaceId !== null && consumeOneFromSelected()) {
+              this.notifyActionDirection({ x, y, z });
+              (window as WindowWithBodyHooks).__bodySecondary?.();
               if (permission.elevatePlayer) {
                 // Smooth visual step: start a short tween from old to new height
-                this.camera.position.y += 1;
-                this.playerController?.startElevationTween(1);
+                if (this.playerController) this.playerController.elevate(1);
+                else this.camera.position.y += 1;
               }
-              this.world.setBlock(x, y, z, placeId);
+              this.world.setBlock(x, y, z, selectedPlaceId);
               this.remeshAffectedChunks(x, y, z);
               (window as WindowWithSfxHooks).__sfxPlace?.();
             }
@@ -354,14 +364,16 @@ export class InteractionSystem {
       }
     }
 
-    // Compute player AABB from camera position and PLAYER dimensions
-    const halfWidth = PLAYER.width / 2;
-    const eyeHeight = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1);
-    const cam = this.camera.position;
+    // Compute player AABB from the independent physics position. In
+    // third-person view the camera can be several blocks away.
+    const halfWidth = (this.playerController?.getWidth() ?? PLAYER.width) / 2;
+    const eyeHeight = this.playerController?.getEyeHeight() ?? PLAYER.eyeHeight;
+    const playerHeight = this.playerController?.getHeight() ?? PLAYER.height;
+    const cam = this.playerController?.getEyePosition(this.playerPosition) ?? this.camera.position;
     const playerMinX = cam.x - halfWidth;
     const playerMaxX = cam.x + halfWidth;
     const playerMinY = cam.y - eyeHeight;
-    const playerMaxY = playerMinY + PLAYER.height;
+    const playerMaxY = playerMinY + playerHeight;
     const playerMinZ = cam.z - halfWidth;
     const playerMaxZ = cam.z + halfWidth;
 
@@ -397,13 +409,34 @@ export class InteractionSystem {
       // Test one-block upward headroom for the player's AABB
       const newBaseY = baseY + 1;
       const newMinY = newBaseY;
-      const newMaxY = newMinY + PLAYER.height;
+      const newMaxY = newMinY + playerHeight;
       if (!this.aabbIntersectsSolid(playerMinX, newMinY, playerMinZ, playerMaxX, newMaxY, playerMaxZ)) {
         return { canPlace: true, elevatePlayer: true };
       }
     }
 
     return { canPlace: false, elevatePlayer: false };
+  }
+
+  private notifyActionDirection(cell: { x: number; y: number; z: number }): void {
+    if (!this.onActionDirection) return;
+    // Use the same center ray that selected the block. In third person this
+    // is intentionally independent of the character's current heading: an
+    // action turns the character toward the reticle, never the camera toward
+    // the character. A vertical-looking ray has no horizontal heading, so
+    // use the selected cell as the deterministic fallback in that case.
+    this.selection.getCenterRay(this.actionRayOrigin, this.actionRayDirection);
+    this.actionDirection.copy(this.actionRayDirection).setY(0);
+    if (this.actionDirection.lengthSq() < 1e-6) {
+      const origin = this.playerController?.getEyePosition(this.playerPosition) ?? this.camera.position;
+      this.actionDirection.set(
+        cell.x + 0.5 - origin.x,
+        0,
+        cell.z + 0.5 - origin.z,
+      );
+    }
+    if (this.actionDirection.lengthSq() < 1e-6) return;
+    this.onActionDirection(this.actionDirection.normalize());
   }
 
   /** Test if an AABB intersects any solid blocks in the world */

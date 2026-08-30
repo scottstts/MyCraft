@@ -5,6 +5,7 @@
  */
 
 import { createNoise2D } from 'simplex-noise';
+import { PLAYER } from '../../config/constants';
 
 // Must roughly mirror generator.worker.ts island configuration
 export const WATER_LEVEL = 42; // keep in sync with generator.worker.ts
@@ -153,7 +154,11 @@ export function getHeightAtPosition(x: number, z: number, seed: number, worldRad
 }
 
 /**
- * Find a suitable spawn position above ground on the island
+ * Find a suitable player eye position on the island.
+ *
+ * The returned Y value is already at the player's eye height above the top
+ * terrain block. Keeping the spawn on the surface avoids the old startup
+ * drop and gives both the controller and character the same initial pose.
  */
 export function findSpawnPosition(seed: number, spawnX = 0, spawnZ = 0, worldRadius?: number): { x: number; y: number; z: number } {
   // Try to find a good spawn location on the island, starting from the requested position
@@ -189,11 +194,12 @@ export function findSpawnPosition(seed: number, spawnX = 0, spawnZ = 0, worldRad
     }
   }
   
-  // Spawn well above the terrain to avoid rendering issues
-  // The player will fall down to the surface via gravity
+  // The terrain height is the occupied block coordinate, so the walkable
+  // surface is one block above it. Return the eye position, not a temporary
+  // high camera position that needs to fall through the world.
   return {
     x: bestSpawn.x,
-    y: bestSpawn.height + 15, // Spawn 15 blocks above ground for safety
+    y: bestSpawn.height + 1 + PLAYER.eyeHeight,
     z: bestSpawn.z
   };
 }

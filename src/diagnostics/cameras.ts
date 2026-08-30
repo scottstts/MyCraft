@@ -38,7 +38,7 @@ export interface DiagnosticCameraPose {
   pitch: number;
 }
 
-const PLAYER_EYE_HEIGHT = Math.min(PLAYER.height * 0.9, PLAYER.height - 0.1);
+const PLAYER_EYE_HEIGHT = PLAYER.eyeHeight;
 
 /** The only hostnames on which the diagnostics route is accepted. */
 export function isLocalDiagnosticsHost(hostname: string): boolean {
