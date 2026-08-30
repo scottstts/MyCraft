@@ -99,11 +99,16 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uUnderwaterFogStrength: { value: 0.72 },
         tSceneColor: { value: null },
         tSceneDepth: { value: null },
+        tSunVisibility: { value: null },
         uHasSceneColor: { value: 0 },
         uHasSceneDepth: { value: 0 },
+        uHasSunVisibility: { value: 0 },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uCameraNear: { value: 0.1 },
         uCameraFar: { value: 1024.0 },
+        uProjectionMatrix: { value: new THREE.Matrix4() },
+        uProjectionMatrixInverse: { value: new THREE.Matrix4() },
+        uViewMatrixInverse: { value: new THREE.Matrix4() },
         uCameraUnderwater: { value: false },
         uDebugMode: { value: 0 },
       },
@@ -114,6 +119,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uWaveAmp;
         uniform float uWaveChop;
         uniform float uWaveSpeed;
+        uniform vec2 uResolution;
         uniform bool uUseWorldUV;
         uniform float uTileScale;
         ${waveDeclarations}
@@ -137,15 +143,19 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           return sqrt(max(gravityTerm + capillaryTerm, 0.0)) * speed * uWaveSpeed;
         }
 
-        vec3 oceanDisplacement(vec2 xz, float time) {
+        vec3 oceanDisplacement(vec3 worldPosition, float time) {
+          vec2 xz = worldPosition.xz;
           vec3 displaced = vec3(0.0);
-          vec2 warpedXZ = xz + oceanDomainWarp(xz, time);
+          vec4 baseView = viewMatrix * vec4(worldPosition, 1.0);
+          float vertexFootprint = 2.0 * max(-baseView.z, 0.0) /
+            max(projectionMatrix[1][1] * uResolution.y, 1.0);
           ${Array.from({ length: OCEAN_WAVES.length }, (_, index) => `
             {
               float k = 6.28318530718 / OCEAN_WAVE_LENGTH_${index};
               float omega = oceanOmega(k, OCEAN_WAVE_SPEED_${index});
-              float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, warpedXZ) - omega * time + OCEAN_WAVE_PHASE_${index};
-              float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * oceanWaveGroupEnvelope(warpedXZ, time, float(${index})) * min(uWaveAmp, 1.0);
+              float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, xz) - omega * time + OCEAN_WAVE_PHASE_${index};
+              float waveLod = 1.0 - smoothstep(0.35, 1.20, vertexFootprint * k);
+              float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * min(uWaveAmp, 1.0) * waveLod;
               float c = cos(phase);
               displaced.xz += OCEAN_WAVE_DIRECTION_${index} * OCEAN_WAVE_STEEPNESS_${index} * amplitude * uWaveChop * c;
               displaced.y += amplitude * sin(phase);
@@ -159,7 +169,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec4 baseWorld = modelMatrix * vec4(position, 1.0);
           vec3 displacedWorld = baseWorld.xyz;
           vec2 baseXZ = uUseWorldUV ? baseWorld.xz : baseWorld.xz * uTileScale;
-          if (uOceanMode) displacedWorld += oceanDisplacement(baseXZ, uTime);
+          if (uOceanMode) displacedWorld += oceanDisplacement(baseWorld.xyz, uTime);
 
           vBaseWorld = baseWorld.xyz;
           vWorld = displacedWorld;
@@ -212,11 +222,16 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform float uUnderwaterFogStrength;
         uniform sampler2D tSceneColor;
         uniform sampler2D tSceneDepth;
+        uniform sampler2D tSunVisibility;
         uniform int uHasSceneColor;
         uniform int uHasSceneDepth;
+        uniform int uHasSunVisibility;
         uniform vec2 uResolution;
         uniform float uCameraNear;
         uniform float uCameraFar;
+        uniform mat4 uProjectionMatrix;
+        uniform mat4 uProjectionMatrixInverse;
+        uniform mat4 uViewMatrixInverse;
         uniform bool uCameraUnderwater;
         uniform int uDebugMode;
 
@@ -277,23 +292,21 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float jzz = 1.0;
           float phaseEnergy = 0.0;
           float totalAmplitude = 0.0;
-          vec2 warpedXZ = xz + oceanDomainWarp(xz, time);
-          vec2 dWarpDx;
-          vec2 dWarpDz;
-          oceanDomainWarpPartials(xz, time, dWarpDx, dWarpDz);
+          float footprint = max(length(dFdx(vWorld.xz)), length(dFdy(vWorld.xz)));
           ${Array.from({ length: OCEAN_WAVES.length }, (_, index) => `
             {
               float k = 6.28318530718 / OCEAN_WAVE_LENGTH_${index};
               float omega = oceanOmega(k, OCEAN_WAVE_SPEED_${index});
-              float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, warpedXZ) - omega * time + OCEAN_WAVE_PHASE_${index};
-              float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * oceanWaveGroupEnvelope(warpedXZ, time, float(${index})) * min(uWaveAmp, 1.0);
+              float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, xz) - omega * time + OCEAN_WAVE_PHASE_${index};
+              float waveLod = 1.0 - smoothstep(0.35, 1.20, footprint * k);
+              float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * min(uWaveAmp, 1.0) * waveLod;
               float q = OCEAN_WAVE_STEEPNESS_${index} * uWaveChop;
               float s = sin(phase);
               float c = cos(phase);
               float dx = OCEAN_WAVE_DIRECTION_${index}.x;
               float dz = OCEAN_WAVE_DIRECTION_${index}.y;
-              float phaseDx = k * (dx * (1.0 + dWarpDx.x) + dz * dWarpDx.y);
-              float phaseDz = k * (dx * dWarpDz.x + dz * (1.0 + dWarpDz.y));
+              float phaseDx = k * dx;
+              float phaseDz = k * dz;
               tangentX += vec3(-q * amplitude * dx * phaseDx * s, amplitude * phaseDx * c, -q * amplitude * dz * phaseDx * s);
               tangentZ += vec3(-q * amplitude * dx * phaseDz * s, amplitude * phaseDz * c, -q * amplitude * dz * phaseDz * s);
               // Gerstner horizontal displacement Jacobian.  Its determinant
@@ -310,31 +323,40 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec3 macro = normalize(cross(tangentZ, tangentX));
           jacobian = jxx * jzz - jxz * jzx;
 
-          float footprint = max(length(dFdx(vWorld.xz)), length(dFdy(vWorld.xz)));
           vec2 wind = normalize(vec2(0.80, 0.40));
           vec2 crossWind = vec2(-wind.y, wind.x);
-          float k0 = 6.28318530718 / 5.25;
-          float k1 = 6.28318530718 / 3.0;
-          float k2 = 6.28318530718 / 1.5;
-          float k3 = 6.28318530718 / 0.95;
-          float k4 = 6.28318530718 / 0.52;
-          float aa0 = 1.0 - smoothstep(0.0, 2.0, footprint * k0);
-          float aa1 = 1.0 - smoothstep(0.0, 1.5, footprint * k1);
-          float aa2 = 1.0 - smoothstep(0.0, 1.0, footprint * k2);
-          float aa3 = 1.0 - smoothstep(0.0, 0.85, footprint * k3);
-          float aa4 = 1.0 - smoothstep(0.0, 0.65, footprint * k4);
+          float k0 = 6.28318530718 / 6.80;
+          float k1 = 6.28318530718 / 4.70;
+          float k2 = 6.28318530718 / 3.35;
+          float k3 = 6.28318530718 / 2.25;
+          float k4 = 6.28318530718 / 1.48;
+          float k5 = 6.28318530718 / 0.93;
+          float k6 = 6.28318530718 / 0.57;
+          float aa0 = 1.0 - smoothstep(0.0, 2.2, footprint * k0);
+          float aa1 = 1.0 - smoothstep(0.0, 1.9, footprint * k1);
+          float aa2 = 1.0 - smoothstep(0.0, 1.5, footprint * k2);
+          float aa3 = 1.0 - smoothstep(0.0, 1.2, footprint * k3);
+          float aa4 = 1.0 - smoothstep(0.0, 0.95, footprint * k4);
+          float aa5 = 1.0 - smoothstep(0.0, 0.75, footprint * k5);
+          float aa6 = 1.0 - smoothstep(0.0, 0.55, footprint * k6);
           vec2 d1 = normalize(wind * 0.866 + crossWind * 0.5);
           vec2 d2 = normalize(wind * 0.5 - crossWind * 0.866);
           vec2 d3 = normalize(crossWind * 0.94 - wind * 0.34);
           vec2 d4 = normalize(wind * 0.28 + crossWind * 0.96);
-          vec2 detailXZ = xz + oceanDomainWarp(xz, time) * 0.42;
-          vec2 micro = wind * (0.12 * k0 * cos(dot(detailXZ, wind) * k0 + time * oceanOmega(k0, 1.0)) * aa0);
-          micro += d1 * (0.08 * k1 * cos(dot(detailXZ, d1) * k1 - time * oceanOmega(k1, 1.0)) * aa1);
-          micro += d2 * (0.05 * k2 * cos(dot(detailXZ, d2) * k2 + time * oceanOmega(k2, 1.0)) * aa2);
-          // Two capillary bands add cross-wind facets at close range. Their
-          // derivative filters fade the bands before they become glitter.
-          micro += d3 * (0.018 * k3 * cos(dot(detailXZ, d3) * k3 + time * oceanOmega(k3, 1.0)) * aa3);
-          micro += d4 * (0.010 * k4 * cos(dot(detailXZ, d4) * k4 - time * oceanOmega(k4, 1.0)) * aa4);
+          vec2 d5 = normalize(-wind * 0.72 + crossWind * 0.69);
+          vec2 d6 = normalize(wind * 0.18 - crossWind * 0.98);
+          vec2 detailXZ = xz + oceanDetailWarp(xz, time) * 0.58;
+          // A compact directional spectrum replaces the old dominant
+          // wind-aligned ripple. Each band carries less energy and a unique
+          // direction/phase, so surviving LOD bands cannot collapse into
+          // evenly spaced parallel rows.
+          vec2 micro = wind * (0.075 * k0 * cos(dot(detailXZ, wind) * k0 + time * oceanOmega(k0, 0.94) + 0.41) * aa0);
+          micro += d1 * (0.061 * k1 * cos(dot(detailXZ, d1) * k1 - time * oceanOmega(k1, 1.03) + 2.17) * aa1);
+          micro += d2 * (0.048 * k2 * cos(dot(detailXZ, d2) * k2 + time * oceanOmega(k2, 0.98) + 4.63) * aa2);
+          micro += d3 * (0.034 * k3 * cos(dot(detailXZ, d3) * k3 - time * oceanOmega(k3, 1.06) + 1.29) * aa3);
+          micro += d4 * (0.024 * k4 * cos(dot(detailXZ, d4) * k4 + time * oceanOmega(k4, 1.01) + 5.31) * aa4);
+          micro += d5 * (0.014 * k5 * cos(dot(detailXZ, d5) * k5 - time * oceanOmega(k5, 0.96) + 3.44) * aa5);
+          micro += d6 * (0.007 * k6 * cos(dot(detailXZ, d6) * k6 + time * oceanOmega(k6, 1.08) + 0.83) * aa6);
 
           // Use a finite-difference gradient of advected value noise rather
           // than a scrolling scalar tint; this produces broken, natural
@@ -353,8 +375,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             noise(noiseUvB + vec2(noiseStepB, 0.0)) - noiseB,
             noise(noiseUvB + vec2(0.0, noiseStepB)) - noiseB
           ) / noiseStepB;
-          micro += noiseGradientA * (0.025 * aa1);
-          micro += noiseGradientB * (0.012 * aa2);
+          micro += noiseGradientA * (0.042 * aa1);
+          micro += noiseGradientB * (0.022 * aa2);
 
           vec3 resolved = normalize(macro + vec3(-micro.x * 0.58, 0.0, -micro.y * 0.58));
           float fold = smoothstep(0.92, 0.24, jacobian);
@@ -370,6 +392,69 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           return -(uCameraNear * uCameraFar) / ((uCameraFar - uCameraNear) * raw - uCameraFar);
         }
 
+        float sampleSunVisibility(vec2 uv) {
+          return texture2D(tSunVisibility, clamp(uv, vec2(0.002), vec2(0.998))).r;
+        }
+
+        // Reconstruct the current-frame visibility mask at the same refracted
+        // receiver pixel as scene color. The mask is produced after the
+        // water-free capture, so this restores moving-caster shadows without
+        // feeding water back through its own refraction buffer. Depth-aware
+        // neighbours smooth only uncertain mask edges and cannot cross voxel
+        // silhouettes or the shoreline depth discontinuity.
+        float refractedSunVisibility(vec2 uv, float referenceDepth) {
+          float center = sampleSunVisibility(uv);
+          float uncertainty = smoothstep(0.02, 0.98, 4.0 * center * (1.0 - center));
+          if (uHasSceneDepth == 0 || uncertainty <= 0.0) return center;
+
+          vec2 texel = 1.0 / max(uResolution, vec2(1.0));
+          float depthTolerance = max(0.025, referenceDepth * 0.015);
+          float weightedVisibility = center;
+          float totalWeight = 1.0;
+          for (int sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
+            vec2 offset = sampleIndex == 0 ? vec2(texel.x, 0.0) :
+              sampleIndex == 1 ? vec2(-texel.x, 0.0) :
+              sampleIndex == 2 ? vec2(0.0, texel.y) : vec2(0.0, -texel.y);
+            vec2 neighbourUv = clamp(uv + offset, vec2(0.002), vec2(0.998));
+            float neighbourDepth = decodeDepth(texture2D(tSceneDepth, neighbourUv).r);
+            float depthWeight = 1.0 - smoothstep(
+              depthTolerance,
+              depthTolerance * 4.0,
+              abs(neighbourDepth - referenceDepth)
+            );
+            weightedVisibility += sampleSunVisibility(neighbourUv) * depthWeight;
+            totalWeight += depthWeight;
+          }
+          float filtered = weightedVisibility / max(totalWeight, 0.0001);
+          return mix(center, filtered, 0.55 * uncertainty);
+        }
+
+        vec3 reconstructWorldPosition(vec2 uv, float rawDepth) {
+          vec4 clip = vec4(uv * 2.0 - 1.0, rawDepth * 2.0 - 1.0, 1.0);
+          vec4 view = uProjectionMatrixInverse * clip;
+          view /= view.w;
+          return (uViewMatrixInverse * vec4(view.xyz, 1.0)).xyz;
+        }
+
+        vec2 projectWorldToUv(vec3 worldPosition, out float valid) {
+          vec4 clip = uProjectionMatrix * viewMatrix * vec4(worldPosition, 1.0);
+          valid = step(0.0001, clip.w);
+          return clip.xy / max(clip.w, 0.0001) * 0.5 + 0.5;
+        }
+
+        float ggxDistribution(float noH, float alpha) {
+          float alpha2 = alpha * alpha;
+          float denominator = noH * noH * (alpha2 - 1.0) + 1.0;
+          return alpha2 / max(3.14159265 * denominator * denominator, 0.0001);
+        }
+
+        float smithMasking(float noV, float noL, float alpha) {
+          float k = alpha * alpha * 0.5;
+          float gv = noV / max(noV * (1.0 - k) + k, 0.0001);
+          float gl = noL / max(noL * (1.0 - k) + k, 0.0001);
+          return gv * gl;
+        }
+
         vec3 skyRadiance(vec3 direction) {
           vec3 d = normalize(direction);
           float up = clamp(d.y, -1.0, 1.0);
@@ -379,7 +464,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float aerosol = smoothstep(-0.18, 0.0, up) * (1.0 - smoothstep(0.0, 0.30, up)) * uSkyAerosolStrength;
           base = mix(base, uSkyAerosol, aerosol);
           float sun = max(dot(d, normalize(uSunDir)), 0.0);
-          base += uSunColor * (pow(sun, 2200.0) * 18.0 + pow(sun, 18.0) * 0.35 + pow(sun, 4.0) * 0.04);
+          // The finite sun is integrated by the water BRDF below. Keep only
+          // its atmospheric halo in reflected sky radiance; including a
+          // second needle-like disc here created the unnaturally thin white
+          // line visible through the middle of the glitter path.
+          base += uSunColor * (pow(sun, 28.0) * 0.30 + pow(sun, 5.0) * 0.045);
           return max(base * uSkyRadianceScale, vec3(0.0));
         }
 
@@ -433,20 +522,70 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           if (!uCameraUnderwater) {
             reflected = skyRadiance(reflect(incident, normal));
             vec2 screenUv = gl_FragCoord.xy / max(uResolution, vec2(1.0));
-            vec2 refractionOffset = refractedDirection.xz * uRefractAmount * 0.025 + normal.xz * 0.008;
-            vec2 refractedUv = clamp(screenUv + refractionOffset, vec2(0.002), vec2(0.998));
             float surfaceDepth = vViewDepth;
-            float backgroundDepth = uCameraFar;
-            if (uHasSceneDepth == 1) backgroundDepth = decodeDepth(texture2D(tSceneDepth, refractedUv).r);
-            foregroundReject = step(backgroundDepth, surfaceDepth - 0.10);
+            float baseRawDepth = uHasSceneDepth == 1 ? texture2D(tSceneDepth, screenUv).r : 1.0;
+            float baseBackgroundDepth = decodeDepth(baseRawDepth);
+            vec3 opticalDirection = normalize(mix(
+              incident,
+              refractedDirection,
+              clamp(uRefractAmount, 0.0, 1.0)
+            ));
+            vec3 opticalView = normalize(mat3(viewMatrix) * opticalDirection);
+            float estimatedTravel = uDepthApprox / max(abs(refractedDirection.y), 0.08);
+            if (uHasSceneDepth == 1 && baseRawDepth < 0.999999) {
+              float axialGap = max(baseBackgroundDepth - surfaceDepth, 0.0);
+              estimatedTravel = axialGap / max(-opticalView.z, 0.08);
+            }
+
+            // Project a Snell ray from the actual displaced interface to the
+            // estimated background depth. This keeps the bend in camera space
+            // and avoids the old world-XZ screen offset, whose direction
+            // changed as the camera rotated.
+            float projectedValid = 0.0;
+            vec2 projectedUv = projectWorldToUv(
+              vWorld + opticalDirection * estimatedTravel,
+              projectedValid
+            );
+            float insideUv = step(0.002, projectedUv.x) * step(0.002, projectedUv.y) *
+              step(projectedUv.x, 0.998) * step(projectedUv.y, 0.998);
+            vec2 refractedUv = clamp(projectedUv, vec2(0.002), vec2(0.998));
+            float refractedRawDepth = uHasSceneDepth == 1 ? texture2D(tSceneDepth, refractedUv).r : 1.0;
+            float backgroundDepth = decodeDepth(refractedRawDepth);
+            foregroundReject = max(1.0 - projectedValid * insideUv, step(backgroundDepth, surfaceDepth + 0.05));
+            if (uHasSceneDepth == 1 && refractedRawDepth < 0.999999) {
+              vec3 candidateWorld = reconstructWorldPosition(refractedUv, refractedRawDepth);
+              // A transmitted water ray cannot reveal geometry above the
+              // interface. Reject those screen-space crossings so torsos and
+              // shoreline blocks do not smear down into the submerged image.
+              foregroundReject = max(foregroundReject, step(vWorld.y + 0.15, candidateWorld.y));
+            }
             vec2 resolvedUv = mix(refractedUv, screenUv, foregroundReject);
-            if (uHasSceneColor == 1) sceneRefraction = texture2D(tSceneColor, resolvedUv).rgb;
-            if (uHasSceneDepth == 1 && foregroundReject < 0.5) {
-              pathLength = max(0.0, backgroundDepth - surfaceDepth) / max(abs(refractedDirection.z), 0.08);
+            float resolvedRawDepth = uHasSceneDepth == 1 ? texture2D(tSceneDepth, resolvedUv).r : 1.0;
+            vec4 sceneSample = vec4(deep, 0.0);
+            if (uHasSceneColor == 1) sceneSample = texture2D(tSceneColor, resolvedUv);
+            sceneRefraction = sceneSample.rgb;
+
+            // The capture's alpha stores the fraction of this receiver's
+            // lighting that came from direct sun. Reapply only that portion
+            // with the live visibility mask; ambient light, emissive color,
+            // and Beer-Lambert in-scatter remain physically independent.
+            if (uHasSunVisibility == 1) {
+              float receiverDepth = decodeDepth(resolvedRawDepth);
+              float sunVisibility = refractedSunVisibility(resolvedUv, receiverDepth);
+              float directLightFraction = clamp(sceneSample.a, 0.0, 1.0);
+              sceneRefraction *= mix(1.0, sunVisibility, directLightFraction);
+            }
+            if (uHasSceneDepth == 1) {
+              if (resolvedRawDepth < 0.999999) {
+                vec3 backgroundWorld = reconstructWorldPosition(resolvedUv, resolvedRawDepth);
+                pathLength = max(length(backgroundWorld - vWorld), 0.0);
+              }
             }
             vec3 transmittance = exp(-uAbsorption * max(pathLength, 0.0));
-            transmitted = sceneRefraction * transmittance + deep * (1.0 - transmittance);
-            transmitted += vec3(0.0, 0.035, 0.055) * (1.0 - transmittance);
+            float forwardScatter = pow(max(dot(viewDirection, -normalize(uSunDir)), 0.0), 4.0);
+            vec3 scatterColor = mix(deep * 0.72, uFogColor * 0.38, 0.55);
+            scatterColor += uSunColor * uFogColor * forwardScatter * 0.08;
+            transmitted = sceneRefraction * transmittance + scatterColor * (1.0 - transmittance);
           } else {
             // Underwater Snell window: transmit the shared sky radiance only
             // inside the water-to-air cone, and keep a bright upwelling body
@@ -490,9 +629,30 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float reflectionWeight = uCameraUnderwater ? (1.0 - interfaceTransmission) : fresnel;
           vec3 color = mix(transmitted, reflected, clamp(reflectionWeight, 0.0, 1.0));
 
-          vec3 halfVector = normalize(viewDirection + normalize(uSunDir));
-          float specular = pow(max(dot(normal, halfVector), 0.0), mix(180.0, 1200.0, 1.0 - clamp(uRoughness, 0.0, 1.0))) * uSpecular;
-          if (!uCameraUnderwater) color += uSunColor * specular;
+          vec3 lightDirection = normalize(uSunDir);
+          vec3 halfVector = normalize(viewDirection + lightDirection);
+          float noV = max(dot(normal, viewDirection), 0.001);
+          float noL = max(dot(normal, lightDirection), 0.0);
+          float noH = max(dot(normal, halfVector), 0.0);
+          float voH = max(dot(viewDirection, halfVector), 0.0);
+          float dielectricF0Base = (1.0 - 1.333) / (1.0 + 1.333);
+          float dielectricF0 = dielectricF0Base * dielectricF0Base;
+          float sunFresnel = dielectricF0 + (1.0 - dielectricF0) * pow(1.0 - voH, 5.0);
+          float roughnessControl = clamp(uRoughness, 0.0, 1.0);
+          float normalFootprint = clamp(max(length(dFdx(normal)), length(dFdy(normal))), 0.0, 0.35);
+          float coreAlpha = mix(0.065, 0.17, roughnessControl * roughnessControl);
+          coreAlpha = sqrt(coreAlpha * coreAlpha + normalFootprint * normalFootprint * 0.20);
+          float skirtAlpha = min(0.38, coreAlpha * 2.25 + 0.015);
+          float coreLobe = ggxDistribution(noH, coreAlpha) * smithMasking(noV, noL, coreAlpha);
+          float skirtLobe = ggxDistribution(noH, skirtAlpha) * smithMasking(noV, noL, skirtAlpha);
+          // A normalized core-and-skirt slope distribution approximates the
+          // broad Cox-Munk glitter path of a calm, lightly wind-ruffled sea.
+          // Mixing normalized lobes preserves energy while widening the path;
+          // derivative variance softens its edge as facets become sub-pixel.
+          float sunLobe = mix(coreLobe, skirtLobe, 0.42);
+          float specular = sunLobe * sunFresnel * noL /
+            max(4.0 * noV * noL, 0.001);
+          if (!uCameraUnderwater) color += uSunColor * specular * uSpecular;
 
           float foamFold = uOceanMode ? smoothstep(0.92, 0.20, jacobian) : 0.0;
           float foamNoiseLarge = noise(vWorld.xz * 0.115 + uTime * vec2(uFoamDrift * 0.24, -uFoamDrift * 0.16));
@@ -510,7 +670,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float waterSide = smoothstep(-0.35, 0.16, waterColumn);
           float shallowBand = 1.0 - smoothstep(0.35, 5.5, waterColumn);
           float shorelineBand = waterSide * shallowBand;
-          vec2 foamDomain = shoreXZ + oceanDomainWarp(shoreXZ, uTime) * 0.35;
+          vec2 foamDomain = shoreXZ + oceanDetailWarp(shoreXZ, uTime) * 0.35;
           float patchLarge = noise(foamDomain * 0.12 + uTime * vec2(0.012, -0.009));
           float patchMedium = noise(foamDomain * 0.34 - uTime * vec2(0.033, 0.021));
           float patchFine = noise(foamDomain * 0.88 + uTime * vec2(-0.071, 0.048));
@@ -625,6 +785,15 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
 
   setWaterLevel(level: number): void { this.uniforms.uWaterLevel.value = level }
 
+  setCamera(camera: THREE.PerspectiveCamera): void {
+    camera.updateMatrixWorld()
+    ;(this.uniforms.uProjectionMatrix.value as THREE.Matrix4).copy(camera.projectionMatrix)
+    ;(this.uniforms.uProjectionMatrixInverse.value as THREE.Matrix4).copy(camera.projectionMatrixInverse)
+    ;(this.uniforms.uViewMatrixInverse.value as THREE.Matrix4).copy(camera.matrixWorld)
+    this.uniforms.uCameraNear.value = camera.near
+    this.uniforms.uCameraFar.value = camera.far
+  }
+
   setCameraUnderwater(underwater: boolean): void { this.uniforms.uCameraUnderwater.value = underwater }
 
   setSceneInputs(sceneColor: THREE.Texture | null, sceneDepth: THREE.Texture | null, resolution: { x: number; y: number }, cameraNear: number, cameraFar: number): void {
@@ -635,6 +804,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     ;(this.uniforms.uResolution.value as THREE.Vector2).set(Math.max(1, Math.floor(resolution.x)), Math.max(1, Math.floor(resolution.y)))
     this.uniforms.uCameraNear.value = cameraNear
     this.uniforms.uCameraFar.value = cameraFar
+  }
+
+  setSunVisibility(texture: THREE.Texture | null): void {
+    this.uniforms.tSunVisibility.value = texture
+    this.uniforms.uHasSunVisibility.value = texture ? 1 : 0
   }
 
   setScreenRefraction(sceneColor: THREE.Texture | null, resolution?: { x: number; y: number }): void {

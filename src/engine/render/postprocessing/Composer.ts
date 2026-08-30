@@ -10,7 +10,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { BloomWrapperPass } from './passes/BloomPass'
-import { LensFlarePass } from './passes/LensFlarePass'
+import { FILMIC_LENS_FLARE_PRESET, LensFlarePass } from './passes/LensFlarePass'
 import { AerialPerspectivePass } from './passes/AerialPerspectivePass'
 import { UnderwaterPass } from './passes/UnderwaterPass'
 import type { AtmosphereState } from '../atmosphere/AtmosphereModel'
@@ -231,8 +231,7 @@ export class Composer {
     this.underwater.setSun(sunDirWorld, sunColor ?? new THREE.Color(1, 1, 0.95))
     this.underwater.setUnderwater(this.underwaterEnabled)
     if (atmosphere) this.aerial.setAtmosphereState(atmosphere)
-    this.lens.setCamera(camera)
-    this.lens.setSun(sunDirWorld, sunColor ?? new THREE.Color(1,1,0.95), camera)
+    this.lens.update(camera, sunDirWorld, atmosphere)
   }
   /**
    * Kept for callers that still provide the old SSAO settings. Screen-space
@@ -247,18 +246,20 @@ export class Composer {
   }
   setBloom(enabled: boolean, strength: number, threshold: number) { this.bloom.setSettings({ enabled, strength, threshold }) }
   setLens(enabled: boolean, intensity: number) { this.lens.setEnabled(enabled); this.lens.setIntensity(intensity) }
+  setLensDebugMode(mode: number) { this.lens.setDebugMode(mode) }
+  getLensDiagnostics() { return this.lens.getDiagnostics() }
   setAerialPerspective(enabled: boolean, maxDistance: number) { this.aerial.setSettings({ enabled, maxDistance }) }
   getExposureDiagnostics() {
     return {
       enabled: false,
       averageLuminance: 0.18,
-      targetExposure: 1,
+      targetExposure: FILMIC_LENS_FLARE_PRESET.exposure,
       currentExposure: this.renderer.toneMappingExposure,
       pending: false,
       readbackFailures: 0,
     }
   }
-  resetExposure() { this.renderer.toneMappingExposure = 1 }
+  resetExposure() { this.renderer.toneMappingExposure = FILMIC_LENS_FLARE_PRESET.exposure }
   render(deltaSeconds = 0) {
     // Never let EffectComposer fall back to its own wall-clock delta. The
     // engine supplies the bounded simulation delta; callers that omit it get
@@ -273,6 +274,7 @@ export class Composer {
     this.voxelSunShadow?.dispose()
     this.depthTarget.dispose()
     this.underwater.dispose()
+    this.lens.dispose()
     this.composer.dispose()
   }
 }

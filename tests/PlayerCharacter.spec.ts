@@ -36,6 +36,16 @@ function createIdleState(): PlayerMovementState {
   };
 }
 
+function createSwimmingState(): PlayerMovementState {
+  return {
+    isMoving: true,
+    isSprinting: false,
+    isGrounded: false,
+    isUnderwater: true,
+    moveDirection: new THREE.Vector3(0, 0, -1),
+  };
+}
+
 describe('player character feet alignment', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -71,6 +81,33 @@ describe('player character feet alignment', () => {
     expect(eyeAnchor).toBeTruthy();
     const eyePosition = (eyeAnchor as THREE.Object3D).getWorldPosition(new THREE.Vector3());
     expect(eyePosition.y).toBeCloseTo(feetY + PLAYER.eyeHeight, 6);
+
+    player.dispose();
+  });
+
+  it('keeps the horizontal swim pose above the collider feet plane', () => {
+    installCanvasStub();
+
+    const player = new PlayerCharacter();
+    const playerRoot = new THREE.Group();
+    const camera = new THREE.PerspectiveCamera();
+    const input = {
+      getOrientation: () => ({ yaw: 0, pitch: -Math.PI / 2 }),
+    } as unknown as InputSystem;
+    const feetY = 21;
+    const controller = {
+      getFeetPosition: (target = new THREE.Vector3()) => target.set(4, feetY, -2),
+      getMovementState: () => createSwimmingState(),
+    } as unknown as PlayerController;
+
+    player.init(playerRoot, camera, input);
+    player.setController(controller);
+    for (let frame = 0; frame < 120; frame += 1) player.update(1 / 60, false);
+
+    const visualRoot = (player as unknown as { character: THREE.Group }).character;
+    visualRoot.updateMatrixWorld(true);
+    const visualBounds = new THREE.Box3().setFromObject(visualRoot, true);
+    expect(visualBounds.min.y).toBeGreaterThanOrEqual(feetY - 1e-5);
 
     player.dispose();
   });

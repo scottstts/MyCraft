@@ -848,6 +848,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       seed: world.getSeed(),
       worldRadius,
       blockMaterialSource: blockMaterial ?? undefined,
+      blockWaterMaterial: waterMaterial ?? undefined,
       anisotropy: maxAniso ? Math.min(8, maxAniso) : 8,
       renderer: baseRenderer,
     });
@@ -858,6 +859,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       camera.near,
       camera.far,
     );
+    waterSystem.setSunVisibility(voxelSunShadowPass?.getTexture() ?? null);
     composer?.setOpaqueCaptureHooks(
       () => waterSystem?.setOpaqueCaptureMode(true),
       () => waterSystem?.setOpaqueCaptureMode(false),
@@ -992,6 +994,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
         const resolution = voxelSunShadowPass.getDiagnostics().resolution;
         blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
         grassSystem?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
+        waterSystem?.setSunVisibility(voxelSunShadowPass.getTexture());
       }
     }
   };

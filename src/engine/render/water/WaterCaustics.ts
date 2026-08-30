@@ -61,8 +61,8 @@ export class WaterCaustics {
       {
         float k = 6.28318530718 / OCEAN_WAVE_LENGTH_${index};
         float omega = oceanOmega(k, OCEAN_WAVE_SPEED_${index});
-        float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, warpedXZ) - omega * time + OCEAN_WAVE_PHASE_${index};
-        float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * oceanWaveGroupEnvelope(warpedXZ, time, float(${index}));
+        float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, xz) - omega * time + OCEAN_WAVE_PHASE_${index};
+        float amplitude = OCEAN_WAVE_AMPLITUDE_${index};
         float c = cos(phase);
         displaced.xz += OCEAN_WAVE_DIRECTION_${index} * OCEAN_WAVE_STEEPNESS_${index} * amplitude * c;
         displaced.y += amplitude * sin(phase);
@@ -72,15 +72,15 @@ export class WaterCaustics {
       {
         float k = 6.28318530718 / OCEAN_WAVE_LENGTH_${index};
         float omega = oceanOmega(k, OCEAN_WAVE_SPEED_${index});
-        float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, warpedXZ) - omega * time + OCEAN_WAVE_PHASE_${index};
-        float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * oceanWaveGroupEnvelope(warpedXZ, time, float(${index}));
+        float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, xz) - omega * time + OCEAN_WAVE_PHASE_${index};
+        float amplitude = OCEAN_WAVE_AMPLITUDE_${index};
         float q = OCEAN_WAVE_STEEPNESS_${index};
         float s = sin(phase);
         float c = cos(phase);
         float dx = OCEAN_WAVE_DIRECTION_${index}.x;
         float dz = OCEAN_WAVE_DIRECTION_${index}.y;
-        float phaseDx = k * (dx * (1.0 + dWarpDx.x) + dz * dWarpDx.y);
-        float phaseDz = k * (dx * dWarpDz.x + dz * (1.0 + dWarpDz.y));
+        float phaseDx = k * dx;
+        float phaseDz = k * dz;
         tangentX += vec3(-q * amplitude * dx * phaseDx * s, amplitude * phaseDx * c, -q * amplitude * dz * phaseDx * s);
         tangentZ += vec3(-q * amplitude * dx * phaseDz * s, amplitude * phaseDz * c, -q * amplitude * dz * phaseDz * s);
       }
@@ -126,7 +126,6 @@ export class WaterCaustics {
 
         vec3 oceanDisplacement(vec2 xz, float time) {
           vec3 displaced = vec3(0.0);
-          vec2 warpedXZ = xz + oceanDomainWarp(xz, time);
           ${displacement}
           displaced.y = clamp(displaced.y, -OCEAN_WAVE_HALF_RANGE, OCEAN_WAVE_HALF_RANGE);
           return displaced;
@@ -135,10 +134,6 @@ export class WaterCaustics {
         vec3 oceanNormal(vec2 xz, float time) {
           vec3 tangentX = vec3(1.0, 0.0, 0.0);
           vec3 tangentZ = vec3(0.0, 0.0, 1.0);
-          vec2 warpedXZ = xz + oceanDomainWarp(xz, time);
-          vec2 dWarpDx;
-          vec2 dWarpDz;
-          oceanDomainWarpPartials(xz, time, dWarpDx, dWarpDz);
           ${normal}
           return normalize(cross(tangentZ, tangentX));
         }

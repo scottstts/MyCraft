@@ -52,4 +52,28 @@ describe('player controller feet collision', () => {
     expect(jumpingController.getFeetPosition().x).toBeGreaterThan(2.3);
     expect(jumpingController.getFeetPosition().y).toBeCloseTo(1, 3);
   });
+
+  it('keeps a downward-swimming collider above a solid seabed', () => {
+    const seabedTop = 21;
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(12.5, 42, 12.5);
+    const input = {
+      getMoveInput: () => ({ x: 0, z: 1 }),
+      getOrientation: () => ({ yaw: 0, pitch: -Math.PI / 2 }),
+      isSprinting: () => true,
+      consumeJumpRequested: () => false,
+      isJumpHeld: () => false,
+    } as unknown as InputSystem;
+    const world = {
+      getBlock: (_x: number, y: number) => y === 42 ? 5 : 0,
+      isAirFlooded: () => false,
+      isBlockSolid: (_x: number, y: number) => y <= seabedTop - 1,
+    } as unknown as World;
+    const controller = new PlayerController(camera, world, input);
+
+    for (let frame = 0; frame < 600; frame += 1) controller.update(1 / 60);
+
+    expect(controller.isUnderwater()).toBe(true);
+    expect(controller.getFeetPosition().y).toBeCloseTo(seabedTop, 4);
+  });
 });

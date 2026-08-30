@@ -10,6 +10,8 @@ The camera uses the `YXZ` FPS rotation order. `createPlayerCamera()` is the cano
 
 `PlayerController` owns the eye-position physics state, gravity, walking/sprinting, jumping, swimming, water hysteresis, AABB collision queries, world bounds, and smooth emerge/elevation behavior. It queries `World.isBlockSolid()` rather than reading chunk arrays directly. Camera placement and the visual player rig consume the controller’s position, so physics remains independent of the rendered body.
 
+The horizontal swim pose is lifted relative to the rig root so its lowest rendered geometry stays on the controller's feet plane when the AABB contacts a solid seabed. Third-person camera collision uses a conservative swept sphere against radius-expanded solid voxel boxes; unlike a finite ray bundle, this also catches diagonal corners on stepped underwater terrain.
+
 The frame loop updates gameplay only while the UI says the session is in-game and not paused. Rendering continues while paused so the scene, sky, water, and pause menu remain visually stable.
 
 ## Selection, mining, and placing

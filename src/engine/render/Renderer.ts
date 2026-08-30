@@ -28,11 +28,10 @@ export class Renderer {
     // all camera rays in the active WebGL path, but this prevents a bright
     // legacy-sky flash while it is being initialized or if a ray misses it.
     this.renderer.setClearColor(0x101a2d);
-    // OutputPass owns the single scene-linear -> display transform. AgX
-    // preserves sky gradients and sun highlights more gracefully than the
-    // previous ACES + per-material Reinhard/gamma stack.
-    this.renderer.toneMapping = THREE.AgXToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    // OutputPass owns the single scene-linear -> display transform. The
+    // complete filmic-lens-flare reference is authored for ACES at 0.92.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 0.92;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // three r179 uses useLegacyLights (false = physically correct)
     // @ts-expect-error - property exists in r179 types

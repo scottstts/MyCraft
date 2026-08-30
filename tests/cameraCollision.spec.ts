@@ -40,4 +40,17 @@ describe('third-person camera voxel constraint', () => {
 
     expect(candidate.y).toBe(1.2);
   });
+
+  it('keeps the camera sphere clear of a diagonal voxel corner', () => {
+    const world = {
+      isBlockSolid: (x: number, y: number, z: number) => x === 1 && y === 1 && z === 1,
+    } as unknown as World;
+    const pivot = new THREE.Vector3(0.5, 1.5, 0.5);
+    const candidate = new THREE.Vector3(0.9, 1.5, 0.9);
+
+    constrainCameraToSolidVoxels(world, pivot, candidate, 0.2, 0.04);
+
+    expect(candidate.x).toBeLessThan(0.8);
+    expect(candidate.z).toBeLessThan(0.8);
+  });
 });

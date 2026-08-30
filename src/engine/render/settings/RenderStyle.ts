@@ -29,7 +29,8 @@ export const RENDER_STYLE = {
   },
   lens: {
     enabled: true,
-    intensity: 0.10,
+    // Preserve the full optical graph at a game-calibrated contribution.
+    intensity: 0.32,
   },
   exposure: {
     // Kept as authored tuning data for compatibility/diagnostics. The active

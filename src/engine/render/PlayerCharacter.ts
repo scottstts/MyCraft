@@ -179,6 +179,10 @@ const CFG = {
   thirdPersonAimDistance: 8,
   cameraCollisionRadius: 0.2,
   cameraCollisionPadding: 0.04,
+  // Rotating the upright rig into its horizontal swim pose moves the arms,
+  // legs, and held tool below the character root. Lift the posed body so its
+  // lowest rendered point remains on the physics collider's feet plane.
+  swimBodyLift: 0.55,
   swingDuration: SWING_CYCLE_SECONDS,
 } as const;
 
@@ -548,7 +552,9 @@ export class PlayerCharacter {
     if (state.isUnderwater) {
       this.swimTimer += dt * (state.isMoving ? 8 : 3);
       const swimPitch = state.isMoving ? -Math.PI / 2.05 : 0.2;
-      this.body.rotation.x = THREE.MathUtils.lerp(this.body.rotation.x, swimPitch, Math.min(1, dt * 8));
+      const swimPoseAlpha = Math.min(1, dt * 8);
+      this.body.rotation.x = THREE.MathUtils.lerp(this.body.rotation.x, swimPitch, swimPoseAlpha);
+      this.body.position.y = THREE.MathUtils.lerp(this.body.position.y, CFG.swimBodyLift, swimPoseAlpha);
       this.leftArm.rotation.x = -Math.PI / 3 + Math.sin(this.swimTimer) * 0.9;
       this.leftArm.rotation.z = -0.3;
       if (!this.swingActive) {
@@ -559,7 +565,9 @@ export class PlayerCharacter {
       this.leftLeg.rotation.x = Math.sin(this.swimTimer * 1.6) * 0.4;
       this.rightLeg.rotation.x = -Math.sin(this.swimTimer * 1.6) * 0.4;
     } else {
-      this.body.rotation.x = THREE.MathUtils.lerp(this.body.rotation.x, 0, Math.min(1, dt * 10));
+      const landPoseAlpha = Math.min(1, dt * 10);
+      this.body.rotation.x = THREE.MathUtils.lerp(this.body.rotation.x, 0, landPoseAlpha);
+      this.body.position.y = THREE.MathUtils.lerp(this.body.position.y, 0, landPoseAlpha);
 
       if (state.isMoving && state.isGrounded) {
         this.walkTimer += dt * (state.isSprinting ? 14 : 9);

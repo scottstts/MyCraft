@@ -1,0 +1,140 @@
+import { describe, expect, it } from 'vitest'
+import * as THREE from 'three'
+import {
+  FILMIC_LENS_FLARE_PRESET,
+  LensFlarePass,
+  computeLensFlareSunEnergy,
+  projectLensFlareSource,
+} from '../src/engine/render/postprocessing/passes/LensFlarePass'
+import {
+  FILMIC_FLARE_COMPOSITE_FRAGMENT_SHADER,
+  FILMIC_FLARE_FRAGMENT_SHADER,
+  FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER,
+  FILMIC_FLARE_TEMPORAL_BLOOM_FRAGMENT_SHADER,
+} from '../src/engine/render/postprocessing/passes/filmicLensFlareShaders'
+
+function createCamera(): THREE.PerspectiveCamera {
+  const camera = new THREE.PerspectiveCamera(58, 16 / 9, 0.1, 1_000)
+  camera.position.set(0, 0, 0)
+  camera.lookAt(0, 0, -1)
+  camera.updateMatrixWorld(true)
+  return camera
+}
+
+describe('filmic lens flare WebGL port', () => {
+  it('keeps the reference camera and exposure contract', () => {
+    expect(FILMIC_LENS_FLARE_PRESET).toMatchObject({
+      initialFovDeg: 58,
+      minimumFovDeg: 26,
+      maximumFovDeg: 105,
+      initialSourceScreen: [0.785, 0.625],
+      strength: 1,
+      exposure: 0.92,
+    })
+  })
+
+  it('projects the directional sun into top-origin screen coordinates', () => {
+    const camera = createCamera()
+    const centered = projectLensFlareSource(camera, new THREE.Vector3(0, 0, -1))
+    expect(centered.sourceTop.x).toBeCloseTo(0.5, 6)
+    expect(centered.sourceTop.y).toBeCloseTo(0.5, 6)
+    expect(centered.visibility).toBeCloseTo(1, 6)
+
+    const upperRight = projectLensFlareSource(
+      camera,
+      new THREE.Vector3(0.25, 0.15, -1).normalize(),
+    )
+    expect(upperRight.sourceTop.x).toBeGreaterThan(0.5)
+    expect(upperRight.sourceTop.y).toBeLessThan(0.5)
+    expect(upperRight.visibility).toBeGreaterThan(0)
+    expect(upperRight.fieldSin).toBeGreaterThan(0)
+  })
+
+  it('suppresses invalid, behind-camera, off-frame, and below-horizon emitters', () => {
+    const camera = createCamera()
+    const retainedSource = new THREE.Vector2(0.72, 0.31)
+    const retainedAxis = new THREE.Vector2(0.8, -0.6)
+    const behind = projectLensFlareSource(
+      camera,
+      new THREE.Vector3(0, 0, 1),
+      1,
+      retainedSource,
+      retainedAxis,
+    )
+    expect(behind.visibility).toBe(0)
+    expect(behind.sourceTop.toArray()).toEqual(retainedSource.toArray())
+    expect(behind.fieldDirection.toArray()).toEqual(retainedAxis.toArray())
+
+    const offFrame = projectLensFlareSource(
+      camera,
+      new THREE.Vector3(4, 0, -1).normalize(),
+    )
+    expect(offFrame.visibility).toBe(0)
+    expect(computeLensFlareSunEnergy(-0.2)).toBe(0)
+    expect(computeLensFlareSunEnergy(1)).toBeCloseTo(1)
+  })
+
+  it('retains all three five-level bloom graphs and their authored thresholds', () => {
+    const pass = new LensFlarePass()
+    pass.setSize(1280, 720)
+    const diagnostics = pass.getDiagnostics()
+
+    expect(diagnostics.renderTargets).toHaveLength(39)
+    expect(diagnostics.renderTargets.map((target) => target.name)).toEqual(
+      expect.arrayContaining([
+        'LensFlare.sourceBloom.bright',
+        'LensFlare.sourceBloom.v4',
+        'LensFlare.haloBloom.bright',
+        'LensFlare.haloBloom.v4',
+        'LensFlare.flareBloom.bright',
+        'LensFlare.flareBloom.v4',
+        'LensFlare.sourceBloom.history0',
+        'LensFlare.sourceBloom.history1',
+        'LensFlare.haloBloom.history0',
+        'LensFlare.haloBloom.history1',
+      ]),
+    )
+    expect(diagnostics.renderTargets.find((target) => target.name === 'LensFlare.flare')).toMatchObject({
+      width: 1280,
+      height: 720,
+      type: THREE.HalfFloatType,
+    })
+    pass.dispose()
+  })
+
+  it('contains the complete ghost, star, veil, film, and grain stages', () => {
+    for (const marker of [
+      'gTerminalA',
+      'gTerminalB',
+      'gCool',
+      'gWarm0',
+      'gBead4',
+      'radialGhostRgb',
+      'spectralSpread',
+      'whiteStar',
+    ]) {
+      expect(FILMIC_FLARE_FRAGMENT_SHADER).toContain(marker)
+    }
+
+    for (const marker of [
+      'sourceBloomColor',
+      'haloBloomColor',
+      'flareBloomColor',
+      'veilMask',
+      'milkMask',
+      'filmTint',
+      'creamyShoulder',
+      'vignette',
+      'grainMask',
+    ]) {
+      expect(FILMIC_FLARE_COMPOSITE_FRAGMENT_SHADER).toContain(marker)
+    }
+
+    expect(FILMIC_FLARE_TEMPORAL_BLOOM_FRAGMENT_SHADER).toContain(
+      'float retainedFraction = mix(0.035, 0.96, aperture)',
+    )
+    expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain('apertureVisibility')
+    expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain('solarDiscRadiusUv')
+    expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain('outer / 16.0')
+  })
+})

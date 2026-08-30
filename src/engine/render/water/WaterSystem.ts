@@ -57,6 +57,8 @@ export interface WaterSystemOptions {
   worldRadius: number
   color?: THREE.Color | number | string
   blockMaterialSource?: BlockMaterial
+  /** Authoritative voxel-water material hidden from the refraction capture. */
+  blockWaterMaterial?: WaterSurfaceMaterial
   anisotropy?: number
   /** WebGL renderer used for the render-only differential-area caustic map. */
   renderer?: THREE.WebGLRenderer
@@ -77,6 +79,7 @@ export class WaterSystem {
   private readonly material: WaterSurfaceMaterial
   private readonly terrainHeightTexture: THREE.DataTexture
   private readonly caustics: WaterCaustics | null
+  private readonly blockWaterMaterial: WaterSurfaceMaterial | null
   private seabedMaterial: BlockMaterial | null = null
   private seabedGroup: THREE.Group | null = null
   private time = 0
@@ -85,13 +88,18 @@ export class WaterSystem {
   private cameraUnderwater = false
   private sceneColor: THREE.Texture | null = null
   private sceneDepth: THREE.Texture | null = null
+  private sunVisibility: THREE.Texture | null = null
   private resolution = new THREE.Vector2(1, 1)
   private cameraNear = 0.1
   private cameraFar = 1024
+  private opaqueCaptureActive = false
+  private oceanWasVisible = true
+  private blockWaterWasVisible = true
 
   constructor(scene: THREE.Scene, options: WaterSystemOptions) {
     this.scene = scene
     this.options = options
+    this.blockWaterMaterial = options.blockWaterMaterial ?? null
     this.group = new THREE.Group()
     this.group.name = 'WaterSystem'
     this.oceanGroup = new THREE.Group()
@@ -115,7 +123,7 @@ export class WaterSystem {
       terrainHeightScale: TERRAIN_HEIGHT_TEXTURE_SCALE,
     })
     this.material.setWaterLevel(surfaceY)
-    this.material.setRefraction(0.18, 1.0 / 1.333, 1.0, 1.0, 0.0)
+    this.material.setRefraction(1.0, 1.0 / 1.333, 1.0, 1.0, 0.0)
     this.material.setAlpha(1)
 
     let caustics: WaterCaustics | null = null
@@ -201,7 +209,19 @@ export class WaterSystem {
     void this.buildSeabed(this.seabedBuildToken)
   }
 
-  setOpaqueCaptureMode(hidden: boolean): void { this.oceanGroup.visible = !hidden }
+  setOpaqueCaptureMode(hidden: boolean): void {
+    if (hidden === this.opaqueCaptureActive) return
+    this.opaqueCaptureActive = hidden
+    if (hidden) {
+      this.oceanWasVisible = this.oceanGroup.visible
+      this.blockWaterWasVisible = this.blockWaterMaterial?.visible ?? true
+      this.oceanGroup.visible = false
+      if (this.blockWaterMaterial) this.blockWaterMaterial.visible = false
+      return
+    }
+    this.oceanGroup.visible = this.oceanWasVisible
+    if (this.blockWaterMaterial) this.blockWaterMaterial.visible = this.blockWaterWasVisible
+  }
 
   setSceneInputs(sceneColor: THREE.Texture | null, sceneDepth: THREE.Texture | null, resolution: { x: number; y: number }, cameraNear: number, cameraFar: number): void {
     this.sceneColor = sceneColor
@@ -210,6 +230,13 @@ export class WaterSystem {
     this.cameraNear = cameraNear
     this.cameraFar = cameraFar
     this.material.setSceneInputs(sceneColor, sceneDepth, this.resolution, cameraNear, cameraFar)
+    this.blockWaterMaterial?.setSceneInputs(sceneColor, sceneDepth, this.resolution, cameraNear, cameraFar)
+  }
+
+  setSunVisibility(texture: THREE.Texture | null): void {
+    this.sunVisibility = texture
+    this.material.setSunVisibility(texture)
+    this.blockWaterMaterial?.setSunVisibility(texture)
   }
 
   setSun(direction: THREE.Vector3, color?: THREE.Color): void {
@@ -236,6 +263,8 @@ export class WaterSystem {
     this.time += Math.min(0.1, Math.max(0, deltaSeconds))
     this.material.setTime(this.time)
     this.material.setWaterLevel(this.surfaceY)
+    this.material.setCamera(camera)
+    this.blockWaterMaterial?.setCamera(camera)
 
     // Follow the camera on a stable 16-block grid.  Absolute world XZ is used
     // in the shader, so moving the mesh cannot make waves swim underfoot.
@@ -266,6 +295,8 @@ export class WaterSystem {
       seabedMeshes: seabedMeshes.length,
       caustics: this.caustics?.getDiagnostics() ?? null,
       sceneInputs: { color: !!this.sceneColor, depth: !!this.sceneDepth, resolution: this.resolution.toArray(), near: this.cameraNear, far: this.cameraFar },
+      sunVisibility: !!this.sunVisibility,
+      waterExcludedFromCapture: this.opaqueCaptureActive,
     }
   }
 

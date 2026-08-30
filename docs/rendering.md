@@ -10,7 +10,7 @@ The active post-processing chain is owned by `src/engine/render/postprocessing/C
 RenderPass → AerialPerspectivePass → UnderwaterPass → Bloom → LensFlare → OutputPass
 ```
 
-`OutputPass` owns the final scene-linear-to-display transform. The renderer uses AgX tone mapping, a fixed exposure, and sRGB output. Screen-space AO and adaptive exposure are not in the active chain; voxel/per-vertex AO and the authored exposure calibration remain the chosen image treatment.
+`OutputPass` owns the final scene-linear-to-display transform. The renderer uses ACES filmic tone mapping at a fixed exposure of `0.92`, and sRGB output. The sun-linked [filmic lens flare](lens-flare.md) is documented separately. Screen-space AO and adaptive exposure are not in the active chain; voxel/per-vertex AO and the authored exposure calibration remain the chosen image treatment.
 
 ## Drawing-buffer policy
 

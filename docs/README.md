@@ -6,6 +6,7 @@ This directory documents the implemented runtime boundaries and the contracts be
 
 - [Application shell and boot](application-shell-and-boot.md) — React entry, lazy engine loading, staged startup, first-frame readiness, failure reporting, and cancellation.
 - [Rendering](rendering.md) — the WebGL renderer, drawing-buffer policy, resize coordination, post-processing, and GPU resource ownership.
+- [Filmic lens flare](lens-flare.md) — the sun-linked optical graph, finite-disc visibility, blocker-breadth bloom response, and diagnostics.
 - [Atmosphere, lighting, and shadows](atmosphere-lighting-and-shadows.md) — time of day, sky radiance, aerial perspective, and the voxel visibility pass.
 - [Water](water.md) — authoritative water blocks, rendered water surfaces, the far ocean, caustics, and underwater medium effects.
 - [World and chunks](world-and-chunks.md) — voxel storage, terrain generation, worker orchestration, meshing, and mesh publication.
