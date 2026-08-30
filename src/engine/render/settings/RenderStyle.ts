@@ -15,6 +15,11 @@ export const RENDER_STYLE = {
     enabled: true,
     distance: 300,
     intensity: 1,
+    character: {
+      // Character visibility is evaluated analytically by the screen-space
+      // voxel pass. Keep its world reach separate from terrain traversal.
+      maxDistance: 32,
+    },
   },
   bloom: {
     enabled: true,

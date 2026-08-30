@@ -165,7 +165,7 @@ export class Composer {
         });
         enabledUniform.value = enabled;
         // Detach the actual framebuffer texture. WebGL validates feedback
-        // loops from sampler bindings even when the shader branch is false.
+        // loops from sampler bindings even when the voxel branch is false.
         if (depthUniform) depthUniform.value = null;
       }
     });

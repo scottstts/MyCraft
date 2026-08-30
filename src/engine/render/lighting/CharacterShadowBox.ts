@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
 /**
- * One oriented box from the procedural player rig, expressed for the
- * screen-space voxel sun-shadow pass.
+ * One exact oriented box from the procedural player rig. The inverse matrix
+ * transforms a world-space ray into the mesh's local geometry space.
  */
 export interface CharacterShadowBox {
   inverseMatrix: THREE.Matrix4;

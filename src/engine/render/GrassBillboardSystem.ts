@@ -88,9 +88,8 @@ export class GrassBillboardSystem {
 
     // Build instanced mesh
     const mesh = new THREE.InstancedMesh(this.geometry, this.material, instances.length)
-    // Native shadow-map casting stays disabled.  Grass casting is resolved by
-    // the stable voxel sun-visibility pass using the same crossed-card layout
-    // as this mesh, while this material consumes that pass for receiving.
+    // Native shadow-map casting stays disabled. Grass casting and the player
+    // caster's receiver visibility remain in the voxel sun pass.
     mesh.castShadow = false
     mesh.receiveShadow = false
     // Draw after opaque blocks but before transparent water

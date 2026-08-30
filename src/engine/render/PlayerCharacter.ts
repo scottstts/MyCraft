@@ -1,7 +1,8 @@
 /**
  * Module: engine/render/PlayerCharacter
  * Purpose: The complete procedural player from ref/character.html, including
- * its authored textures, rig, animation mapping, view modes, and shadow data.
+ * its authored textures, rig, animation mapping, view modes, and exact OBB
+ * caster data used by the screen-space sun visibility pass.
  * Callers: Engine owns one instance and updates it after player physics.
  */
 
@@ -355,17 +356,17 @@ export class PlayerCharacter {
 
     this.character.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
-      this.shadowMeshes.push(object);
-      const geometry = object.geometry;
-      geometry.computeBoundingBox();
-      const bounds = geometry.boundingBox;
+      object.geometry.computeBoundingBox();
+      const bounds = object.geometry.boundingBox;
       if (!bounds) return;
+      this.shadowMeshes.push(object);
       this.shadowBoxes.push({
         inverseMatrix: new THREE.Matrix4(),
         center: bounds.getCenter(new THREE.Vector3()),
         halfSize: bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5),
       });
     });
+
     this.setFirstPerson(false);
   }
 
@@ -394,6 +395,18 @@ export class PlayerCharacter {
 
   isFirstPersonView(): boolean {
     return this.isFirstPerson;
+  }
+
+  /** Return live oriented boxes for the deterministic character caster. */
+  getShadowBoxes(): ReadonlyArray<CharacterShadowBox> {
+    this.character.updateMatrixWorld(true);
+    for (let index = 0; index < this.shadowMeshes.length; index += 1) {
+      const mesh = this.shadowMeshes[index];
+      const box = this.shadowBoxes[index];
+      if (!mesh || !box) continue;
+      box.inverseMatrix.copy(mesh.matrixWorld).invert();
+    }
+    return this.shadowBoxes;
   }
 
   /**
@@ -454,24 +467,14 @@ export class PlayerCharacter {
     }
   }
 
-  /** Return live oriented boxes for the dynamic full-character shadow caster. */
-  getShadowBoxes(): ReadonlyArray<CharacterShadowBox> {
-    this.character.updateMatrixWorld(true);
-    for (let i = 0; i < this.shadowMeshes.length; i += 1) {
-      const mesh = this.shadowMeshes[i];
-      const box = this.shadowBoxes[i];
-      if (!mesh || !box) continue;
-      box.inverseMatrix.copy(mesh.matrixWorld).invert();
-    }
-    return this.shadowBoxes;
-  }
-
   dispose(): void {
     try { this.swingAudio?.pause(); } catch { /* ignore */ }
     this.swingAudio = null;
     this.playerRoot?.remove(this.character);
     const geometries = new Set<THREE.BufferGeometry>();
-    for (const mesh of this.shadowMeshes) geometries.add(mesh.geometry);
+    this.character.traverse((object) => {
+      if (object instanceof THREE.Mesh) geometries.add(object.geometry);
+    });
     for (const geometry of geometries) geometry.dispose();
     for (const material of this.ownedMaterials) material.dispose();
     for (const texture of this.ownedTextures) texture.dispose();

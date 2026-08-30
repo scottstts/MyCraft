@@ -3,9 +3,9 @@
  *
  * Cast visibility is intentionally not owned here. The old implementation
  * coupled this controller to a native directional-light shadow camera and
- * quantized its transform. VoxelSunShadowPass now consumes the continuous
- * direction directly, so this class only owns illumination and the small
- * compatibility settings surface used by the debug panel.
+ * quantized its transform. The terrain/player voxel pass consumes the
+ * continuous direction directly, so this class only owns illumination and
+ * the small compatibility settings surface used by the debug panel.
  */
 import * as THREE from 'three';
 import { RENDER_STYLE } from '../settings/RenderStyle';
@@ -67,7 +67,7 @@ export class SunController {
 
     // Keep one directional light for authored illumination and compatibility
     // with any non-voxel scene elements, but never ask Three.js to rasterize a
-    // shadow map. VoxelSunShadowPass is the sole visibility authority.
+    // native shadow map. The custom voxel pass owns direct-sun visibility.
     this.sun = new THREE.DirectionalLight(0xffffff, 1.0);
     this.sun.castShadow = false;
     scene.add(this.sun);

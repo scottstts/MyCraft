@@ -77,8 +77,9 @@ export class Renderer {
       (this.renderer as THREE.WebGLRenderer).useLegacyLights = false;
     }
 
-    // Sun visibility is resolved by the voxel DDA pass. Native shadow maps
-    // remain disabled so there is no second, unsynchronised raster grid.
+    // Terrain and player sun visibility are resolved by the screen-space voxel
+    // DDA pass. Native shadow maps remain disabled so there is no second,
+    // unsynchronised scene-wide raster grid.
     if (!this.isWebGPU) (this.renderer as THREE.WebGLRenderer).shadowMap.enabled = false;
   }
 

@@ -399,6 +399,9 @@ function update(dtSeconds: number) {
   // Update subsystems here (physics, input, etc.)
   if (composer && camera && sunController && atmosphereState) {
     const sdir = sunController.getSunDirection();
+    // Bind the animated player boxes after the rig has applied this frame's
+    // pose. VoxelSunShadowPass evaluates them once per receiver, outside its
+    // terrain solar-ray loop, so this remains deterministic and bounded.
     voxelSunShadowPass?.setCharacterShadowBoxes(playerBody?.getShadowBoxes() ?? []);
     composer.update(camera, sdir, atmosphereState.sunColor, atmosphereState);
     // Feed the same bounded frame delta used by the simulation into the
@@ -574,8 +577,9 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   const totalChunks = Math.max(1, Math.floor(useUIStore.getState().chunkCount || 9));
   const { bounds, worldRadius } = computeBoundsFromChunkCount(totalChunks);
 
-  // The voxel shadow volume is the sole caster representation. It is fixed to
-  // the generated world bounds, so sun motion never changes a projection grid.
+  // The voxel shadow volume is the static terrain/grass caster representation.
+  // It is fixed to the generated world bounds, while the animated player is
+  // supplied as exact OBB geometry to the same screen-space visibility pass.
   if (!isWebGPU) {
     const glRenderer = baseRenderer as THREE.WebGLRenderer;
     voxelShadowVolume = new VoxelOccupancyVolume({
@@ -708,8 +712,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     (direction) => playerBody?.faceTowards(direction),
   );
   // Decorative grass system (instanced billboards). Its direct sun visibility
-  // uses the same screen-space voxel result as terrain; the caster side uses
-  // the matching crossed-card proxy inside VoxelSunShadowPass.
+  // uses the same combined screen-space voxel visibility result as terrain.
   grassSystem = new GrassBillboardSystem(scene, world, getBlockIdByName('grass_tuft') ?? 9);
   if (voxelSunShadowPass) {
     const resolution = voxelSunShadowPass.getDiagnostics().resolution;

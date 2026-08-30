@@ -13,6 +13,7 @@
 import * as THREE from 'three';
 import { VoxelOccupancyVolume, VOXEL_SHADOW_BRICK_SIZE } from './VoxelOccupancyVolume.js';
 import type { CharacterShadowBox } from './CharacterShadowBox';
+import { RENDER_STYLE } from '../settings/RenderStyle';
 
 const MAX_SHADER_STEPS = 512;
 // The real sun's angular radius is ~0.00465 rad (0.266 degrees). A restrained
@@ -20,7 +21,9 @@ const MAX_SHADER_STEPS = 512;
 // remaining a narrow outdoor-sun transition rather than a point-light blur.
 const SOLAR_ANGULAR_RADIUS = 0.00465;
 const SUN_ANGULAR_RADIUS = SOLAR_ANGULAR_RADIUS * 2.25;
-const MAX_CHARACTER_SHADOW_BOXES = 32;
+// The reference rig currently contributes 17 box meshes. Keep a small amount
+// of headroom without inflating the fragment uniform arrays unnecessarily.
+const MAX_CHARACTER_SHADOW_BOXES = 24;
 
 export interface VoxelSunShadowDiagnostics {
   enabled: boolean;
@@ -29,6 +32,7 @@ export interface VoxelSunShadowDiagnostics {
   maxDistance: number;
   maxSteps: number;
   characterShadowBoxes: number;
+  characterShadowScreenBounds: { minX: number; minY: number; maxX: number; maxY: number };
   sunDirection: { x: number; y: number; z: number };
   volume: ReturnType<VoxelOccupancyVolume['getDiagnostics']>;
 }
@@ -61,7 +65,16 @@ export class VoxelSunShadowPass {
     { length: MAX_CHARACTER_SHADOW_BOXES },
     () => new THREE.Vector3(),
   );
+  private readonly characterBoundsMin = new THREE.Vector3();
+  private readonly characterBoundsMax = new THREE.Vector3();
+  private readonly characterWorldMatrix = new THREE.Matrix4();
+  private readonly characterLocalCorner = new THREE.Vector3();
+  private readonly characterWorldCorner = new THREE.Vector3();
+  private readonly characterClipCorner = new THREE.Vector4();
+  private readonly characterScreenPoint = new THREE.Vector2();
+  private readonly characterScreenBounds = new THREE.Vector4(0, 0, 0, 0);
   private characterBoxCount = 0;
+  private characterShadowMaxDistance = RENDER_STYLE.shadows.character.maxDistance;
 
   constructor(renderer: THREE.WebGLRenderer, width: number, height: number, volume: VoxelOccupancyVolume) {
     this.renderer = renderer;
@@ -104,6 +117,12 @@ export class VoxelSunShadowPass {
         uCharacterBoxInverse: { value: this.characterBoxInverse },
         uCharacterBoxCenters: { value: this.characterBoxCenters },
         uCharacterBoxHalfSizes: { value: this.characterBoxHalfSizes },
+        uCharacterBoundsMin: { value: this.characterBoundsMin },
+        uCharacterBoundsMax: { value: this.characterBoundsMax },
+        uCharacterScreenBounds: { value: this.characterScreenBounds },
+        uCharacterShadowMaxDistance: { value: this.characterShadowMaxDistance },
+        uCameraTanHalfFovY: { value: 1.0 },
+        uCameraViewportHeight: { value: Math.max(1, this.resolution.y) },
       },
       vertexShader: `
         out vec2 vUv;
@@ -136,6 +155,12 @@ export class VoxelSunShadowPass {
         uniform mat4 uCharacterBoxInverse[${MAX_CHARACTER_SHADOW_BOXES}];
         uniform vec3 uCharacterBoxCenters[${MAX_CHARACTER_SHADOW_BOXES}];
         uniform vec3 uCharacterBoxHalfSizes[${MAX_CHARACTER_SHADOW_BOXES}];
+        uniform vec3 uCharacterBoundsMin;
+        uniform vec3 uCharacterBoundsMax;
+        uniform vec4 uCharacterScreenBounds;
+        uniform float uCharacterShadowMaxDistance;
+        uniform float uCameraTanHalfFovY;
+        uniform float uCameraViewportHeight;
 
         in vec2 vUv;
         layout(location = 0) out vec4 outColor;
@@ -254,7 +279,26 @@ export class VoxelSunShadowPass {
           return result;
         }
 
-        bool characterBoxHit(vec3 origin, vec3 direction, int index, float maxTravel) {
+        bool characterBoundsHit(vec3 origin, vec3 direction, float maxTravel) {
+          vec3 directionSafe = vec3(
+            abs(direction.x) < 1e-5 ? (direction.x < 0.0 ? -1e-5 : 1e-5) : direction.x,
+            abs(direction.y) < 1e-5 ? (direction.y < 0.0 ? -1e-5 : 1e-5) : direction.y,
+            abs(direction.z) < 1e-5 ? (direction.z < 0.0 ? -1e-5 : 1e-5) : direction.z
+          );
+          vec3 t0 = (uCharacterBoundsMin - origin) / directionSafe;
+          vec3 t1 = (uCharacterBoundsMax - origin) / directionSafe;
+          vec3 tMin = min(t0, t1);
+          vec3 tMax = max(t0, t1);
+          float entry = max(max(tMin.x, tMin.y), tMin.z);
+          float exit = min(min(tMax.x, tMax.y), tMax.z);
+          return exit >= max(entry, 0.004) && entry <= maxTravel;
+        }
+
+        // Returns a signed slab-overlap margin. Positive means the center sun
+        // ray intersects this exact animated box before maxTravel; negative
+        // means it misses. The continuous margin lets the final edge use a
+        // deterministic geometric coverage width instead of a sampled map.
+        float characterBoxHitMargin(vec3 origin, vec3 direction, int index, float maxTravel) {
           mat4 inverseBox = uCharacterBoxInverse[index];
           vec3 localOrigin = (inverseBox * vec4(origin, 1.0)).xyz - uCharacterBoxCenters[index];
           vec3 localDirection = (inverseBox * vec4(direction, 0.0)).xyz;
@@ -269,20 +313,26 @@ export class VoxelSunShadowPass {
           vec3 tMax = max(t0, t1);
           float entry = max(max(tMin.x, tMin.y), tMin.z);
           float exit = min(min(tMax.x, tMax.y), tMax.z);
-          return exit >= max(entry, 0.004) && entry <= maxTravel;
+          float clippedEntry = max(entry, 0.004);
+          return min(exit - clippedEntry, maxTravel - clippedEntry);
         }
 
-        bool traceCharacterBoxes(vec3 receiverWorld, vec3 direction) {
+        float traceCharacterVisibility(vec3 receiverWorld, vec3 direction, float edgeWidth) {
+          if (uCharacterBoxCount <= 0 || !characterBoundsHit(receiverWorld, direction, uCharacterShadowMaxDistance)) {
+            return 1.0;
+          }
+
+          float shadowCoverage = 0.0;
           for (int index = 0; index < ${MAX_CHARACTER_SHADOW_BOXES}; index++) {
             if (index >= uCharacterBoxCount) break;
-            if (characterBoxHit(receiverWorld, direction, index, uMaxDistance)) return true;
+            float margin = characterBoxHitMargin(receiverWorld, direction, index, uCharacterShadowMaxDistance);
+            shadowCoverage = max(shadowCoverage, smoothstep(-edgeWidth, edgeWidth, margin));
           }
-          return false;
+          return 1.0 - shadowCoverage;
         }
 
         float traceVisibility(vec3 receiverWorld, vec3 rayDirection) {
           vec3 direction = normalize(rayDirection);
-          if (traceCharacterBoxes(receiverWorld, direction)) return 0.0;
           vec3 directionSafe = vec3(
             abs(direction.x) < 1e-5 ? (direction.x < 0.0 ? -1e-5 : 1e-5) : direction.x,
             abs(direction.y) < 1e-5 ? (direction.y < 0.0 ? -1e-5 : 1e-5) : direction.y,
@@ -389,6 +439,20 @@ export class VoxelSunShadowPass {
           tangentA = normalize(tangentA);
           vec3 tangentB = normalize(cross(sun, tangentA));
           float visibility = traceSolarDisc(receiver, sun, tangentA, tangentB);
+          // The player caster is evaluated exactly once per receiver, outside
+          // traceSolarDisc's terrain ray loop. The screen bound is a
+          // conservative optimization; the world-space AABB remains the
+          // correctness guard inside traceCharacterVisibility.
+          if (uCharacterBoxCount > 0 &&
+              vUv.x >= uCharacterScreenBounds.x && vUv.x <= uCharacterScreenBounds.z &&
+              vUv.y >= uCharacterScreenBounds.y && vUv.y <= uCharacterScreenBounds.w) {
+            // Use the receiver's camera-space pixel footprint as a stable
+            // geometric edge width. It avoids undefined derivatives inside
+            // the divergent character broadphase branch.
+            float pixelWorldSize = 2.0 * viewDepth * uCameraTanHalfFovY / max(uCameraViewportHeight, 1.0);
+            float edgeWidth = max(0.004, pixelWorldSize * 1.25);
+            visibility = min(visibility, traceCharacterVisibility(receiver, sun, edgeWidth));
+          }
           outColor = vec4(visibility, 0.0, 0.0, 1.0);
         }
       `,
@@ -422,22 +486,39 @@ export class VoxelSunShadowPass {
     (this.quadMaterial.uniforms.uSunDirection.value as THREE.Vector3).copy(this.sunDirection);
   }
 
-  /** Update the animated full-character caster used by terrain receivers. */
+  /**
+   * Bind the animated player boxes used by the deterministic geometric caster.
+   * The matrices are world-to-local transforms; the box center and half-size
+   * remain in each mesh's local geometry space.
+   */
   setCharacterShadowBoxes(boxes: ReadonlyArray<CharacterShadowBox>): void {
     this.characterBoxCount = Math.min(MAX_CHARACTER_SHADOW_BOXES, boxes.length);
+    this.characterBoundsMin.set(Infinity, Infinity, Infinity);
+    this.characterBoundsMax.set(-Infinity, -Infinity, -Infinity);
+
     for (let index = 0; index < MAX_CHARACTER_SHADOW_BOXES; index += 1) {
       const source = boxes[index];
       if (index < this.characterBoxCount && source) {
         this.characterBoxInverse[index].copy(source.inverseMatrix);
         this.characterBoxCenters[index].copy(source.center);
         this.characterBoxHalfSizes[index].copy(source.halfSize);
+        this.includeCharacterWorldBounds(source);
       } else {
         this.characterBoxInverse[index].identity();
         this.characterBoxCenters[index].set(0, 0, 0);
         this.characterBoxHalfSizes[index].set(0, 0, 0);
       }
     }
+
+    if (this.characterBoxCount === 0 || !Number.isFinite(this.characterBoundsMin.x)) {
+      this.characterBoundsMin.set(0, 0, 0);
+      this.characterBoundsMax.set(0, 0, 0);
+      this.characterScreenBounds.set(0, 0, 0, 0);
+    }
+
     this.quadMaterial.uniforms.uCharacterBoxCount.value = this.characterBoxCount;
+    (this.quadMaterial.uniforms.uCharacterBoundsMin.value as THREE.Vector3).copy(this.characterBoundsMin);
+    (this.quadMaterial.uniforms.uCharacterBoundsMax.value as THREE.Vector3).copy(this.characterBoundsMax);
   }
 
   setSettings(settings: { enabled?: boolean; maxDistance?: number; maxSteps?: number }): void {
@@ -451,10 +532,16 @@ export class VoxelSunShadowPass {
 
   update(camera: THREE.PerspectiveCamera, sunDirection: THREE.Vector3): void {
     this.setSunDirection(sunDirection);
+    camera.updateMatrixWorld();
     this.quadMaterial.uniforms.uCameraNear.value = camera.near;
     this.quadMaterial.uniforms.uCameraFar.value = camera.far;
+    this.quadMaterial.uniforms.uCameraTanHalfFovY.value = Math.tan(
+      THREE.MathUtils.degToRad(camera.getEffectiveFOV()) * 0.5,
+    );
+    this.quadMaterial.uniforms.uCameraViewportHeight.value = Math.max(1, this.resolution.y);
     (this.quadMaterial.uniforms.uInvProjectionMatrix.value as THREE.Matrix4).copy(camera.projectionMatrixInverse);
     (this.quadMaterial.uniforms.uCameraMatrixWorld.value as THREE.Matrix4).copy(camera.matrixWorld);
+    this.updateCharacterScreenBounds(camera);
     if (this.depthTexture) this.quadMaterial.uniforms.tDepth.value = this.depthTexture;
 
     if (!this.supported) return;
@@ -473,9 +560,109 @@ export class VoxelSunShadowPass {
       maxDistance: this.maxDistance,
       maxSteps: this.maxSteps,
       characterShadowBoxes: this.characterBoxCount,
+      characterShadowScreenBounds: {
+        minX: this.characterScreenBounds.x,
+        minY: this.characterScreenBounds.y,
+        maxX: this.characterScreenBounds.z,
+        maxY: this.characterScreenBounds.w,
+      },
       sunDirection: { x: this.sunDirection.x, y: this.sunDirection.y, z: this.sunDirection.z },
       volume: this.volume.getDiagnostics(),
     };
+  }
+
+  private includeCharacterWorldBounds(box: CharacterShadowBox): void {
+    this.characterWorldMatrix.copy(box.inverseMatrix).invert();
+    for (let x = 0; x < 2; x += 1) {
+      for (let y = 0; y < 2; y += 1) {
+        for (let z = 0; z < 2; z += 1) {
+          this.characterLocalCorner.set(
+            box.center.x + (x ? box.halfSize.x : -box.halfSize.x),
+            box.center.y + (y ? box.halfSize.y : -box.halfSize.y),
+            box.center.z + (z ? box.halfSize.z : -box.halfSize.z),
+          );
+          this.characterWorldCorner.copy(this.characterLocalCorner).applyMatrix4(this.characterWorldMatrix);
+          this.characterBoundsMin.min(this.characterWorldCorner);
+          this.characterBoundsMax.max(this.characterWorldCorner);
+        }
+      }
+    }
+  }
+
+  private updateCharacterScreenBounds(camera: THREE.PerspectiveCamera): void {
+    if (this.characterBoxCount === 0) {
+      this.characterScreenBounds.set(0, 0, 0, 0);
+      (this.quadMaterial.uniforms.uCharacterScreenBounds.value as THREE.Vector4).copy(this.characterScreenBounds);
+      return;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let requiresFullScreen = false;
+
+    for (let x = 0; x < 2; x += 1) {
+      for (let y = 0; y < 2; y += 1) {
+        for (let z = 0; z < 2; z += 1) {
+          this.characterWorldCorner.set(
+            x ? this.characterBoundsMax.x : this.characterBoundsMin.x,
+            y ? this.characterBoundsMax.y : this.characterBoundsMin.y,
+            z ? this.characterBoundsMax.z : this.characterBoundsMin.z,
+          );
+          if (this.includeCharacterScreenPoint(camera, this.characterWorldCorner)) {
+            minX = Math.min(minX, this.characterScreenPoint.x);
+            minY = Math.min(minY, this.characterScreenPoint.y);
+            maxX = Math.max(maxX, this.characterScreenPoint.x);
+            maxY = Math.max(maxY, this.characterScreenPoint.y);
+          } else {
+            requiresFullScreen = true;
+          }
+
+          this.characterWorldCorner.addScaledVector(this.sunDirection, -this.characterShadowMaxDistance);
+          if (this.includeCharacterScreenPoint(camera, this.characterWorldCorner)) {
+            minX = Math.min(minX, this.characterScreenPoint.x);
+            minY = Math.min(minY, this.characterScreenPoint.y);
+            maxX = Math.max(maxX, this.characterScreenPoint.x);
+            maxY = Math.max(maxY, this.characterScreenPoint.y);
+          } else {
+            requiresFullScreen = true;
+          }
+        }
+      }
+    }
+
+    if (requiresFullScreen || !Number.isFinite(minX) || !Number.isFinite(minY)) {
+      this.characterScreenBounds.set(0, 0, 1, 1);
+    } else {
+      const padX = 2 / Math.max(1, this.resolution.x);
+      const padY = 2 / Math.max(1, this.resolution.y);
+      this.characterScreenBounds.set(
+        THREE.MathUtils.clamp(minX - padX, 0, 1),
+        THREE.MathUtils.clamp(minY - padY, 0, 1),
+        THREE.MathUtils.clamp(maxX + padX, 0, 1),
+        THREE.MathUtils.clamp(maxY + padY, 0, 1),
+      );
+    }
+    (this.quadMaterial.uniforms.uCharacterScreenBounds.value as THREE.Vector4).copy(this.characterScreenBounds);
+  }
+
+  private includeCharacterScreenPoint(
+    camera: THREE.PerspectiveCamera,
+    point: THREE.Vector3,
+  ): boolean {
+    this.characterClipCorner.set(point.x, point.y, point.z, 1)
+      .applyMatrix4(camera.matrixWorldInverse)
+      .applyMatrix4(camera.projectionMatrix);
+    if (this.characterClipCorner.w <= 1e-4) {
+      return false;
+    }
+    const inverseW = 1 / this.characterClipCorner.w;
+    this.characterScreenPoint.set(
+      this.characterClipCorner.x * inverseW * 0.5 + 0.5,
+      this.characterClipCorner.y * inverseW * 0.5 + 0.5,
+    );
+    return true;
   }
 
   dispose(): void {
