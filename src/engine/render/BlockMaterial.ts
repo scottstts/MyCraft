@@ -515,6 +515,30 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     uniforms.voxelShadowCameraFar.value = far;
   }
 
+  /**
+   * Share the complete screen-space visibility binding with another block
+   * receiver. Render-only terrain such as the ocean seabed must use the same
+   * uniform objects, not a one-frame value copy: the mask target, resolution,
+   * and depth attachment can all change during resize, while Composer
+   * temporarily disables the shared binding during its opaque capture.
+   */
+  shareVoxelShadowState(source: BlockMaterial): void {
+    const sourceUniforms = source.uniforms as Record<string, THREE.IUniform>;
+    const targetUniforms = this.uniforms as Record<string, THREE.IUniform>;
+    const keys = [
+      'voxelShadowMask',
+      'voxelShadowDepth',
+      'voxelShadowResolution',
+      'voxelShadowCameraNear',
+      'voxelShadowCameraFar',
+      'voxelShadowEnabled',
+    ] as const;
+
+    for (const key of keys) {
+      targetUniforms[key] = sourceUniforms[key];
+    }
+  }
+
   /** Day/night factor (0=night, 1=day) */
   setDayLight(level: number): void {
     const uniforms = this.uniforms as Record<string, { value: unknown }>;

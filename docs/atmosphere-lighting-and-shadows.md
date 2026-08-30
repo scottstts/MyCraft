@@ -16,7 +16,7 @@ The direct-sun visibility path consists of:
 2. `VoxelSunShadowPass`, which traces bounded solar visibility through that volume and combines it with the shared scene depth.
 3. Terrain and grass materials, which sample the result during their final color shading.
 
-The occupancy volume is updated from `World` chunk and block events, not from mesh arrival. This keeps shadows tied to gameplay state after mining, placing, chunk replacement, and save ingestion. The animated player is supplied separately as exact shadow boxes each frame, so the character does not need to be rasterized into the terrain occupancy volume.
+The occupancy volume is updated from `World` chunk and block events, not from mesh arrival. This keeps shadows tied to gameplay state after mining, placing, chunk replacement, and save ingestion. The animated player is supplied separately as exact shadow boxes each frame, so the character does not need to be rasterized into the terrain occupancy volume. Both authoritative terrain and the render-only seabed share the same visibility-mask, receiver-depth, and resolution uniforms, which keeps the character shadow continuous when the player swims beyond the authored terrain boundary.
 
 The composer owns the depth target used by aerial perspective, underwater effects, lens effects, and voxel-shadow reconstruction. During the depth capture, voxel-shadow sampling is temporarily disabled and the depth sampler is detached to avoid a WebGL feedback loop; materials are restored before the visibility and final color passes.
 

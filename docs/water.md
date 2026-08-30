@@ -16,7 +16,7 @@ VISUAL_WATER_LEVEL = WATER_LEVEL + OCEAN_WATER_CENTER_OFFSET
 
 The half-block offset is a visual envelope for refraction, caustics, and screen-space masking; it does not change the gameplay interaction plane.
 
-When `USE_OCEAN_HORIZON` is enabled, `WaterSystem` adds the far ocean surface and its visual seabed extension. These meshes never enter `World`, so they cannot be selected, mined, placed on, or serialized into a save. The system uses the generated seed and world bounds to keep the far field continuous with the local terrain.
+When `USE_OCEAN_HORIZON` is enabled, `WaterSystem` adds the far ocean surface and its visual seabed extension. These meshes never enter `World`, so they cannot be selected, mined, placed on, or serialized into a save. The system uses the generated seed and world bounds to keep the far field continuous with the local terrain. The seabed material shares the authoritative terrain's screen-space sun-visibility state, allowing the animated character caster to project onto the underwater extension without introducing a second shadow pipeline.
 
 ## Optical inputs and frame behavior
 

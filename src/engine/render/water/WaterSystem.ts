@@ -609,6 +609,11 @@ export class WaterSystem {
       for (const key of ['sunDirection', 'sunColor', 'dayLight', 'starLight', 'skyAmbient']) {
         if (sourceUniforms[key] && targetUniforms[key]) targetUniforms[key].value = sourceUniforms[key].value
       }
+      // The visual-only seabed is still a real sun-shadow receiver. Share the
+      // complete binding so terrain and the animated character remain able to
+      // cast into it underwater, including after target resizes and during
+      // Composer's feedback-safe depth capture.
+      this.seabedMaterial.shareVoxelShadowState(source)
     }
     this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.80, this.time)
   }

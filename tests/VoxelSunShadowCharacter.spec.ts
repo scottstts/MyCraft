@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
+import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 import { VoxelSunShadowPass } from '../src/engine/render/lighting/VoxelSunShadowPass';
 import { VoxelOccupancyVolume } from '../src/engine/render/lighting/VoxelOccupancyVolume';
 
@@ -69,5 +70,39 @@ describe('analytic character sun visibility', () => {
 
     pass.dispose();
     volume.dispose();
+  });
+
+  it('shares the live character-shadow receiver state with the underwater seabed material', () => {
+    const albedo = new THREE.DataTexture(
+      new Uint8Array([255, 255, 255, 255]),
+      1,
+      1,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    );
+    albedo.needsUpdate = true;
+    const shadowMask = albedo.clone();
+    const shadowDepth = albedo.clone();
+    const terrain = new BlockMaterial(albedo, null);
+    const seabed = new BlockMaterial(albedo, null);
+
+    terrain.setVoxelShadowTexture(shadowMask, 320, 200, true);
+    terrain.setVoxelShadowDepthTexture(shadowDepth, 0.1, 1024);
+    seabed.shareVoxelShadowState(terrain);
+
+    expect(seabed.uniforms.voxelShadowMask).toBe(terrain.uniforms.voxelShadowMask);
+    expect(seabed.uniforms.voxelShadowDepth).toBe(terrain.uniforms.voxelShadowDepth);
+    expect(seabed.uniforms.voxelShadowResolution).toBe(terrain.uniforms.voxelShadowResolution);
+    expect(seabed.uniforms.voxelShadowEnabled).toBe(terrain.uniforms.voxelShadowEnabled);
+
+    terrain.setVoxelShadowTexture(shadowMask, 640, 360, false);
+    expect(seabed.uniforms.voxelShadowResolution.value).toEqual(new THREE.Vector2(640, 360));
+    expect(seabed.uniforms.voxelShadowEnabled.value).toBe(false);
+
+    terrain.dispose();
+    seabed.dispose();
+    shadowMask.dispose();
+    shadowDepth.dispose();
+    albedo.dispose();
   });
 });
