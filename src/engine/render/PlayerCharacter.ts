@@ -219,8 +219,8 @@ export class PlayerCharacter {
   private readonly shadowBoxes: CharacterShadowBox[] = [];
 
   private isFirstPerson = false;
-  private bodyYaw = 0;
-  private forcedFacingYaw = 0;
+  private bodyYaw = PLAYER.initialYaw;
+  private forcedFacingYaw = PLAYER.initialYaw;
   private forcedFacingTime = 0;
   private walkTimer = 0;
   private swimTimer = 0;
@@ -391,6 +391,7 @@ export class PlayerCharacter {
     this.playerRoot = playerRoot;
     this.camera = camera;
     this.input = input;
+    this.input.setMovementYawOffset?.(this.isFirstPerson ? 0 : Math.PI);
     playerRoot.add(this.character);
   }
 
@@ -400,6 +401,7 @@ export class PlayerCharacter {
 
   setFirstPerson(value: boolean): void {
     this.isFirstPerson = value;
+    this.input?.setMovementYawOffset?.(value ? 0 : Math.PI);
     // Only the geometry surrounding the eye is hidden. The real arms,
     // pickaxe, torso, backpack, and legs remain part of the rig in FPS view.
     this.headMesh.visible = !value;
@@ -430,7 +432,7 @@ export class PlayerCharacter {
    * Update the rig from physics and, unless explicitly disabled for a
    * diagnostic camera, write the active first-/third-person camera pose.
    */
-  update(dt: number, updateCamera = true): void {
+  update(dt: number, updateCamera = true, snapCamera = false): void {
     if (!this.playerRoot || !this.camera || !this.input || !this.controller) return;
 
     const state = this.controller.getMovementState();
@@ -450,7 +452,7 @@ export class PlayerCharacter {
     this.applyAnimation(dt, state);
 
     this.character.updateMatrixWorld(true);
-    if (updateCamera) this.updateCamera(dt);
+    if (updateCamera) this.updateCamera(dt, snapCamera);
     this.character.updateMatrixWorld(true);
   }
 
@@ -632,7 +634,7 @@ export class PlayerCharacter {
     }
   }
 
-  private updateCamera(dt: number): void {
+  private updateCamera(dt: number, snap = false): void {
     const camera = this.camera;
     if (!camera) return;
     this.headPivot.getWorldPosition(this.scratchTarget);
@@ -654,19 +656,23 @@ export class PlayerCharacter {
     this.scratchTarget.y += 0.30;
     const camDistance = CFG.cameraDistance;
     const cosPitch = Math.cos(pitch);
+    // Start the orbit on the character's front side. The player heading is
+    // intentionally kept in the shared input yaw so movement and mouse-look
+    // remain unchanged; only the third-person orbit is rotated 180 degrees.
+    const orbitYaw = yaw + Math.PI;
     const desiredCamera = this.scratchDirection.set(
-      Math.sin(yaw) * cosPitch * camDistance,
+      Math.sin(orbitYaw) * cosPitch * camDistance,
       -Math.sin(pitch) * camDistance,
-      Math.cos(yaw) * cosPitch * camDistance,
+      Math.cos(orbitYaw) * cosPitch * camDistance,
     ).add(this.scratchTarget);
     // Shift the orbit laterally into an over-shoulder composition. With the
     // body centered exactly under a target-at-head camera, the reticle points
     // at the character rather than giving the player a useful world aim point.
-    desiredCamera.x += Math.cos(yaw) * CFG.thirdPersonShoulderOffset;
-    desiredCamera.z -= Math.sin(yaw) * CFG.thirdPersonShoulderOffset;
+    desiredCamera.x += Math.cos(orbitYaw) * CFG.thirdPersonShoulderOffset;
+    desiredCamera.z -= Math.sin(orbitYaw) * CFG.thirdPersonShoulderOffset;
     // Match the reference's responsive orbit follow with a frame-rate
     // independent equivalent of its per-frame 0.4 interpolation.
-    const alpha = 1 - Math.exp(-30 * Math.max(0, Math.min(0.1, dt)));
+    const alpha = snap ? 1 : 1 - Math.exp(-30 * Math.max(0, Math.min(0.1, dt)));
     this.scratchCameraCandidate.copy(camera.position).lerp(desiredCamera, alpha);
     if (this.controller) {
       // Keep the orbit center above the character's terrain-contact plane,
@@ -688,9 +694,9 @@ export class PlayerCharacter {
     // frame while recovering from an invalid orbit position.
     camera.position.copy(this.scratchCameraCandidate);
     this.scratchDirection.set(
-      -Math.sin(yaw) * cosPitch,
+      -Math.sin(orbitYaw) * cosPitch,
       Math.sin(pitch),
-      -Math.cos(yaw) * cosPitch,
+      -Math.cos(orbitYaw) * cosPitch,
     ).normalize();
     this.scratchTarget.addScaledVector(this.scratchDirection, CFG.thirdPersonAimDistance);
     camera.lookAt(this.scratchTarget);

@@ -25,10 +25,11 @@ const ICONS: Record<number, string> = {
 
 export function Hotbar() {
   const selectedSlot = useUIStore(s => s.selectedSlot)
-  const gameStarted = useUIStore(s => s.gameStarted)
+  const inGame = useUIStore(s => s.inGame)
+  const loading = useUIStore(s => s.loading)
   const slots = useInventory(s => s.slots)
 
-  if (!gameStarted) return null
+  if (!inGame || loading) return null
 
   return (
     <div style={{ position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 4, padding: 4, background: 'rgba(0,0,0,0.25)', borderRadius: 6 }}>
@@ -58,11 +59,12 @@ export function Hotbar() {
 }
 
 export function Crosshair() {
-  const gameStarted = useUIStore(s => s.gameStarted)
+  const inGame = useUIStore(s => s.inGame)
+  const loading = useUIStore(s => s.loading)
   const size = 14
   const thickness = 2
 
-  if (!gameStarted) return null
+  if (!inGame || loading) return null
 
   return (
     <div style={{ position: 'absolute', left: '50%', top: '50%', pointerEvents: 'none' }}>
@@ -75,6 +77,7 @@ export function Crosshair() {
 export function TopRightWidget() {
   const fps = useUIStore(s => s.fps)
   const gameStarted = useUIStore(s => s.gameStarted)
+  const loading = useUIStore(s => s.loading)
   
   // Read time from engine globals for clock
   const [t, setT] = React.useState(0);
@@ -101,7 +104,7 @@ export function TopRightWidget() {
   const clockSize = 36
   const center = clockSize / 2
 
-  if (!gameStarted) return null
+  if (!gameStarted || loading) return null
 
   return (
     <div id="top-right-widget" style={{
@@ -193,198 +196,86 @@ export function PauseHint() {
 
 export function PauseMenu() {
   const paused = useUIStore(s => s.paused)
+  const gameStarted = useUIStore(s => s.gameStarted)
+  const loading = useUIStore(s => s.loading)
   const setPaused = useUIStore(s => s.setPaused)
-  const bumpRestartToken = useUIStore(s => s.bumpRestartToken)
-  const inGame = useUIStore(s => s.inGame)
-  const setGameStarted = useUIStore(s => s.setGameStarted)
-  const setLoading = useUIStore(s => s.setLoading)
-  if (!paused) return null
-  return (
-    <div style={{ 
-      position: 'absolute', 
-      inset: 0, 
-      display: 'flex', 
-      alignItems: 'center', 
-      justifyContent: 'center', 
-      background: 'rgba(0,0,0,0.75)', 
-      backdropFilter: 'blur(20px)',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
-    }}>
-      <div style={{ 
-        width: 420, 
-        padding: 32, 
-        background: 'rgba(15, 23, 32, 0.96)', 
-        borderRadius: 16, 
-        color: '#f8f9fa', 
-        boxShadow: '0 24px 60px rgba(0,0,0,0.48)', 
-        border: '1px solid rgba(148,163,184,0.16)'
-      }}>
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          marginBottom: 24,
-          paddingBottom: 16,
-          borderBottom: '1px solid rgba(255,255,255,0.06)'
-        }}>
-          <div style={{ 
-            fontSize: 28, 
-            fontWeight: 800, 
-            letterSpacing: 0,
-            color: '#f8fafc'
-          }}>
-            Game Paused
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 16 }}>
-          <button 
-            onClick={() => setPaused(false)} 
-            style={{ 
-              flex: 1, 
-              padding: '16px 24px', 
-              background: '#2dd4bf', 
-              color: '#061311', 
-              border: '1px solid rgba(94,234,212,0.5)', 
-              borderRadius: 12, 
-              cursor: 'pointer', 
-              fontWeight: 700,
-              fontSize: 14,
-              letterSpacing: 0.5,
-              textTransform: 'uppercase',
-              boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              outline: 'none'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 14px 30px rgba(0,0,0,0.38)'
-              e.currentTarget.style.background = '#5eead4'
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 10px 24px rgba(0,0,0,0.32)'
-              e.currentTarget.style.background = '#2dd4bf'
-            }}
-          >
-            Resume
-          </button>
-          <button 
-            onClick={async () => { 
-              setLoading(true)
-              try {
-                // Minimal structural types to avoid explicit any
-                type SaveFilePickerOptions = {
-                  suggestedName?: string
-                  types?: Array<{ description?: string; accept: Record<string, string[]> }>
-                  excludeAcceptAllOption?: boolean
-                }
-                type FileSystemFileHandleLike = {
-                  createWritable: () => Promise<{ write(data: Blob | BufferSource | string): Promise<void>; close(): Promise<void> }>
-                }
-                // Step 1: Ask the user where to save (when supported)
-                const w = window as unknown as { showSaveFilePicker?: (opts?: SaveFilePickerOptions) => Promise<FileSystemFileHandleLike> } & { __nextSaveFileHandle?: unknown };
-                if (typeof w.showSaveFilePicker === 'function') {
-                  try {
-                    const suggestedName = `mycraft-world-${new Date().toISOString().replace(/[:.]/g,'-').replace('T','_').replace('Z','')}.json`
-                    const handle = await w.showSaveFilePicker({
-                      suggestedName,
-                      types: [{ description: 'MyCraft World (JSON)', accept: { 'application/json': ['.json'] } }],
-                    })
-                    w.__nextSaveFileHandle = handle
-                  } catch (err: unknown) {
-                    // If user canceled, stop here silently
-                    const name = (err as { name?: string } | undefined)?.name
-                    if (name === 'AbortError' || name === 'NotAllowedError') {
-                      setLoading(false)
-                      return
-                    }
-                    console.warn('Save picker failed; falling back to default download.', err)
-                  }
-                }
+  if (!paused || !gameStarted || loading) return null
 
-                // Step 2: Trigger the actual save (engine will use handle if provided)
-                ;(window as Window & { __saveWorld?: () => void }).__saveWorld?.()
-                // Optional small delay for UX
-                await new Promise(resolve => setTimeout(resolve, 500))
-              } catch (e) {
-                console.error('Save failed:', e)
-              } finally {
-                setLoading(false)
-              }
-            }} 
-            style={{ 
-              flex: 1, 
-              padding: '16px 24px', 
-              background: '#10b981', 
-              color: '#04130e', 
-              border: '1px solid rgba(52,211,153,0.45)', 
-              borderRadius: 12, 
-              cursor: 'pointer', 
-              fontWeight: 700,
-              fontSize: 14,
-              letterSpacing: 0.5,
-              textTransform: 'uppercase',
-              boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              outline: 'none'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 14px 30px rgba(0,0,0,0.38)'
-              e.currentTarget.style.background = '#34d399'
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 10px 24px rgba(0,0,0,0.32)'
-              e.currentTarget.style.background = '#10b981'
-            }}
-          >
-            Save
-          </button>
-          <button 
-            onClick={() => { setGameStarted(false); bumpRestartToken(); setPaused(false) }} 
-            style={{ 
-              flex: 1, 
-              padding: '16px 24px', 
-              background: '#1f2937', 
-              color: '#f8fafc', 
-              border: '1px solid rgba(148,163,184,0.22)', 
-              borderRadius: 12, 
-              cursor: 'pointer', 
-              fontWeight: 700,
-              fontSize: 14,
-              letterSpacing: 0.5,
-              textTransform: 'uppercase',
-              boxShadow: '0 10px 24px rgba(0,0,0,0.28)',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              outline: 'none'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 14px 30px rgba(0,0,0,0.34)'
-              e.currentTarget.style.background = '#253244'
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 10px 24px rgba(0,0,0,0.28)'
-              e.currentTarget.style.background = '#1f2937'
-            }}
-          >
-            Restart
-          </button>
+  return (
+    <div style={{
+      position: 'absolute',
+      inset: 0,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '16px',
+      background: 'rgba(8, 13, 18, 0.76)',
+      backdropFilter: 'blur(2px)',
+      zIndex: 900,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    }}>
+      <div style={{
+        width: '100%',
+        maxWidth: 480,
+        padding: 'clamp(20px, 5vw, 32px)',
+        boxSizing: 'border-box',
+        borderRadius: 16,
+        background: 'rgba(15, 23, 32, 0.94)',
+        border: '1px solid rgba(148,163,184,0.16)',
+        boxShadow: '0 24px 60px rgba(0,0,0,0.48)',
+        backdropFilter: 'blur(20px)',
+        color: '#f8f9fa',
+      }}>
+        <div style={{
+          marginBottom: 'clamp(16px, 4vw, 24px)',
+          paddingBottom: 16,
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          fontSize: 'clamp(24px, 6vw, 28px)',
+          fontWeight: 800,
+          color: '#f8fafc',
+        }}>
+          Game Paused
         </div>
-        {!inGame && (
-          <div style={{ 
-            marginTop: 20, 
-            fontSize: 12, 
-            color: '#64748b',
-            textAlign: 'center',
-            fontStyle: 'italic',
-            lineHeight: 1.4
-          }}>
-            Click the canvas to enter the game and gain camera control.
-          </div>
-        )}
+        <button
+          onClick={() => {
+            setPaused(false)
+            ;(window as Window & { __requestGameEntryPointerLock?: () => void }).__requestGameEntryPointerLock?.()
+          }}
+          style={{
+            width: '100%',
+            height: 52,
+            boxSizing: 'border-box',
+            padding: '12px 24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: '#2dd4bf',
+            color: '#061311',
+            border: '1px solid rgba(94,234,212,0.5)',
+            borderRadius: 12,
+            cursor: 'pointer',
+            fontWeight: 700,
+            fontSize: 'clamp(14px, 3.5vw, 16px)',
+            lineHeight: '20px',
+            letterSpacing: 0.5,
+            textTransform: 'uppercase',
+            boxShadow: '0 10px 24px rgba(0,0,0,0.32)',
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+            outline: 'none',
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)'
+            e.currentTarget.style.boxShadow = '0 14px 30px rgba(0,0,0,0.38)'
+            e.currentTarget.style.background = '#5eead4'
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)'
+            e.currentTarget.style.boxShadow = '0 10px 24px rgba(0,0,0,0.32)'
+            e.currentTarget.style.background = '#2dd4bf'
+          }}
+        >
+          Resume Game
+        </button>
       </div>
     </div>
   )

@@ -2,8 +2,12 @@ import { useUIStore } from '../state/ui'
 
 export function LoadingOverlay() {
   const loading = useUIStore(s => s.loading)
+  const gameStarted = useUIStore(s => s.gameStarted)
+  const inGame = useUIStore(s => s.inGame)
 
-  if (!loading) return null
+  // Startup loading is represented by the spinner on the selected StartPanel
+  // button. Keep this full-screen blocker for in-game operations such as save.
+  if (!loading || !gameStarted || !inGame) return null
 
   return (
     <div style={{

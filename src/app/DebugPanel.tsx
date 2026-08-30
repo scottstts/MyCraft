@@ -59,6 +59,7 @@ const CONTROL_STYLE: React.CSSProperties = {
 export const DebugPanel: React.FC = () => {
   const { debugVisible, setDebugVisible, setAudioVisible } = useUIStore();
   const gameStarted = useUIStore(s => s.gameStarted);
+  const loading = useUIStore(s => s.loading);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [sfxVol, setSfxVol] = useState(0.7);
   const [timeOfDay, setTimeOfDay] = useState(0);
@@ -98,16 +99,19 @@ export const DebugPanel: React.FC = () => {
     if (debugVisible) setAudioVisible(false);
   }, [debugVisible, setAudioVisible]);
 
-  if (!gameStarted) return null;
+  if (!gameStarted || loading) return null;
 
   if (!debugVisible) {
     return (
       <div style={{ position: 'fixed', top: '12px', left: '12px', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <button
           onClick={() => { setAudioVisible(false); setDebugVisible(true); }}
-          style={{ padding: '8px 12px', background: 'rgba(15, 23, 32, 0.94)', color: '#f8f9fa', border: '1px solid rgba(148,163,184,0.16)', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', fontWeight: 600, letterSpacing: 0.3, pointerEvents: 'auto', backdropFilter: 'blur(10px)', boxShadow: '0 8px 20px rgba(0,0,0,0.28)' }}
+          style={{ padding: '8px 12px', background: 'rgba(15, 23, 32, 0.94)', color: '#f8f9fa', border: '1px solid rgba(148,163,184,0.16)', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', lineHeight: '16px', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', fontWeight: 600, letterSpacing: 0.3, pointerEvents: 'auto', backdropFilter: 'blur(10px)', boxShadow: '0 8px 20px rgba(0,0,0,0.28)', display: 'flex', alignItems: 'center', gap: '6px' }}
         >
-          ⚙ Settings
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ width: 14, height: 14, display: 'block', flexShrink: 0 }}>
+            <path d="M19.43 12.98c.04-.32.07-.65.07-.98s-.02-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.37-.31-.6-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98L14.5 1.42C14.47 1.18 14.25 1 14 1h-4c-.25 0-.46.18-.5.42L9.12 4.07c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.08-.48 0-.6.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.08.65-.08.98s.03.66.08.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.37.31.6.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1c.23.08.48 0 .6-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5z" />
+          </svg>
+          <span>Settings</span>
         </button>
         <SaveWorldButton />
       </div>

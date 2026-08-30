@@ -5,6 +5,7 @@ import { tryPlayOnUserGesture, nextTrack, prevTrack, isPlaying, getCurrentTime, 
 // Always-visible music player widget (top-right), using the improved player UI
 export const AudioPanel: React.FC = () => {
   const gameStarted = useUIStore(s => s.gameStarted)
+  const loading = useUIStore(s => s.loading)
   const panelRef = React.useRef<HTMLDivElement | null>(null)
   const [playing, setPlaying] = React.useState(false)
   const [elapsed, setElapsed] = React.useState(0)
@@ -111,7 +112,7 @@ export const AudioPanel: React.FC = () => {
 
   // no time labels in the compact widget
 
-  if (!gameStarted) return null
+  if (!gameStarted || loading) return null
   
   // Don't render until we have the width measurement
   if (widthPx === undefined) return null

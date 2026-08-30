@@ -33,6 +33,7 @@ import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { GrassBillboardSystem } from '../render/GrassBillboardSystem';
 import { getBlockIdByName } from '../world/blocks/BlockRegistry';
+import { chunkKey } from '../utils/coords';
 import { useUIStore } from '../../state/ui';
 import { USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
@@ -48,6 +49,8 @@ import { VoxelSunShadowPass } from '../render/lighting/VoxelSunShadowPass.js';
 let rafId: number | null = null;
 let running = false;
 let startPromise: Promise<void> | null = null;
+let gameplayReady = false;
+let cancelStartupWait: (() => void) | null = null;
 
 // Engine subsystems
 let renderer: Renderer | null = null;
@@ -101,6 +104,60 @@ declare global {
   }
 }
 
+interface StartupReadiness {
+  promise: Promise<void>;
+  markChunkReady: (key: ChunkKey) => void;
+  markChunkMesh: (key: ChunkKey) => void;
+  cancel: () => void;
+}
+
+function createStartupReadiness(expectedKeys: Iterable<ChunkKey>): StartupReadiness {
+  const expected = new Set(expectedKeys);
+  const ready = new Set<ChunkKey>();
+  const meshed = new Set<ChunkKey>();
+  let resolvePromise: () => void = () => undefined;
+  let rejectPromise: (reason?: unknown) => void = () => undefined;
+  let settled = false;
+
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  // Validation can reject startup before the await below is reached. Keep the
+  // cancellation path from producing an unhandled-rejection report while the
+  // public start() promise still receives the original rejection.
+  void promise.catch(() => undefined);
+
+  const maybeResolve = () => {
+    if (settled || ready.size < expected.size || meshed.size < expected.size) return;
+    settled = true;
+    resolvePromise();
+  };
+
+  const markChunkReady = (key: ChunkKey) => {
+    if (expected.has(key)) {
+      ready.add(key);
+      maybeResolve();
+    }
+  };
+
+  const markChunkMesh = (key: ChunkKey) => {
+    if (expected.has(key)) {
+      meshed.add(key);
+      maybeResolve();
+    }
+  };
+
+  const cancel = () => {
+    if (settled) return;
+    settled = true;
+    rejectPromise(new Error('World startup was cancelled'));
+  };
+
+  maybeResolve();
+  return { promise, markChunkReady, markChunkMesh, cancel };
+}
+
 function computeBoundsFromChunkCount(totalChunks: number) {
   const sideApprox = Math.max(1, Math.round(Math.sqrt(totalChunks)));
   const side = sideApprox;
@@ -114,6 +171,19 @@ function computeBoundsFromChunkCount(totalChunks: number) {
   } as const;
   const worldRadius = Math.max(Math.abs(bounds.maxX - bounds.minX), Math.abs(bounds.maxZ - bounds.minZ)) / 2;
   return { bounds, worldRadius };
+}
+
+function getGeneratedChunkKeys(totalChunks: number): ChunkKey[] {
+  const side = Math.max(1, Math.round(Math.sqrt(totalChunks)));
+  const negRadius = Math.floor(side / 2);
+  const posRadius = side - 1 - negRadius;
+  const keys: ChunkKey[] = [];
+  for (let cx = -negRadius; cx <= posRadius; cx++) {
+    for (let cz = -negRadius; cz <= posRadius; cz++) {
+      keys.push(chunkKey(cx, 0, cz));
+    }
+  }
+  return keys;
 }
 
 function downloadJson(filename: string, data: unknown): void {
@@ -204,6 +274,19 @@ async function saveWorldToFile(): Promise<void> {
   } catch (e) {
     console.error('Save world failed:', e);
     alert('Failed to save world. See console for details.');
+  }
+}
+
+function flushPendingChunkMeshes(): void {
+  if (!chunkRenderer || pendingChunkMeshes.size === 0) return;
+  for (const [key, entry] of pendingChunkMeshes) {
+    try {
+      chunkRenderer.handleChunkMesh(entry.response);
+    } catch (error) {
+      console.error(`Apply initial chunk mesh failed for ${key}`, error);
+    } finally {
+      pendingChunkMeshes.delete(key);
+    }
   }
 }
 
@@ -449,7 +532,9 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
 
   diagnosticView = options.diagnosticView ?? null;
   diagnosticMode = diagnosticView !== null;
+  gameplayReady = false;
   voxelShadowVolumeReported = false;
+  pendingChunkMeshes.clear();
   
   // Initialize renderer
   renderer = new Renderer(canvas);
@@ -555,15 +640,35 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
 
   // Input system (pointer lock + mouse look)
   inputSystem = new InputSystem(canvas, camera);
+  // A native file picker can produce a delayed pointerlockchange event after
+  // the input system is constructed. Only a lock that was active once
+  // gameplay was ready should be interpreted as an Esc/manual pause; an
+  // initial unlock must not manufacture a pause screen on snapshot entry.
+  let pointerLockWasActiveInGameplay = false;
   // Track pointer lock -> set inGame accordingly
   inputSystem.onPointerLockChanged((locked: boolean) => {
     const ui = useUIStore.getState();
     if (locked) {
-      ui.setInGame(true);
+      // Pointer lock may be granted from the launch button while workers are
+      // still loading. Keep the menu in control until terrain readiness has
+      // explicitly completed.
+      if (gameplayReady) {
+        pointerLockWasActiveInGameplay = true;
+        const wasAwaitingEntry = !ui.inGame;
+        ui.setInGame(true);
+        // A delayed grant can arrive after CanvasHost has shown the fallback
+        // pause card. Treat that grant as successful entry, but never dismiss
+        // a pause that was already active during gameplay.
+        if (wasAwaitingEntry) ui.setPaused(false);
+      }
     } else {
-      // If pointer lock was released by browser (e.g., Esc), leave inGame only if not paused
-      if (!ui.paused) ui.setInGame(false);
-      // If paused, remain inGame so UI can handle clicks
+      // Treat pointer-lock loss (normally Escape) as a real pause. Keep the
+      // game session active so the HUD remains visible and PauseMenu can own
+      // the resume action with a fresh user gesture.
+      if (gameplayReady && pointerLockWasActiveInGameplay && !ui.paused) {
+        ui.setPaused(true);
+        ui.setInGame(true);
+      }
     }
   });
   // InputSystem must exist before the character is initialized. The character
@@ -576,6 +681,21 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   // Determine world size (total chunks -> NxN grid)
   const totalChunks = Math.max(1, Math.floor(useUIStore.getState().chunkCount || 9));
   const { bounds, worldRadius } = computeBoundsFromChunkCount(totalChunks);
+  const pendingSave = (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
+  const wasVerified = (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED;
+  const startupReadiness = createStartupReadiness(
+    pendingSave && pendingSave.kind === 'MyCraftWorld'
+      ? pendingSave.chunks.map((chunk) => chunk.key)
+      : getGeneratedChunkKeys(totalChunks),
+  );
+  cancelStartupWait = startupReadiness.cancel;
+
+  // Readiness is independent of the renderer backend. WebGL adds a second
+  // listener below for its occupancy volume, but WebGPU must release startup
+  // from this shared world event as well.
+  world.on('CHUNK_ADDED', ({ key }) => {
+    startupReadiness.markChunkReady(key);
+  });
 
   // The voxel shadow volume is the static terrain/grass caster representation.
   // It is fixed to the generated world bounds, while the animated player is
@@ -734,11 +854,10 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     // Defer application to the top of update() to keep depth and color passes in sync
     // Also allow brief batching with neighbors to avoid 1-frame border holes
     pendingChunkMeshes.set(response.key, { response, receivedAt: frameCounter });
+    startupReadiness.markChunkMesh(response.key);
   });
   
   // If a saved snapshot is provided via global, ingest it directly and skip generation
-  const pendingSave = (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
-  const wasVerified = (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED;
   if (pendingSave && pendingSave.kind === 'MyCraftWorld') {
     try {
       // Require Start Panel to have verified the snapshot
@@ -762,12 +881,12 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     } catch (e) {
       console.error('Failed to load snapshot; returning to Start Panel.', e);
       try { alert('Save file verification failed or is corrupted. Returning to Start Panel.'); } catch { /* ignore */ }
-      // Clean up and return control to Start Panel
-      stop();
+      // Return control to the Start Panel. The public start() wrapper owns
+      // cleanup for this rejected initialization path.
       const ui = useUIStore.getState();
       ui.setGameStarted(false);
       ui.setInGame(false);
-      return; // abort start
+      throw e;
     } finally {
       // Clear the pending snapshot so restarts don’t reuse
       delete (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
@@ -775,8 +894,9 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     }
   } else {
     // Request NxN grid of chunks around origin
-    const negRadius = Math.floor(Math.sqrt(totalChunks) / 2);
-    const posRadius = Math.sqrt(totalChunks) - 1 - negRadius;
+    const side = Math.max(1, Math.round(Math.sqrt(totalChunks)));
+    const negRadius = Math.floor(side / 2);
+    const posRadius = side - 1 - negRadius;
     for (let cx = -negRadius; cx <= posRadius; cx++) {
       for (let cz = -negRadius; cz <= posRadius; cz++) {
         world.ensureChunk(cx, 0, cz);
@@ -819,6 +939,25 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   fpsCounterFrames = 0;
   fpsLastReportNow = 0;
   rafId = requestAnimationFrame(tick);
+
+  // Keep rendering behind the launch UI while the initial terrain is being
+  // generated and meshed. Entry is released only after those meshes have been
+  // applied so the first interactive frame already has a usable world.
+  await startupReadiness.promise;
+  if (!running) throw new Error('World startup stopped before readiness');
+  flushPendingChunkMeshes();
+  if (diagnosticMode) {
+    // Diagnostics own the camera pose, but still need the character positioned
+    // before their first capture.
+    playerBody?.update(0, false);
+  } else {
+    // Snap the default third-person camera into place before the menu fades so
+    // the player never sees the temporary eye-level spawn camera.
+    playerBody?.update(0, true, true);
+  }
+  pointerLockWasActiveInGameplay = document.pointerLockElement === canvas;
+  gameplayReady = true;
+  cancelStartupWait = null;
 }
 
 /**
@@ -828,13 +967,16 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
  * globals and install duplicate sun lights/visibility passes in one scene.
  */
 async function start(canvas: HTMLCanvasElement, options: EngineStartOptions = {}): Promise<void> {
-  if (running) return;
   if (startPromise) return startPromise;
+  if (running) return;
 
   const pending = startInternal(canvas, options);
   startPromise = pending;
   try {
     await pending;
+  } catch (error) {
+    stop();
+    throw error;
   } finally {
     if (startPromise === pending) startPromise = null;
   }
@@ -842,10 +984,15 @@ async function start(canvas: HTMLCanvasElement, options: EngineStartOptions = {}
 
 function stop() {
   running = false;
+  gameplayReady = false;
+  const cancelStartup = cancelStartupWait;
+  cancelStartupWait = null;
+  cancelStartup?.();
   diagnosticMode = false;
   diagnosticView = null;
   voxelShadowVolumeReported = false;
   lastPaused = false;
+  pendingChunkMeshes.clear();
   if (rafId !== null) {
     cancelAnimationFrame(rafId);
     rafId = null;
@@ -853,6 +1000,7 @@ function stop() {
 
   // Clean up input
   if (inputSystem) {
+    inputSystem.exitPointerLock();
     inputSystem.destroy();
     inputSystem = null;
   }

@@ -4,7 +4,6 @@ import AudioPanel from './app/AudioPanel'
 import { DebugPanel } from './app/DebugPanel'
 import { StartPanel } from './app/StartPanel'
 import { LoadingOverlay } from './app/LoadingOverlay'
-import { ClickToEnterOverlay } from './app/ClickToEnterOverlay'
 import DiagnosticsApp from './diagnostics/DiagnosticsApp'
 import { getDiagnosticsRequest } from './diagnostics/cameras'
 
@@ -19,7 +18,6 @@ export default function App() {
     <>
       <CanvasHost />
       <StartPanel />
-      <ClickToEnterOverlay />
       <Hotbar />
       <Crosshair />
       <TopRightWidget />

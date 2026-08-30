@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useUIStore } from '../state/ui'
-import { setDesiredPlaying } from './BgMusic'
+import { primeForGameStart } from './BgMusic'
 import type { WorldSaveFile, WorldSavePayload, SavedInventory } from '../types/save'
 import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, SAVE_ENC_ALG, verifyPayload, bytesFromBase64, base64FromBytes, decryptPayload } from '../shared/save'
 import { CHUNK_SIZE } from '../config/constants'
@@ -18,6 +18,32 @@ const CHUNK_SIZE_OPTIONS = [
   { label: 'Large (64×128×64)', size: { x: 64, y: 128, z: 64 } },
 ]
 
+type StartAction = 'new' | 'load'
+const START_BUTTON_HEIGHT = 52
+
+function ActionSpinner() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 16,
+        height: 16,
+        border: '2px solid currentColor',
+        borderTopColor: 'transparent',
+        borderRadius: '50%',
+        animation: 'mycraft-button-spin 0.8s linear infinite',
+        boxSizing: 'border-box',
+        display: 'block',
+        flex: '0 0 auto',
+      }}
+    />
+  )
+}
+
+function requestEntryPointerLock() {
+  ;(window as Window & { __requestGameEntryPointerLock?: () => void }).__requestGameEntryPointerLock?.()
+}
+
 export function StartPanel() {
   const gameStarted = useUIStore(s => s.gameStarted)
   const setGameStarted = useUIStore(s => s.setGameStarted)
@@ -25,13 +51,17 @@ export function StartPanel() {
   const setChunkCount = useUIStore(s => s.setChunkCount)
   const chunkSize = useUIStore(s => s.chunkSize)
   const setChunkSize = useUIStore(s => s.setChunkSize)
+  const setInGame = useUIStore(s => s.setInGame)
+  const setPaused = useUIStore(s => s.setPaused)
   const setLoading = useUIStore(s => s.setLoading)
+  const loading = useUIStore(s => s.loading)
 
   const [localCount, setLocalCount] = useState<number>(chunkCount || 9)
   const [localSize, setLocalSize] = useState<{ x: number; y: number; z: number }>(
     chunkSize || { x: 48, y: 96, z: 48 }
   )
   const [showControls, setShowControls] = useState<boolean>(false)
+  const [loadingAction, setLoadingAction] = useState<StartAction | null>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -57,7 +87,14 @@ export function StartPanel() {
     }
   }, [showControls])
 
-  if (gameStarted) return null
+  useEffect(() => {
+    if (!loading) setLoadingAction(null)
+  }, [loading])
+
+  // Keep this card visible only for an active start/load flow. Other in-game
+  // loading work (for example saving) must not remount the start screen.
+  const activeLoadingAction = loading ? loadingAction : null
+  if (gameStarted && activeLoadingAction === null) return null
 
   const handleLoadWorld = async () => {
     // Block launch on mobile devices or Safari desktop
@@ -66,30 +103,35 @@ export function StartPanel() {
       return
     }
     try {
+      setLoadingAction('load')
+      setInGame(false)
+      setPaused(false)
       setLoading(true)
+      // Consume the launch gesture for media and pointer lock. The actual
+      // music playback is started by CanvasHost only after world readiness.
+      primeForGameStart()
+      requestEntryPointerLock()
       const input = document.createElement('input')
       input.type = 'file'
       input.accept = 'application/json'
       input.oncancel = () => {
         setLoading(false)
       }
-      // Fallback: detect when user focuses back on window without selecting a file
-      const handleFocus = () => {
-        setTimeout(() => {
-          if (!input.files || input.files.length === 0) {
-            setLoading(false)
-          }
-          window.removeEventListener('focus', handleFocus)
-        }, 100)
+      input.oninput = () => {
+        // Some Chromium versions dispatch input before change; use the
+        // earliest trusted file-selection event available for pointer lock.
+        requestEntryPointerLock()
       }
-      window.addEventListener('focus', handleFocus)
       input.onchange = async () => {
-        window.removeEventListener('focus', handleFocus)
         const file = input.files?.[0]
         if (!file) {
           setLoading(false)
           return
         }
+        // A file-picker change is the last trusted user event in this flow.
+        // Request pointer lock before any async file read/verification can
+        // consume that activation.
+        requestEntryPointerLock()
         const text = await file.text()
         let json: unknown
         try {
@@ -247,11 +289,11 @@ export function StartPanel() {
         setChunkCount(payload.settings.chunkCount)
         setChunkSize(payload.settings.chunkSize)
         setGameStarted(true)
-        // Start background music as we enter the world; UI controls it after
-        setDesiredPlaying(true)
-        setLoading(false)
       }
       input.click()
+      // Keep the original button gesture available for pointer lock in case
+      // opening the picker consumes the first request.
+      requestEntryPointerLock()
     } catch (e) {
       console.error('Load world failed:', e)
       alert('Failed to load world save.')
@@ -260,6 +302,26 @@ export function StartPanel() {
   }
 
   const blocked = isMobileDevice() || (isSafari() && !isMobileDevice())
+
+  const handleStartNewWorld = () => {
+    if (blocked) {
+      alert('Please visit it on desktop, and in Chrome or other Chromium browsers.')
+      return
+    }
+    setChunkCount(localCount)
+    setChunkSize(localSize)
+    delete (window as Window & { __WORLD_SNAPSHOT?: unknown; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT
+    delete (window as Window & { __WORLD_SNAPSHOT?: unknown; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED
+    setLoadingAction('new')
+    setInGame(false)
+    setPaused(false)
+    setLoading(true)
+    // Prime browser permissions from the button gesture; playback itself is
+    // deferred until the generated world is ready.
+    primeForGameStart()
+    requestEntryPointerLock()
+    setGameStarted(true)
+  }
 
   return (
     <div style={{ 
@@ -739,17 +801,9 @@ export function StartPanel() {
           </label>
 
           <button
-            onClick={() => {
-              if (blocked) {
-                alert('Please visit it on desktop, and in Chrome or other Chromium browsers.')
-                return
-              }
-              setChunkCount(localCount)
-              setChunkSize(localSize)
-              setGameStarted(true)
-              // Start background music when entering the world
-              setDesiredPlaying(true)
-            }}
+            onClick={handleStartNewWorld}
+            disabled={loading}
+            aria-busy={activeLoadingAction === 'new'}
             style={{ 
               padding: 'clamp(12px, 3vw, 16px) clamp(20px, 5vw, 24px)', 
               background: '#2dd4bf', 
@@ -766,7 +820,14 @@ export function StartPanel() {
               outline: 'none',
               position: 'relative',
               overflow: 'hidden',
-              minHeight: 48
+              height: START_BUTTON_HEIGHT,
+              minHeight: START_BUTTON_HEIGHT,
+              boxSizing: 'border-box',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              lineHeight: '20px',
+              whiteSpace: 'nowrap'
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
@@ -785,7 +846,10 @@ export function StartPanel() {
               e.currentTarget.style.transform = 'translateY(-2px) scale(1)'
             }}
           >
-            Launch New World
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+              {activeLoadingAction === 'new' && <ActionSpinner />}
+              {activeLoadingAction === 'new' ? 'Preparing New World…' : 'Launch New World'}
+            </span>
           </button>
 
           <div style={{
@@ -824,6 +888,8 @@ export function StartPanel() {
 
             <button
             onClick={handleLoadWorld}
+            disabled={loading}
+            aria-busy={activeLoadingAction === 'load'}
             style={{ 
               padding: 'clamp(12px, 3vw, 16px) clamp(20px, 5vw, 24px)', 
               background: '#1f2937', 
@@ -840,7 +906,14 @@ export function StartPanel() {
               outline: 'none',
               position: 'relative',
               overflow: 'hidden',
-              minHeight: 48
+              height: START_BUTTON_HEIGHT,
+              minHeight: START_BUTTON_HEIGHT,
+              boxSizing: 'border-box',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              lineHeight: '20px',
+              whiteSpace: 'nowrap'
             }}
             onMouseOver={(e) => {
               e.currentTarget.style.transform = 'translateY(-2px)'
@@ -859,11 +932,22 @@ export function StartPanel() {
               e.currentTarget.style.transform = 'translateY(-2px) scale(1)'
             }}
           >
-            Load Saved World
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+              {activeLoadingAction === 'load' && <ActionSpinner />}
+              {activeLoadingAction === 'load' ? 'Loading Saved World…' : 'Load Saved World'}
+            </span>
           </button>
           </div>
         </div>
       </div>
+      <style>
+        {`
+          @keyframes mycraft-button-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}
+      </style>
     </div>
   )
 }

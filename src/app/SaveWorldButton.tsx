@@ -4,7 +4,8 @@ import { useUIStore } from '../state/ui'
 export function SaveWorldButton() {
   const setLoading = useUIStore(s => s.setLoading)
   const gameStarted = useUIStore(s => s.gameStarted)
-  if (!gameStarted) return null
+  const loading = useUIStore(s => s.loading)
+  if (!gameStarted || loading) return null
 
   return (
     <button
@@ -58,6 +59,7 @@ export function SaveWorldButton() {
         borderRadius: '8px',
         cursor: 'pointer',
         fontSize: '12px',
+        lineHeight: '16px',
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
         fontWeight: 600,
         letterSpacing: 0.3,
@@ -67,6 +69,7 @@ export function SaveWorldButton() {
         transition: 'all 0.2s ease',
         display: 'flex',
         alignItems: 'center',
+        gap: '6px',
         width: 'fit-content',
       }}
       onMouseOver={(e) => {
@@ -82,10 +85,10 @@ export function SaveWorldButton() {
         e.currentTarget.style.background = 'rgba(15, 23, 32, 0.94)'
       }}
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ marginRight: '6px', flexShrink: 0 }}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ width: 14, height: 14, display: 'block', flexShrink: 0 }}>
         <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" opacity="0.8"/>
       </svg>
-      Save World
+      <span>Save World</span>
     </button>
   )
 }

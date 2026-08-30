@@ -6,6 +6,7 @@
  */
 
 import * as THREE from 'three';
+import { PLAYER } from '../../config/constants';
 
 export class InputSystem {
   private canvas: HTMLCanvasElement;
@@ -15,8 +16,9 @@ export class InputSystem {
   private onPointerLockChangedCallback: ((locked: boolean) => void) | null = null;
 
   // Yaw (rotate around Y axis) and Pitch (rotate around X axis) in radians
-  private yawRadians: number = 0;
+  private yawRadians: number = PLAYER.initialYaw;
   private pitchRadians: number = 0;
+  private movementYawOffset = 0;
 
   // Event handler references for proper removal
   private onPointerLockChangeRef: () => void;
@@ -44,6 +46,11 @@ export class InputSystem {
   constructor(canvas: HTMLCanvasElement, camera: THREE.PerspectiveCamera) {
     this.canvas = canvas;
     this.camera = camera;
+    // The launch button can request pointer lock before the engine finishes
+    // constructing this input system. Read the already-held browser state so
+    // that mouse look works immediately once gameplay becomes ready.
+    this.isPointerLocked = typeof document !== 'undefined'
+      && document.pointerLockElement === canvas;
 
     // FPS-style rotation order
     this.camera.rotation.order = 'YXZ';
@@ -123,6 +130,19 @@ export class InputSystem {
   /** External: set callback for pointer lock changes */
   onPointerLockChanged(cb: (locked: boolean) => void): void {
     this.onPointerLockChangedCallback = cb;
+  }
+
+  /**
+   * Set the horizontal movement heading relative to the shared look heading.
+   * Third-person front orbit uses a 180° camera offset; first-person keeps the
+   * direct look heading so controls remain consistent with the active view.
+   */
+  setMovementYawOffset(offset: number): void {
+    this.movementYawOffset = offset;
+  }
+
+  getMovementYaw(): number {
+    return this.yawRadians + this.movementYawOffset;
   }
 
   /** External: request pointer lock on the game canvas */

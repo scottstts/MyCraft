@@ -156,7 +156,7 @@ export class PlayerController {
     const speed = this.input.isSprinting() ? this.sprintSpeed : this.walkSpeed;
 
     // Derive forward/right on XZ plane from input yaw only
-    const yaw = this.input.getOrientation().yaw;
+    const yaw = this.input.getMovementYaw?.() ?? this.input.getOrientation().yaw;
     const forwardX = -Math.sin(yaw);
     const forwardZ = -Math.cos(yaw);
     const rightX = Math.cos(yaw);
@@ -181,7 +181,7 @@ export class PlayerController {
     // Land step-up assist is intentionally disabled. Water emerge logic remains below.
     if (PlayerController.ENABLE_LAND_STEP_ASSIST && (landHitX || landHitZ)) {
       const landInput = this.input.getMoveInput();
-      const yaw = this.input.getOrientation().yaw;
+      const yaw = this.input.getMovementYaw?.() ?? this.input.getOrientation().yaw;
       const forwardX = -Math.sin(yaw);
       const forwardZ = -Math.cos(yaw);
       const rightX = Math.cos(yaw);
@@ -266,7 +266,8 @@ export class PlayerController {
 
     // Shared look direction (with pitch) and horizontal right vector. This is
     // equivalent to the reference camera math and remains valid in orbit view.
-    const { yaw, pitch } = this.input.getOrientation();
+    const { pitch } = this.input.getOrientation();
+    const yaw = this.input.getMovementYaw?.() ?? this.input.getOrientation().yaw;
     const forward = new THREE.Vector3(
       -Math.sin(yaw) * Math.cos(pitch),
       Math.sin(pitch),
@@ -832,7 +833,7 @@ export class PlayerController {
 
   private updateMovementInputState(): void {
     const inputXZ = this.input.getMoveInput();
-    const yaw = this.input.getOrientation().yaw;
+    const yaw = this.input.getMovementYaw?.() ?? this.input.getOrientation().yaw;
     const forwardX = -Math.sin(yaw);
     const forwardZ = -Math.cos(yaw);
     const rightX = Math.cos(yaw);

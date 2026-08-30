@@ -69,6 +69,38 @@ export function setDesiredPlaying(shouldPlay: boolean): void {
   }
 }
 
+// Prime the media element during the launch gesture without leaving music
+// running while the world is still loading. A later play() after readiness can
+// then reuse the browser's user-activation grant where the browser permits it.
+export function primeForGameStart(): void {
+  const a = ensureInit()
+  if (!a.paused) return
+  const startTime = a.currentTime
+  const wasMuted = a.muted
+  // Resolve autoplay permission without allowing the launch click to produce
+  // audible music before the world is ready. Pause immediately and restore
+  // the element's previous mute state when the browser settles the promise.
+  a.muted = true
+  const playback = a.play()
+  a.pause()
+  try { a.currentTime = startTime } catch { /* media may not be seekable yet */ }
+  void playback
+    .then(() => {
+      if (allowedToPlay) {
+        a.muted = wasMuted
+        if (a.paused) void a.play().catch(() => { /* retry on a later gesture */ })
+        return
+      }
+      a.pause()
+      a.muted = wasMuted
+      try { a.currentTime = startTime } catch { /* media may not be seekable yet */ }
+    })
+    .catch(() => {
+      a.muted = wasMuted
+      /* autoplay may still be blocked; retry after entry */
+    })
+}
+
 // Call this from a user gesture (e.g., canvas click) to satisfy autoplay policies
 // Respects game gating via allowedToPlay
 export function tryPlayOnUserGesture(): void {
