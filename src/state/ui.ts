@@ -6,6 +6,7 @@
  */
 
 import { create } from 'zustand';
+import type { BootStage, StartupErrorInfo } from '../shared/startup';
 
 export interface UIState {
   selectedSlot: number; // 0..8
@@ -54,6 +55,12 @@ export interface UIState {
   // Loading state for save/load operations
   loading: boolean;
   setLoading: (loading: boolean) => void;
+
+  // Observable startup status and terminal failure details for the entry UI
+  startupStage: BootStage | null;
+  setStartupStage: (stage: BootStage | null) => void;
+  startupError: StartupErrorInfo | null;
+  setStartupError: (error: StartupErrorInfo | null) => void;
 }
 
 const DEFAULT_HOTBAR: number[] = [
@@ -98,6 +105,10 @@ export const useUIStore = create<UIState>((set) => ({
 
   loading: false,
   setLoading: (loading: boolean) => set({ loading }),
+  startupStage: null,
+  setStartupStage: (startupStage: BootStage | null) => set({ startupStage }),
+  startupError: null,
+  setStartupError: (startupError: StartupErrorInfo | null) => set({ startupError }),
 }));
 
 export function getSelectedBlockId(): number | null {

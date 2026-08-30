@@ -21,6 +21,7 @@ import type { AtlasConfig } from '../render/Atlas.js';
 export interface ChunkPipelineEvents extends Record<string, unknown> {
   CHUNK_READY: { key: ChunkKey; chunkData: ChunkData };
   CHUNK_MESH: { key: ChunkKey; response: ChunkMeshResponse };
+  WORKER_ERROR: { worker: 'generator' | 'mesher'; error: unknown };
 }
 
 export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
@@ -42,11 +43,15 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
     );
     
     this.generatorWorker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-      this.handleWorkerResponse(event.data);
+      try {
+        this.handleWorkerResponse(event.data);
+      } catch (error) {
+        this.reportWorkerError('generator', error);
+      }
     };
-    
+
     this.generatorWorker.onerror = (error) => {
-      console.error('[ChunkPipeline] Generator worker error:', error);
+      this.reportWorkerError('generator', error);
     };
     
     // Create mesher worker
@@ -56,12 +61,21 @@ export class ChunkPipeline extends EventEmitter<ChunkPipelineEvents> {
     );
     
     this.mesherWorker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-      this.handleWorkerResponse(event.data);
+      try {
+        this.handleWorkerResponse(event.data);
+      } catch (error) {
+        this.reportWorkerError('mesher', error);
+      }
     };
-    
+
     this.mesherWorker.onerror = (error) => {
-      console.error('[ChunkPipeline] Mesher worker error:', error);
+      this.reportWorkerError('mesher', error);
     };
+  }
+
+  private reportWorkerError(worker: 'generator' | 'mesher', error: unknown): void {
+    console.error(`[ChunkPipeline] ${worker} worker error:`, error);
+    this.emit('WORKER_ERROR', { worker, error });
   }
   
   /**

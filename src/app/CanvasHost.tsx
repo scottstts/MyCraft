@@ -1,6 +1,6 @@
 /**
  * Component: CanvasHost
- * Purpose: Mounts a canvas and provides it to the engine on mount; resizes with window.
+ * Purpose: Mounts a canvas and provides it to the engine on mount; the engine owns resizing.
  * Callers: App.tsx renders this as the main viewport container.
  * Invariants: Does not import engine internals directly beyond start/stop API.
  */
@@ -8,10 +8,15 @@ import { useEffect, useRef } from 'react'
 import { useUIStore } from '../state/ui'
 import { setDesiredPlaying, tryPlayOnUserGesture } from './BgMusic'
 import type { DiagnosticCameraId } from '../diagnostics/cameras'
+import { createStartupError, isStartupErrorInfo, type BootStage } from '../shared/startup'
 
 
 type EngineApi = {
-  start: (canvas: HTMLCanvasElement, options?: { diagnosticView?: DiagnosticCameraId; diagnosticTime?: number }) => Promise<void>
+  start: (canvas: HTMLCanvasElement, options?: {
+    diagnosticView?: DiagnosticCameraId
+    diagnosticTime?: number
+    onBootStage?: (stage: BootStage) => void
+  }) => Promise<void>
   stop: () => void
 }
 
@@ -50,6 +55,8 @@ export function CanvasHost({ diagnosticView, diagnosticTime }: CanvasHostProps =
   const setInGame = useUIStore(s => s.setInGame)
   const setGameStarted = useUIStore(s => s.setGameStarted)
   const setLoading = useUIStore(s => s.setLoading)
+  const setStartupStage = useUIStore(s => s.setStartupStage)
+  const setStartupError = useUIStore(s => s.setStartupError)
   const restartToken = useUIStore(s => s.restartToken)
   const gameStarted = useUIStore(s => s.gameStarted)
   const loading = useUIStore(s => s.loading)
@@ -76,79 +83,84 @@ export function CanvasHost({ diagnosticView, diagnosticTime }: CanvasHostProps =
     let engineApi: EngineApi | null = null
     let engineStarted = false
     let mounted = true
-    let removeListeners: (() => void) | null = null
+    let bootStage: BootStage = 'engine-import'
+
+    const handleStartupFailure = (error: unknown) => {
+      if (!mounted || !ownsLifecycle()) {
+        if (ownsLifecycle()) engineApi?.stop()
+        return
+      }
+      const failure = isStartupErrorInfo(error)
+        ? error
+        : createStartupError(bootStage, error)
+      console.error('Game startup failed:', failure)
+      engineApi?.stop()
+      setInGame(false)
+      setLoading(false)
+      setGameStarted(false)
+      setStartupError(failure)
+    }
 
     const setup = async () => {
       const canvas = canvasRef.current
       if (!canvas || !mounted) return
       if (!gameStarted && !diagnosticView) return
-      engineApi = await loadEngine()
-      // React StrictMode intentionally mounts effects twice in development.
-      // If the first async import resolves after its effect was cleaned up,
-      // do not start a second engine behind the live mount.
-      if (!mounted) return
       try {
-        await engineApi.start(canvas, diagnosticView ? { diagnosticView, diagnosticTime } : undefined)
-      } catch (error) {
+        const reportBootStage = (stage: BootStage) => {
+          bootStage = stage
+          if (mounted && ownsLifecycle()) setStartupStage(stage)
+        }
+        reportBootStage('engine-import')
+        engineApi = await loadEngine()
+        // React StrictMode intentionally mounts effects twice in development.
+        // If the first async import resolves after its effect was cleaned up,
+        // do not start a second engine behind the live mount.
+        if (!mounted) return
+        await engineApi.start(canvas, {
+          ...(diagnosticView ? { diagnosticView, diagnosticTime } : {}),
+          onBootStage: reportBootStage,
+        })
+        // Startup itself awaits atlas/worker setup. A navigation during that
+        // await must tear down the completed engine rather than leave a hidden
+        // RAF/light pair running behind the next scene.
         if (!mounted) {
           if (ownsLifecycle()) engineApi.stop()
           return
         }
-        console.error('Game startup failed:', error)
-        engineApi.stop()
-        setInGame(false)
-        setLoading(false)
-        setGameStarted(false)
-        return
-      }
-      // Startup itself awaits atlas/worker setup. A navigation during that
-      // await must tear down the completed engine rather than leave a hidden
-      // RAF/light pair running behind the next scene.
-      if (!mounted) {
-        if (ownsLifecycle()) engineApi.stop()
-        return
-      }
-      engineStarted = true
-      if (diagnosticView) {
-        // Diagnostics are intentionally capture-ready without pointer lock.
-        setInGame(true)
-      } else {
-        // The launch button requests lock synchronously while it still owns a
-        // user gesture. Retry here as a fallback for browsers that deferred or
-        // rejected that early request. Enter gameplay as soon as the world is
-        // fully ready; the canvas remains a fallback gesture if the browser
-        // requires a fresh activation before granting pointer lock.
-        requestCanvasPointerLock(canvas)
-        setInGame(true)
-        setPaused(false)
-        setDesiredPlaying(true)
-        setLoading(false)
-      }
-
-      const onResize = () => {
-        // Renderer handles canvas sizing via renderer.onResize()
-      }
-      onResize()
-      window.addEventListener('resize', onResize)
-
-      // Register cleanup for listeners so effect teardown can call it
-      removeListeners = () => {
-        window.removeEventListener('resize', onResize)
+        engineStarted = true
+        if (diagnosticView) {
+          // Diagnostics are intentionally capture-ready without pointer lock.
+          setInGame(true)
+        } else {
+          // The launch button requests lock synchronously while it still owns a
+          // user gesture. Retry here as a fallback for browsers that deferred or
+          // rejected that early request. Enter gameplay as soon as the world is
+          // fully ready; the canvas remains a fallback gesture if the browser
+          // requires a fresh activation before granting pointer lock.
+          requestCanvasPointerLock(canvas)
+          setInGame(true)
+          setPaused(false)
+          setDesiredPlaying(true)
+          setLoading(false)
+        }
+      } catch (error) {
+        handleStartupFailure(error)
       }
     }
 
-    void setup()
+    // Keep the complete startup promise observed, including the UI handoff
+    // after Engine.start resolves. This prevents a late entry-side exception
+    // from leaving the app on an inert loading screen.
+    void setup().catch(handleStartupFailure)
 
     return () => {
       mounted = false
       setPaused(false)
       setInGame(false)
       if (!diagnosticView) setDesiredPlaying(false)
-      // Ensure we remove any listeners registered during setup
-      if (removeListeners) removeListeners()
       if (ownsLifecycle() && engineStarted) engineApi?.stop()
     }
-  }, [restartToken, setPaused, setInGame, setGameStarted, setLoading, gameStarted, diagnosticView, diagnosticTime])
+  }, [restartToken, setPaused, setInGame, setGameStarted, setLoading, setStartupStage, setStartupError, gameStarted, diagnosticView, diagnosticTime])
 
   // Prevent context menu on right click over canvas
   const onContextMenu = (e: React.MouseEvent) => e.preventDefault()

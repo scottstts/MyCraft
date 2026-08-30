@@ -6,6 +6,7 @@ import { SAVE_PUBLIC_KEY_ID, SAVE_SIGNATURE_ALG, SAVE_ENC_ALG, verifyPayload, by
 import { CHUNK_SIZE } from '../config/constants'
 import { replaceInventory } from '../state/inventory'
 import { isMobileDevice, isSafari } from '../shared/browser'
+import { BOOT_STAGE_LABELS } from '../shared/startup'
 import bgImage from '../assets/others/bg_img.png'
 
 // Allowed total chunk options: odd squares to ensure a single center chunk
@@ -54,7 +55,13 @@ export function StartPanel() {
   const setInGame = useUIStore(s => s.setInGame)
   const setPaused = useUIStore(s => s.setPaused)
   const setLoading = useUIStore(s => s.setLoading)
+  const setStartupStage = useUIStore(s => s.setStartupStage)
+  const setStartupError = useUIStore(s => s.setStartupError)
+  const startupStage = useUIStore(s => s.startupStage)
+  const startupError = useUIStore(s => s.startupError)
   const loading = useUIStore(s => s.loading)
+
+  const clearStartupError = () => setStartupError(null)
 
   const [localCount, setLocalCount] = useState<number>(chunkCount || 9)
   const [localSize, setLocalSize] = useState<{ x: number; y: number; z: number }>(
@@ -88,8 +95,11 @@ export function StartPanel() {
   }, [showControls])
 
   useEffect(() => {
-    if (!loading) setLoadingAction(null)
-  }, [loading])
+    if (!loading) {
+      setLoadingAction(null)
+      setStartupStage(null)
+    }
+  }, [loading, setStartupStage])
 
   // Keep this card visible only for an active start/load flow. Other in-game
   // loading work (for example saving) must not remount the start screen.
@@ -103,6 +113,7 @@ export function StartPanel() {
       return
     }
     try {
+      clearStartupError()
       setLoadingAction('load')
       setInGame(false)
       setPaused(false)
@@ -308,6 +319,7 @@ export function StartPanel() {
       alert('Please visit it on desktop, and in Chrome or other Chromium browsers.')
       return
     }
+    clearStartupError()
     setChunkCount(localCount)
     setChunkSize(localSize)
     delete (window as Window & { __WORLD_SNAPSHOT?: unknown; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT
@@ -691,6 +703,44 @@ export function StartPanel() {
             )}
           </div>
         </div>
+        {startupError && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: 'clamp(16px, 4vw, 24px)',
+              padding: '16px 18px',
+              color: '#fee2e2',
+              background: 'rgba(69, 10, 10, 0.94)',
+              border: '1px solid rgba(248, 113, 113, 0.45)',
+              borderRadius: 12,
+              boxShadow: '0 14px 36px rgba(0,0,0,0.28)',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+              fontSize: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 4 }}>
+              MyCraft could not start
+            </div>
+            <div style={{ overflowWrap: 'anywhere' }}>
+              {startupError.name}: {startupError.message}
+            </div>
+            <details style={{ marginTop: 8 }}>
+              <summary style={{ cursor: 'pointer' }}>Startup diagnostics</summary>
+              <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                Stage: {startupError.stageLabel} ({startupError.stage}){`\n`}
+                Viewport: {startupError.viewport.width}×{startupError.viewport.height} CSS px{`\n`}
+                DPR: {startupError.dpr}{`\n`}
+                Platform: {startupError.platform}
+              </div>
+              {startupError.stack && (
+                <pre style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                  {startupError.stack}
+                </pre>
+              )}
+            </details>
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 'clamp(16px, 4vw, 24px)' }}>
           <label style={{ display: 'grid', gap: 12 }}>
             <span style={{ 
@@ -848,7 +898,9 @@ export function StartPanel() {
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
               {activeLoadingAction === 'new' && <ActionSpinner />}
-              {activeLoadingAction === 'new' ? 'Preparing New World…' : 'Launch New World'}
+              {activeLoadingAction === 'new'
+                ? `${startupStage ? BOOT_STAGE_LABELS[startupStage] : 'Preparing new world'}…`
+                : 'Launch New World'}
             </span>
           </button>
 
@@ -934,7 +986,9 @@ export function StartPanel() {
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
               {activeLoadingAction === 'load' && <ActionSpinner />}
-              {activeLoadingAction === 'load' ? 'Loading Saved World…' : 'Load Saved World'}
+              {activeLoadingAction === 'load'
+                ? `${startupStage ? BOOT_STAGE_LABELS[startupStage] : 'Loading saved world'}…`
+                : 'Load Saved World'}
             </span>
           </button>
           </div>

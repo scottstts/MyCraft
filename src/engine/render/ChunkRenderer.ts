@@ -36,7 +36,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     const { key, payload } = response;
     const { opaque, transparent } = payload;
 
-    // Reuse group/meshes if present to keep GPU buffers alive (better for WebGPU).
+    // Reuse group/meshes if present to keep GPU buffers resident across remeshes.
     let group = this.chunkGroups.get(key);
     if (!group) {
       group = new THREE.Group();

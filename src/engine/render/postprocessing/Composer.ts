@@ -88,20 +88,13 @@ export class Composer {
     }
   }
 
-  setPixelRatio(pixelRatio: number) {
+  /**
+   * Resize every post-processing target from one logical viewport commit.
+   * The renderer has already applied the same logical size and DPR through
+   * setDrawingBufferSize before this method is called.
+   */
+  setSize(w: number, h: number, pixelRatio = this.renderer.getPixelRatio()) {
     this.composer.setPixelRatio(pixelRatio)
-    const size = this.renderer.getSize(new THREE.Vector2())
-    const effective = this.getEffectiveSize(size.x, size.y)
-    this.depthTarget.setSize(effective.width, effective.height)
-    if (this.depthTarget.depthTexture) {
-      this.depthTarget.depthTexture.image.width = effective.width
-      this.depthTarget.depthTexture.image.height = effective.height
-      this.depthTarget.depthTexture.needsUpdate = true
-    }
-    this.voxelSunShadow?.setSize(size.x, size.y)
-  }
-
-  setSize(w: number, h: number) {
     const effective = this.getEffectiveSize(w, h)
     this.depthTarget.setSize(effective.width, effective.height)
     // Ensure attached depth texture tracks the new size

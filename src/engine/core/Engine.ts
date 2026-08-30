@@ -45,12 +45,25 @@ import PlayerCharacter from '../render/PlayerCharacter';
 import { applyDiagnosticCameraPose, type DiagnosticCameraId } from '../../diagnostics/cameras';
 import { VoxelOccupancyVolume } from '../render/lighting/VoxelOccupancyVolume.js';
 import { VoxelSunShadowPass } from '../render/lighting/VoxelSunShadowPass.js';
+import { ResizeCoordinator } from '../render/ResizeCoordinator';
+import {
+  createStartupError,
+  type BootStage,
+  type StartupEnvironment,
+} from '../../shared/startup';
 
 let rafId: number | null = null;
 let running = false;
 let startPromise: Promise<void> | null = null;
 let gameplayReady = false;
 let cancelStartupWait: (() => void) | null = null;
+let resizeCoordinator: ResizeCoordinator | null = null;
+let currentBootStage: BootStage = 'engine-import';
+let firstFramePromise: Promise<void> | null = null;
+let resolveFirstFrame: (() => void) | null = null;
+let rejectFirstFrame: ((reason?: unknown) => void) | null = null;
+let firstFrameGateOpen = false;
+let firstFrameSettled = false;
 
 // Engine subsystems
 let renderer: Renderer | null = null;
@@ -108,6 +121,7 @@ interface StartupReadiness {
   promise: Promise<void>;
   markChunkReady: (key: ChunkKey) => void;
   markChunkMesh: (key: ChunkKey) => void;
+  fail: (reason: unknown) => void;
   cancel: () => void;
 }
 
@@ -148,14 +162,54 @@ function createStartupReadiness(expectedKeys: Iterable<ChunkKey>): StartupReadin
     }
   };
 
-  const cancel = () => {
+  const fail = (reason: unknown) => {
     if (settled) return;
     settled = true;
-    rejectPromise(new Error('World startup was cancelled'));
+    rejectPromise(reason);
   };
 
+  const cancel = () => fail(new Error('World startup was cancelled'));
+
   maybeResolve();
-  return { promise, markChunkReady, markChunkMesh, cancel };
+  return { promise, markChunkReady, markChunkMesh, fail, cancel };
+}
+
+function setBootStage(stage: BootStage, onBootStage?: (stage: BootStage) => void): void {
+  currentBootStage = stage;
+  onBootStage?.(stage);
+}
+
+function createFirstFrameReadiness(): Promise<void> {
+  firstFrameGateOpen = false;
+  firstFrameSettled = false;
+  resolveFirstFrame = null;
+  rejectFirstFrame = null;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolveFirstFrame = resolve;
+    rejectFirstFrame = reject;
+  });
+  // Stop can cancel the startup while the public start() promise is still
+  // unwinding. Attach a handler here so cancellation never becomes an
+  // unhandled rejection independently of that public promise.
+  void promise.catch(() => undefined);
+  firstFramePromise = promise;
+  return promise;
+}
+
+function resolveFirstFrameIfReady(): void {
+  if (!firstFrameGateOpen || firstFrameSettled) return;
+  firstFrameSettled = true;
+  resolveFirstFrame?.();
+  resolveFirstFrame = null;
+  rejectFirstFrame = null;
+}
+
+function rejectFirstFrameIfPending(reason: unknown): void {
+  if (firstFrameSettled) return;
+  firstFrameSettled = true;
+  rejectFirstFrame?.(reason);
+  resolveFirstFrame = null;
+  rejectFirstFrame = null;
 }
 
 function computeBoundsFromChunkCount(totalChunks: number) {
@@ -284,6 +338,7 @@ function flushPendingChunkMeshes(): void {
       chunkRenderer.handleChunkMesh(entry.response);
     } catch (error) {
       console.error(`Apply initial chunk mesh failed for ${key}`, error);
+      throw error;
     } finally {
       pendingChunkMeshes.delete(key);
     }
@@ -506,17 +561,26 @@ function tick(now: number) {
   lastFrameNow = now;
   frameCounter++;
 
-  update(dtSeconds);
-  // FPS reporting every ~0.5s
-  fpsCounterFrames += 1;
-  if (fpsLastReportNow === 0) fpsLastReportNow = now;
-  const elapsedSinceReport = now - fpsLastReportNow;
-  if (elapsedSinceReport >= 500) {
-    const fps = Math.round((fpsCounterFrames * 1000) / elapsedSinceReport);
-    useUIStore.getState().setFps(fps);
-    fpsCounterFrames = 0;
-    fpsLastReportNow = now;
+  try {
+    update(dtSeconds);
+    // FPS reporting every ~0.5s
+    fpsCounterFrames += 1;
+    if (fpsLastReportNow === 0) fpsLastReportNow = now;
+    const elapsedSinceReport = now - fpsLastReportNow;
+    if (elapsedSinceReport >= 500) {
+      const fps = Math.round((fpsCounterFrames * 1000) / elapsedSinceReport);
+      useUIStore.getState().setFps(fps);
+      fpsCounterFrames = 0;
+      fpsLastReportNow = now;
+    }
+  } catch (error) {
+    console.error(`[Engine] Frame failed during ${currentBootStage}:`, error);
+    rejectFirstFrameIfPending(error);
+    stop();
+    return;
   }
+
+  resolveFirstFrameIfReady();
   
   rafId = requestAnimationFrame(tick);
 }
@@ -526,33 +590,42 @@ export interface EngineStartOptions {
   diagnosticView?: DiagnosticCameraId;
   /** Optional normalized time-of-day used by local validation captures. */
   diagnosticTime?: number;
+  /** Reports the observed startup stage to the entry UI. */
+  onBootStage?: (stage: BootStage) => void;
 }
 
 async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOptions = {}) {
 
+  const onBootStage = options.onBootStage;
+  setBootStage('renderer', onBootStage);
   diagnosticView = options.diagnosticView ?? null;
   diagnosticMode = diagnosticView !== null;
   gameplayReady = false;
   voxelShadowVolumeReported = false;
   pendingChunkMeshes.clear();
+  createFirstFrameReadiness();
   
   // Initialize renderer
   renderer = new Renderer(canvas);
   const baseRenderer = renderer.getRenderer();
-  const isWebGPU = (baseRenderer as { isWebGPURenderer?: boolean }).isWebGPURenderer === true;
   
   // Initialize scene and camera
+  setBootStage('scene', onBootStage);
   scene = createScene();
-  const aspect = canvas.clientWidth / canvas.clientHeight;
+  const initialCanvasSize = renderer.getCanvasSize();
+  const aspect = initialCanvasSize.width / Math.max(1, initialCanvasSize.height);
   // This is the same camera instance used by gameplay. Diagnostics only apply
   // a different world-space pose after the normal world/render setup exists.
   camera = createPlayerCamera(aspect);
   
   // Initialize world
+  setBootStage('world', onBootStage);
   world = new World();
   
   // Load atlas and initialize chunk renderer with custom material
+  setBootStage('assets', onBootStage);
   const atlas = await loadFullAtlas();
+  setBootStage('render-pipeline', onBootStage);
   blockMaterial = new BlockMaterial(
     atlas.getTexture(),
     null,
@@ -567,13 +640,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80);
 
   // Determine anisotropy support for any textures that can benefit (e.g., seabed sand)
-  let maxAniso = 0;
-  if ('capabilities' in baseRenderer) {
-    const caps = (baseRenderer as THREE.WebGLRenderer).capabilities;
-    if (caps?.getMaxAnisotropy) {
-      maxAniso = caps.getMaxAnisotropy() ?? 0;
-    }
-  }
+  const maxAniso = baseRenderer.capabilities.getMaxAnisotropy();
 
   // Water material uses the same shader as far ocean, but uses vUv on block meshes
   waterMaterial = new WaterSurfaceMaterial({
@@ -603,19 +670,15 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
 
   // Initialize the single active post-processing pipeline.
   const canvasSize = renderer.getCanvasSize();
-  if (!isWebGPU) {
-    const glRenderer = baseRenderer as THREE.WebGLRenderer;
-    composer = new Composer(glRenderer, scene, camera, canvasSize.width, canvasSize.height);
-    composer.setBloom(RENDER_STYLE.bloom.enabled, RENDER_STYLE.bloom.strength, RENDER_STYLE.bloom.threshold);
-    composer.setLens(RENDER_STYLE.lens.enabled, RENDER_STYLE.lens.intensity);
-    composer.setAerialPerspective(true, aerialPerspectiveDistance);
-    composer.setUnderwaterWaterLevel(VISUAL_WATER_LEVEL);
-  } else {
-    composer = null;
-  }
+  composer = new Composer(baseRenderer, scene, camera, canvasSize.width, canvasSize.height);
+  composer.setBloom(RENDER_STYLE.bloom.enabled, RENDER_STYLE.bloom.strength, RENDER_STYLE.bloom.threshold);
+  composer.setLens(RENDER_STYLE.lens.enabled, RENDER_STYLE.lens.intensity);
+  composer.setAerialPerspective(true, aerialPerspectiveDistance);
+  composer.setUnderwaterWaterLevel(VISUAL_WATER_LEVEL);
 
-  // Initialize the continuous sun illumination. WebGL voxel visibility is
-  // resolved by VoxelSunShadowPass; WebGPU remains outside this path.
+  // Initialize the continuous sun illumination. Voxel visibility is resolved
+  // by VoxelSunShadowPass from the same WebGL scene depth used by the composer.
+  setBootStage('systems', onBootStage);
   sunController = new SunController(scene, {
     cycleSeconds: RENDER_STYLE.dayNightCycleSeconds,
     // A fresh diagnostic URL must be immediately sunlit. At t=0 the authored
@@ -627,7 +690,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     // in every diagnostic pose instead of hiding directly beneath casters.
     initialTime: options.diagnosticTime ?? (diagnosticMode ? 0.125 : 0.0),
     paused: diagnosticMode,
-    enableShadows: !isWebGPU,
+    enableShadows: true,
   });
   if (diagnosticMode) console.info('[AtmosphereInit]', JSON.stringify({ requestedTime: options.diagnosticTime, actualTime: sunController.getTime(), paused: sunController.isPaused() }));
 
@@ -690,49 +753,48 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   );
   cancelStartupWait = startupReadiness.cancel;
 
-  // Readiness is independent of the renderer backend. WebGL adds a second
-  // listener below for its occupancy volume, but WebGPU must release startup
-  // from this shared world event as well.
+  // World readiness is shared by the gameplay scene and the render pipeline.
   world.on('CHUNK_ADDED', ({ key }) => {
     startupReadiness.markChunkReady(key);
+  });
+
+  world.chunkPipeline.on('WORKER_ERROR', ({ worker, error }) => {
+    startupReadiness.fail(new Error(`${worker} worker failed during startup`, { cause: error }));
   });
 
   // The voxel shadow volume is the static terrain/grass caster representation.
   // It is fixed to the generated world bounds, while the animated player is
   // supplied as exact OBB geometry to the same screen-space visibility pass.
-  if (!isWebGPU) {
-    const glRenderer = baseRenderer as THREE.WebGLRenderer;
-    voxelShadowVolume = new VoxelOccupancyVolume({
-      minX: bounds.minX,
-      maxX: bounds.maxX,
-      minY: 0,
-      maxY: CHUNK_SIZE.y,
-      minZ: bounds.minZ,
-      maxZ: bounds.maxZ,
-    });
-    voxelSunShadowPass = new VoxelSunShadowPass(glRenderer, canvasSize.width, canvasSize.height, voxelShadowVolume);
-    const shadowResolution = voxelSunShadowPass.getDiagnostics().resolution;
-    blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), shadowResolution.width, shadowResolution.height, !!composer);
-    if (composer) blockMaterial?.setVoxelShadowDepthTexture(composer.getDepthTexture(), camera.near, camera.far);
-    composer?.setVoxelSunShadowPass(voxelSunShadowPass);
-    if (diagnosticMode) console.info('[VoxelSunShadow]', JSON.stringify(voxelSunShadowPass.getDiagnostics()));
+  voxelShadowVolume = new VoxelOccupancyVolume({
+    minX: bounds.minX,
+    maxX: bounds.maxX,
+    minY: 0,
+    maxY: CHUNK_SIZE.y,
+    minZ: bounds.minZ,
+    maxZ: bounds.maxZ,
+  });
+  voxelSunShadowPass = new VoxelSunShadowPass(baseRenderer, canvasSize.width, canvasSize.height, voxelShadowVolume);
+  const shadowResolution = voxelSunShadowPass.getDiagnostics().resolution;
+  blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), shadowResolution.width, shadowResolution.height, true);
+  blockMaterial?.setVoxelShadowDepthTexture(composer.getDepthTexture(), camera.near, camera.far);
+  composer.setVoxelSunShadowPass(voxelSunShadowPass);
+  if (diagnosticMode) console.info('[VoxelSunShadow]', JSON.stringify(voxelSunShadowPass.getDiagnostics()));
 
-    // Occupancy follows authoritative World events, including block edits and
-    // chunk replacement/removal. Mesh arrival is intentionally irrelevant.
-    world.on('CHUNK_ADDED', ({ key, chunk }) => {
-      voxelShadowVolume?.updateChunk(key, chunk);
-      if (diagnosticMode && !voxelShadowVolumeReported && voxelShadowVolume) {
-        voxelShadowVolumeReported = true;
-        console.info('[VoxelSunShadowVolume]', JSON.stringify(voxelShadowVolume.getDiagnostics()));
-      }
-    });
-    world.on('CHUNK_REMOVED', ({ key }) => voxelShadowVolume?.clearChunk(key));
-    world.on('BLOCK_CHANGED', ({ worldX, worldY, worldZ, newBlockId }) => {
-      voxelShadowVolume?.updateBlock(worldX, worldY, worldZ, newBlockId);
-    });
-  }
+  // Occupancy follows authoritative World events, including block edits and
+  // chunk replacement/removal. Mesh arrival is intentionally irrelevant.
+  world.on('CHUNK_ADDED', ({ key, chunk }) => {
+    voxelShadowVolume?.updateChunk(key, chunk);
+    if (diagnosticMode && !voxelShadowVolumeReported && voxelShadowVolume) {
+      voxelShadowVolumeReported = true;
+      console.info('[VoxelSunShadowVolume]', JSON.stringify(voxelShadowVolume.getDiagnostics()));
+    }
+  });
+  world.on('CHUNK_REMOVED', ({ key }) => voxelShadowVolume?.clearChunk(key));
+  world.on('BLOCK_CHANGED', ({ worldX, worldY, worldZ, newBlockId }) => {
+    voxelShadowVolume?.updateBlock(worldX, worldY, worldZ, newBlockId);
+  });
   sunController?.setShadowSettings({
-    enabled: RENDER_STYLE.shadows.enabled && !isWebGPU,
+    enabled: RENDER_STYLE.shadows.enabled,
     shadowDistance: RENDER_STYLE.shadows.distance,
     resolution: 2048,
     softness: 0,
@@ -787,7 +849,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       worldRadius,
       blockMaterialSource: blockMaterial ?? undefined,
       anisotropy: maxAniso ? Math.min(8, maxAniso) : 8,
-      renderer: !isWebGPU ? (baseRenderer as THREE.WebGLRenderer) : undefined,
+      renderer: baseRenderer,
     });
     waterSystem.setSceneInputs(
       composer?.getSceneColorTexture() ?? null,
@@ -904,16 +966,18 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     }
   }
   
-  // Handle window resize
+  // Handle window resize through one coalesced frame commit. The renderer
+  // owns the logical viewport and DPR; all dependent targets follow that
+  // exact commit.
   const handleResize = () => {
     if (renderer && camera && canvas) {
       const size = renderer.onResize();
+      if (!size) return;
       camera.aspect = size.width / size.height;
       camera.updateProjectionMatrix();
       
       if (composer) {
-        composer.setPixelRatio(size.dpr);
-        composer.setSize(size.width, size.height);
+        composer.setSize(size.width, size.height, size.dpr);
       }
       if (waterSystem && camera) {
         waterSystem.setSceneInputs(
@@ -931,7 +995,8 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       }
     }
   };
-  window.addEventListener('resize', handleResize);
+  resizeCoordinator?.dispose();
+  resizeCoordinator = new ResizeCoordinator(handleResize);
   
   running = true;
   lastPaused = useUIStore.getState().paused;
@@ -943,6 +1008,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   // Keep rendering behind the launch UI while the initial terrain is being
   // generated and meshed. Entry is released only after those meshes have been
   // applied so the first interactive frame already has a usable world.
+  setBootStage('world-loading', onBootStage);
   await startupReadiness.promise;
   if (!running) throw new Error('World startup stopped before readiness');
   flushPendingChunkMeshes();
@@ -955,8 +1021,18 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     // the player never sees the temporary eye-level spawn camera.
     playerBody?.update(0, true, true);
   }
+  setBootStage('shader-compilation', onBootStage);
+  if (scene && camera && renderer) {
+    await renderer.getRenderer().compileAsync(scene, camera);
+  }
+  setBootStage('warmup', onBootStage);
+  firstFrameGateOpen = true;
+  setBootStage('first-render', onBootStage);
+  if (firstFramePromise) await firstFramePromise;
+  if (!running) throw new Error('Renderer stopped before the first frame');
   pointerLockWasActiveInGameplay = document.pointerLockElement === canvas;
   gameplayReady = true;
+  setBootStage('ready', onBootStage);
   cancelStartupWait = null;
 }
 
@@ -970,13 +1046,21 @@ async function start(canvas: HTMLCanvasElement, options: EngineStartOptions = {}
   if (startPromise) return startPromise;
   if (running) return;
 
+  currentBootStage = 'renderer';
   const pending = startInternal(canvas, options);
   startPromise = pending;
   try {
     await pending;
   } catch (error) {
+    const rendererEnvironment: Partial<StartupEnvironment> = renderer
+      ? {
+        viewport: renderer.getCanvasSize(),
+        dpr: renderer.getPixelRatio(),
+      }
+      : {};
+    const failure = createStartupError(currentBootStage, error, rendererEnvironment);
     stop();
-    throw error;
+    throw failure;
   } finally {
     if (startPromise === pending) startPromise = null;
   }
@@ -985,6 +1069,11 @@ async function start(canvas: HTMLCanvasElement, options: EngineStartOptions = {}
 function stop() {
   running = false;
   gameplayReady = false;
+  rejectFirstFrameIfPending(new Error('Game startup was stopped'));
+  firstFrameGateOpen = false;
+  firstFramePromise = null;
+  resizeCoordinator?.dispose();
+  resizeCoordinator = null;
   const cancelStartup = cancelStartupWait;
   cancelStartupWait = null;
   cancelStartup?.();
