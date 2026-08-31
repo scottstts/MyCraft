@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { BlockMaterial } from '../BlockMaterial'
+import type { AtlasConfig } from '../Atlas'
 import { CHUNK_SIZE } from '../../../config/constants'
 import { getHeightAtPosition } from '../../world/TerrainGenerator'
 import { getOceanMaxAmplitude, OCEAN_WATER_CENTER_OFFSET, sampleOceanHeight } from './OceanWaveField'
@@ -8,6 +9,12 @@ import { CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
 import sandTextureUrl from '../../../assets/textures/sand.png'
 
 const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
+const SEABED_FLOOR_Y = 0
+const SEABED_FAR_CELL_SIZE = 16
+// The lowest bounded wave trough is at WATER_LEVEL. Keep the render-only
+// receiver one complete voxel below it so no generated "seabed" top can
+// cross the optical interface and enter the water-free scene capture.
+const SEABED_SURFACE_CLEARANCE = 2
 // Keep the surface material on one optical side until the camera is clearly
 // across the interface. UnderwaterPass blends the participating medium over
 // this same band, so the material branch cannot flip while the view is still
@@ -57,9 +64,10 @@ export interface WaterSystemOptions {
   worldRadius: number
   color?: THREE.Color | number | string
   blockMaterialSource?: BlockMaterial
+  /** Atlas metadata used to reproduce the exact voxel sand texels. */
+  seabedAtlas?: AtlasConfig
   /** Authoritative voxel-water material hidden from the refraction capture. */
   blockWaterMaterial?: WaterSurfaceMaterial
-  anisotropy?: number
   /** WebGL renderer used for the render-only differential-area caustic map. */
   renderer?: THREE.WebGLRenderer
 }
@@ -81,6 +89,7 @@ export class WaterSystem {
   private readonly caustics: WaterCaustics | null
   private readonly blockWaterMaterial: WaterSurfaceMaterial | null
   private seabedMaterial: BlockMaterial | null = null
+  private seabedTexture: THREE.Texture | null = null
   private seabedGroup: THREE.Group | null = null
   private time = 0
   private disposed = false
@@ -206,6 +215,8 @@ export class WaterSystem {
     }
     this.seabedMaterial?.dispose()
     this.seabedMaterial = null
+    this.seabedTexture?.dispose()
+    this.seabedTexture = null
     void this.buildSeabed(this.seabedBuildToken)
   }
 
@@ -309,6 +320,7 @@ export class WaterSystem {
     this.material.dispose()
     this.terrainHeightTexture.dispose()
     this.seabedMaterial?.dispose()
+    this.seabedTexture?.dispose()
     this.caustics?.dispose()
   }
 
@@ -373,7 +385,7 @@ export class WaterSystem {
 
   private async buildSeabed(buildToken: number): Promise<void> {
     try {
-      const sand = await new Promise<THREE.Texture>((resolve, reject) => {
+      const sand = this.createAtlasSandTexture() ?? await new Promise<THREE.Texture>((resolve, reject) => {
         new THREE.TextureLoader().load(sandTextureUrl, resolve, undefined, reject)
       })
       if (this.disposed || buildToken !== this.seabedBuildToken) {
@@ -385,18 +397,24 @@ export class WaterSystem {
       sand.wrapS = THREE.RepeatWrapping
       sand.wrapT = THREE.RepeatWrapping
       sand.magFilter = THREE.NearestFilter
-      sand.minFilter = THREE.LinearMipMapLinearFilter
-      sand.generateMipmaps = true
-      try { sand.anisotropy = Math.max(1, Math.floor(this.options.anisotropy ?? 8)) } catch { /* optional extension */ }
+      // Voxel terrain uses the 16px atlas tile with nearest sampling and no
+      // mip chain. The extension must use the same effective sampling path;
+      // its former trilinear/anisotropic path changed both colour and scale.
+      sand.minFilter = THREE.NearestFilter
+      sand.generateMipmaps = false
+      sand.anisotropy = 1
       sand.needsUpdate = true
+      this.seabedTexture = sand
 
       if (this.disposed || buildToken !== this.seabedBuildToken) {
         sand.dispose()
         return
       }
       this.seabedMaterial = new BlockMaterial(sand, null)
-      this.seabedMaterial.setAntialiasing(true, 1.0)
-      this.seabedMaterial.setAALodBias(true, 0.9)
+      // Atlas-backed terrain returns before the standalone multi-tap AA path.
+      // Disable that path here so the extracted sand tile behaves identically.
+      this.seabedMaterial.setAntialiasing(false)
+      this.seabedMaterial.setAALodBias(false)
       this.seabedMaterial.setMaterialProperties(0.8, 0.0, 0.3)
       this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.80)
       this.syncSeabedMaterial()
@@ -417,21 +435,74 @@ export class WaterSystem {
       this.seabedGroup.add(near)
 
       // Keep the horizon extension inexpensive; the one-block voxel ring is
-      // the authored boundary match, while the distant field is below pixel
-      // footprint and uses a 16-block quantized LOD.
-      const far = new THREE.Mesh(this.createFarSeabedGeometry(nearRange, 16), this.seabedMaterial)
+      // the authored boundary match, while the distant field smooths one
+      // continuous receiver over 16-block samples below pixel footprint.
+      const farGeometry = this.createFarSeabedGeometry(nearRange, SEABED_FAR_CELL_SIZE)
+      const far = new THREE.Mesh(farGeometry.surface, this.seabedMaterial)
       far.name = 'SeabedFarLOD'
       far.renderOrder = 0
       far.frustumCulled = true
       this.seabedGroup.add(far)
+      const closure = new THREE.Mesh(farGeometry.closure, this.seabedMaterial)
+      closure.name = 'SeabedFarClosure'
+      closure.renderOrder = 0
+      closure.frustumCulled = true
+      this.seabedGroup.add(closure)
       this.scene.add(this.seabedGroup)
     } catch (error) {
       console.warn('[WaterSystem] Failed to build visual seabed extension:', error)
     }
   }
 
-  private sampleHeight(x: number, z: number): number {
+  private createAtlasSandTexture(): THREE.Texture | null {
+    const atlas = this.options.seabedAtlas
+    const source = this.options.blockMaterialSource?.uniforms.map?.value as THREE.Texture | undefined
+    const tile = atlas?.tiles.sand
+    const image = source?.image as (CanvasImageSource & { width?: number; height?: number }) | undefined
+    if (!atlas || !tile || !image || typeof document === 'undefined') return null
+
+    const tileSize = Math.max(1, Math.floor(atlas.tileSize))
+    const imageWidth = Number(image.width ?? 0)
+    const imageHeight = Number(image.height ?? 0)
+    if (imageWidth < (tile[0] + 1) * tileSize || imageHeight < (tile[1] + 1) * tileSize) return null
+
+    const canvas = document.createElement('canvas')
+    canvas.width = tileSize
+    canvas.height = tileSize
+    const context = canvas.getContext('2d')
+    if (!context) return null
+    context.imageSmoothingEnabled = false
+    context.drawImage(
+      image,
+      tile[0] * tileSize,
+      tile[1] * tileSize,
+      tileSize,
+      tileSize,
+      0,
+      0,
+      tileSize,
+      tileSize,
+    )
+    return new THREE.CanvasTexture(canvas)
+  }
+
+  /** Authoritative terrain sampling remains unchanged for foam/shoreline use. */
+  private sampleTerrainHeight(x: number, z: number): number {
     return getHeightAtPosition(x, z, this.options.seed, this.options.worldRadius)
+  }
+
+  /**
+   * Render-only geometry outside the barrier is always ocean floor. The
+   * island generator is radial while gameplay bounds are rectangular, so a
+   * raw query outside the rectangle can legitimately return land. Clamping
+   * only this visual receiver prevents those land-height LOD slabs from
+   * crossing the water surface without changing World or player collision.
+   */
+  private sampleSeabedHeight(x: number, z: number): number {
+    return Math.min(
+      this.sampleTerrainHeight(x, z),
+      this.options.waterLevel - SEABED_SURFACE_CLEARANCE,
+    )
   }
 
   private updateTerrainHeightTexture(): void {
@@ -442,7 +513,7 @@ export class WaterSystem {
       const worldZ = this.options.bounds.minZ + ((z + 0.5) / image.height) * spanZ
       for (let x = 0; x < image.width; x += 1) {
         const worldX = this.options.bounds.minX + ((x + 0.5) / image.width) * spanX
-        const height = this.sampleHeight(worldX, worldZ)
+        const height = this.sampleTerrainHeight(worldX, worldZ)
         const encoded = Math.round(THREE.MathUtils.clamp(height / TERRAIN_HEIGHT_TEXTURE_SCALE, 0, 1) * 255)
         const index = (z * image.width + x) * 4
         image.data[index] = encoded
@@ -467,7 +538,17 @@ export class WaterSystem {
     const z1 = Math.ceil(maxZ + nearRange)
     const heights = new Map<string, number>()
     for (let z = z0 - 1; z <= z1; z += 1) {
-      for (let x = x0 - 1; x <= x1; x += 1) heights.set(`${x},${z}`, this.sampleHeight(x, z))
+      for (let x = x0 - 1; x <= x1; x += 1) {
+        // The ring and the authoritative chunks meet at a column-height
+        // boundary. Sample the real terrain on the gameplay side so either
+        // its chunk face or this extension's complementary face closes every
+        // height difference. Applying the visual seabed clamp on both sides
+        // can fabricate an unsupported shelf at that seam.
+        const height = this.insideBounds(x, z)
+          ? this.sampleTerrainHeight(x, z)
+          : this.sampleSeabedHeight(x, z)
+        heights.set(`${x},${z}`, height)
+      }
     }
 
     const positions: number[] = []
@@ -479,7 +560,7 @@ export class WaterSystem {
     for (let z = z0; z < z1; z += 1) {
       for (let x = x0; x < x1; x += 1) {
         if (this.insideBounds(x, z)) continue
-        const height = heights.get(`${x},${z}`) ?? this.sampleHeight(x, z)
+        const height = heights.get(`${x},${z}`) ?? this.sampleSeabedHeight(x, z)
         this.appendQuad(positions, normals, uvs, ao, colors, indices,
           [[x, height + 1, z], [x + 1, height + 1, z], [x + 1, height + 1, z + 1], [x, height + 1, z + 1]],
           [0, 1, 0], [[x, z], [x + 1, z], [x + 1, z + 1], [x, z + 1]])
@@ -493,18 +574,26 @@ export class WaterSystem {
         for (const neighbor of neighbors) {
           const nx = x + neighbor.dx
           const nz = z + neighbor.dz
-          if (this.insideBounds(nx, nz)) continue
-          const neighborHeight = heights.get(`${nx},${nz}`) ?? this.sampleHeight(nx, nz)
+          const neighborHeight = heights.get(`${nx},${nz}`) ?? (
+            this.insideBounds(nx, nz)
+              ? this.sampleTerrainHeight(nx, nz)
+              : this.sampleSeabedHeight(nx, nz)
+          )
           if (neighborHeight >= height) continue
           for (let y = neighborHeight + 1; y <= height; y += 1) {
             let face: Vec3Tuple[]
             let faceUv: Array<[number, number]>
             if (neighbor.dx === 1) {
               face = [[x + 1, y, z + 1], [x + 1, y, z], [x + 1, y + 1, z], [x + 1, y + 1, z + 1]]
-              faceUv = [[x + 1, y], [x + 1, y], [x + 1, y + 1], [x + 1, y + 1]]
+              // X-facing walls use Z as their horizontal tangent. X is
+              // constant on this face; using it for U collapses the U span
+              // to zero and stretches one sand tile across the whole wall.
+              faceUv = [[z + 1, y], [z, y], [z, y + 1], [z + 1, y + 1]]
             } else if (neighbor.dx === -1) {
               face = [[x, y, z], [x, y, z + 1], [x, y + 1, z + 1], [x, y + 1, z]]
-              faceUv = [[x, y], [x, y], [x, y + 1], [x, y + 1]]
+              // See the +X case above: the side-plane coordinate, not the
+              // constant normal-axis coordinate, owns horizontal U.
+              faceUv = [[z, y], [z + 1, y], [z + 1, y + 1], [z, y + 1]]
             } else if (neighbor.dz === 1) {
               face = [[x, y, z + 1], [x + 1, y, z + 1], [x + 1, y + 1, z + 1], [x, y + 1, z + 1]]
               faceUv = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]]
@@ -520,7 +609,10 @@ export class WaterSystem {
     return this.makeGeometry(positions, normals, uvs, ao, colors, indices)
   }
 
-  private createFarSeabedGeometry(nearRange: number, cellSize: number): THREE.BufferGeometry {
+  private createFarSeabedGeometry(
+    nearRange: number,
+    cellSize: number,
+  ): { surface: THREE.BufferGeometry; closure: THREE.BufferGeometry } {
     const far = Math.max(128, this.options.farDistance)
     const { minX, maxX, minZ, maxZ } = this.options.bounds
     const x0 = Math.floor((minX - far) / cellSize) * cellSize
@@ -532,27 +624,86 @@ export class WaterSystem {
     const nearMinZ = minZ - nearRange
     const nearMaxZ = maxZ + nearRange
     const heights = new Map<string, number>()
+    const cellKey = (x: number, z: number): string => `${x},${z}`
     for (let z = z0; z < z1; z += cellSize) {
       for (let x = x0; x < x1; x += cellSize) {
         const centerX = x + cellSize * 0.5
         const centerZ = z + cellSize * 0.5
         if (centerX >= nearMinX && centerX < nearMaxX && centerZ >= nearMinZ && centerZ < nearMaxZ) continue
-        heights.set(`${x},${z}`, this.sampleHeight(Math.floor(centerX), Math.floor(centerZ)))
+        heights.set(cellKey(x, z), this.sampleSeabedHeight(Math.floor(centerX), Math.floor(centerZ)))
       }
     }
+
+    // Average the four neighbouring coarse cells at every grid vertex. This
+    // keeps the far representation continuous instead of exposing one flat
+    // 16x16 top plate per LOD sample through refraction.
+    const vertexHeights = new Map<string, number>()
+    const vertexHeight = (x: number, z: number): number => {
+      const key = cellKey(x, z)
+      const cached = vertexHeights.get(key)
+      if (cached !== undefined) return cached
+      const samples = [
+        heights.get(cellKey(x - cellSize, z - cellSize)),
+        heights.get(cellKey(x, z - cellSize)),
+        heights.get(cellKey(x - cellSize, z)),
+        heights.get(cellKey(x, z)),
+      ].filter((height): height is number => height !== undefined)
+      const terrainHeight = samples.length > 0
+        ? samples.reduce((sum, height) => sum + height, 0) / samples.length
+        : this.sampleSeabedHeight(x, z)
+      const top = terrainHeight + 1
+      vertexHeights.set(key, top)
+      return top
+    }
+
     const positions: number[] = []
     const normals: number[] = []
     const uvs: number[] = []
     const ao: number[] = []
     const colors: number[] = []
     const indices: number[] = []
-    for (const [key, height] of heights) {
+    const closurePositions: number[] = []
+    const closureNormals: number[] = []
+    const closureUvs: number[] = []
+    const closureAo: number[] = []
+    const closureColors: number[] = []
+    const closureIndices: number[] = []
+    const topVertices = new Map<string, number>()
+    const topVertex = (x: number, z: number): number => {
+      const key = cellKey(x, z)
+      const cached = topVertices.get(key)
+      if (cached !== undefined) return cached
+      const height = vertexHeight(x, z)
+      const left = vertexHeight(x - cellSize, z)
+      const right = vertexHeight(x + cellSize, z)
+      const back = vertexHeight(x, z - cellSize)
+      const front = vertexHeight(x, z + cellSize)
+      const normal = new THREE.Vector3(left - right, cellSize * 2, back - front).normalize()
+      const index = positions.length / 3
+      positions.push(x, height, z)
+      normals.push(normal.x, normal.y, normal.z)
+      uvs.push(x, z)
+      // Match the base ambient visibility assigned to isolated solid voxel
+      // faces by mesher.worker instead of giving the extension full ambient.
+      ao.push(0.7)
+      colors.push(1, 1, 1)
+      topVertices.set(key, index)
+      return index
+    }
+
+    for (const key of heights.keys()) {
       const [xText, zText] = key.split(',')
       const x = Number(xText)
       const z = Number(zText)
-      this.appendQuad(positions, normals, uvs, ao, colors, indices,
-        [[x, height + 1, z], [x + cellSize, height + 1, z], [x + cellSize, height + 1, z + cellSize], [x, height + 1, z + cellSize]],
-        [0, 1, 0], [[x, z], [x + cellSize, z], [x + cellSize, z + cellSize], [x, z + cellSize]])
+      const a = topVertex(x, z)
+      const b = topVertex(x + cellSize, z)
+      const c = topVertex(x + cellSize, z + cellSize)
+      const d = topVertex(x, z + cellSize)
+      const acDifference = Math.abs(vertexHeight(x, z) - vertexHeight(x + cellSize, z + cellSize))
+      const bdDifference = Math.abs(vertexHeight(x + cellSize, z) - vertexHeight(x, z + cellSize))
+      if (acDifference <= bdDifference) indices.push(a, d, c, a, c, b)
+      else indices.push(a, d, b, b, d, c)
+
       const sideNeighbors: Array<{ dx: number; dz: number; normal: Vec3Tuple }> = [
         { dx: cellSize, dz: 0, normal: [1, 0, 0] },
         { dx: -cellSize, dz: 0, normal: [-1, 0, 0] },
@@ -560,29 +711,109 @@ export class WaterSystem {
         { dx: 0, dz: -cellSize, normal: [0, 0, -1] },
       ]
       for (const neighbor of sideNeighbors) {
-        const neighborHeight = heights.get(`${x + neighbor.dx},${z + neighbor.dz}`)
-        if (neighborHeight === undefined || neighborHeight >= height) continue
-        const y = neighborHeight + 1
+        if (heights.has(cellKey(x + neighbor.dx, z + neighbor.dz))) continue
+        // Close both the central near/far seam and the outer perimeter. These
+        // are real visible seabed faces and must remain in the water-free
+        // scene capture; otherwise depth disappears exactly where a refracted
+        // ray reaches the terrain boundary.
         if (neighbor.dx > 0) {
-          this.appendQuad(positions, normals, uvs, ao, colors, indices,
-            [[x + cellSize, y, z + cellSize], [x + cellSize, y, z], [x + cellSize, height + 1, z], [x + cellSize, height + 1, z + cellSize]],
-            neighbor.normal, [[x + cellSize, y], [x + cellSize, y], [x + cellSize, height + 1], [x + cellSize, height + 1]])
+          this.appendTiledWall(closurePositions, closureNormals, closureUvs, closureAo, closureColors, closureIndices,
+            [x + cellSize, SEABED_FLOOR_Y, z + cellSize], [x + cellSize, SEABED_FLOOR_Y, z],
+            [x + cellSize, vertexHeight(x + cellSize, z + cellSize), z + cellSize], [x + cellSize, vertexHeight(x + cellSize, z), z],
+            neighbor.normal)
         } else if (neighbor.dx < 0) {
-          this.appendQuad(positions, normals, uvs, ao, colors, indices,
-            [[x, y, z], [x, y, z + cellSize], [x, height + 1, z + cellSize], [x, height + 1, z]],
-            neighbor.normal, [[x, y], [x, y], [x, height + 1], [x, height + 1]])
+          this.appendTiledWall(closurePositions, closureNormals, closureUvs, closureAo, closureColors, closureIndices,
+            [x, SEABED_FLOOR_Y, z], [x, SEABED_FLOOR_Y, z + cellSize],
+            [x, vertexHeight(x, z), z], [x, vertexHeight(x, z + cellSize), z + cellSize],
+            neighbor.normal)
         } else if (neighbor.dz > 0) {
-          this.appendQuad(positions, normals, uvs, ao, colors, indices,
-            [[x, y, z + cellSize], [x + cellSize, y, z + cellSize], [x + cellSize, height + 1, z + cellSize], [x, height + 1, z + cellSize]],
-            neighbor.normal, [[x, y], [x + cellSize, y], [x + cellSize, height + 1], [x, height + 1]])
+          this.appendTiledWall(closurePositions, closureNormals, closureUvs, closureAo, closureColors, closureIndices,
+            [x, SEABED_FLOOR_Y, z + cellSize], [x + cellSize, SEABED_FLOOR_Y, z + cellSize],
+            [x, vertexHeight(x, z + cellSize), z + cellSize], [x + cellSize, vertexHeight(x + cellSize, z + cellSize), z + cellSize],
+            neighbor.normal)
         } else {
-          this.appendQuad(positions, normals, uvs, ao, colors, indices,
-            [[x + cellSize, y, z], [x, y, z], [x, height + 1, z], [x + cellSize, height + 1, z]],
-            neighbor.normal, [[x + cellSize, y], [x, y], [x, height + 1], [x + cellSize, height + 1]])
+          this.appendTiledWall(closurePositions, closureNormals, closureUvs, closureAo, closureColors, closureIndices,
+            [x + cellSize, SEABED_FLOOR_Y, z], [x, SEABED_FLOOR_Y, z],
+            [x + cellSize, vertexHeight(x + cellSize, z), z], [x, vertexHeight(x, z), z],
+            neighbor.normal)
         }
       }
     }
-    return this.makeGeometry(positions, normals, uvs, ao, colors, indices)
+    return {
+      surface: this.makeGeometry(positions, normals, uvs, ao, colors, indices),
+      closure: this.makeGeometry(
+        closurePositions,
+        closureNormals,
+        closureUvs,
+        closureAo,
+        closureColors,
+        closureIndices,
+      ),
+    }
+  }
+
+  /**
+   * Emit a far-LOD wall with one sand tile per world block along its long
+   * axis. The old closure emitted one 16-block quad and relied on a large
+   * absolute UV span. Although RepeatWrapping can represent that mapping,
+   * the large primitive makes the side's minified footprint unstable and
+   * allows the atlas tile to read as a stretched band at oblique underwater
+   * views. Keep each segment's U range local and at most one tile wide; V
+   * remains world-height based so the vertical sand scale stays consistent
+   * with the one-block ring.
+   */
+  private appendTiledWall(
+    positions: number[],
+    normals: number[],
+    uvs: number[],
+    ao: number[],
+    colors: number[],
+    indices: number[],
+    bottomStart: Vec3Tuple,
+    bottomEnd: Vec3Tuple,
+    topStart: Vec3Tuple,
+    topEnd: Vec3Tuple,
+    normal: Vec3Tuple,
+  ): void {
+    const edgeLength = Math.hypot(
+      bottomEnd[0] - bottomStart[0],
+      bottomEnd[2] - bottomStart[2],
+    )
+    const segments = Math.max(1, Math.ceil(edgeLength - 1e-6))
+    const uIncreases = Math.abs(bottomEnd[0] - bottomStart[0]) > 1e-6
+      ? bottomEnd[0] > bottomStart[0]
+      : bottomEnd[2] > bottomStart[2]
+    const lerpPoint = (start: Vec3Tuple, end: Vec3Tuple, t: number): Vec3Tuple => [
+      THREE.MathUtils.lerp(start[0], end[0], t),
+      THREE.MathUtils.lerp(start[1], end[1], t),
+      THREE.MathUtils.lerp(start[2], end[2], t),
+    ]
+
+    for (let segment = 0; segment < segments; segment += 1) {
+      const t0 = segment / segments
+      const t1 = (segment + 1) / segments
+      const segmentBottomStart = lerpPoint(bottomStart, bottomEnd, t0)
+      const segmentBottomEnd = lerpPoint(bottomStart, bottomEnd, t1)
+      const segmentTopStart = lerpPoint(topStart, topEnd, t0)
+      const segmentTopEnd = lerpPoint(topStart, topEnd, t1)
+      // Reset U for every world-block segment. Using t0/t1 here would map
+      // the whole LOD edge to one tile and recreate the visible stretch.
+      const u0 = uIncreases ? 0 : 1
+      const u1 = uIncreases ? 1 : 0
+      const v0 = Math.max(0, segmentTopStart[1] - segmentBottomStart[1])
+      const v1 = Math.max(0, segmentTopEnd[1] - segmentBottomEnd[1])
+      this.appendQuad(
+        positions,
+        normals,
+        uvs,
+        ao,
+        colors,
+        indices,
+        [segmentBottomStart, segmentBottomEnd, segmentTopEnd, segmentTopStart],
+        normal,
+        [[u0, 0], [u1, 0], [u1, v1], [u0, v0]],
+      )
+    }
   }
 
   private appendQuad(
@@ -602,7 +833,7 @@ export class WaterSystem {
       positions.push(point[0], point[1], point[2])
       normals.push(normal[0], normal[1], normal[2])
       uvs.push(faceUvs[i][0], faceUvs[i][1])
-      ao.push(1)
+      ao.push(0.7)
       colors.push(1, 1, 1)
     }
     const ax = points[1][0] - points[0][0]
@@ -637,7 +868,18 @@ export class WaterSystem {
     if (source) {
       const sourceUniforms = source.uniforms as Record<string, THREE.IUniform>
       const targetUniforms = this.seabedMaterial.uniforms as Record<string, THREE.IUniform>
-      for (const key of ['sunDirection', 'sunColor', 'dayLight', 'starLight', 'skyAmbient']) {
+      for (const key of [
+        'sunDirection',
+        'sunColor',
+        'dayLight',
+        'starLight',
+        'skyAmbient',
+        'roughness',
+        'metalness',
+        'envMapIntensity',
+        'lightingMix',
+        'ditherAmount',
+      ]) {
         if (sourceUniforms[key] && targetUniforms[key]) targetUniforms[key].value = sourceUniforms[key].value
       }
       // The visual-only seabed is still a real sun-shadow receiver. Share the

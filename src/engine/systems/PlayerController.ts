@@ -20,6 +20,21 @@ export interface PlayerMovementState {
   moveDirection: THREE.Vector3;
 }
 
+interface CollisionVolume {
+  offsetX: number;
+  offsetY: number;
+  offsetZ: number;
+  halfX: number;
+  halfY: number;
+  halfZ: number;
+}
+
+interface HorizontalCollision {
+  time: number;
+  hitX: boolean;
+  hitZ: boolean;
+}
+
 export class PlayerController {
   // The camera is retained only as the initial pose/source of the shared
   // look contract. Physics never writes to it; third-person orbit is free to
@@ -56,12 +71,14 @@ export class PlayerController {
   private readonly width: number = PLAYER.width;
   private readonly height: number = PLAYER.height;
   private readonly halfWidth: number = this.width / 2;
-  // The authored swim animation rotates the body around its feet. In the
-  // moving pose the head leads the feet by roughly the character height, so
-  // the horizontal collider must expand along the movement heading to keep
-  // the rendered head from entering a voxel wall or seabed step.
-  private readonly swimForwardHalfExtent: number = 1.75;
-  private readonly swimLateralHalfExtent: number = 0.45;
+  // The authored swim animation rotates the body around its feet. Keep the
+  // normal body collider centered on the physics root and add pose-aligned
+  // volumes for the rendered legs, torso, arms, and head while moving. A
+  // single centered long box falsely overlaps the shoreline behind the
+  // swimmer, while the individual volumes preserve the actual mesh envelope.
+  private readonly swimHeadForwardOffset: number = 1.65;
+  private readonly swimHeadHalfExtent: number = 0.35;
+  private readonly swimHeadCenterAboveFeet: number = 0.65;
   private readonly eyeHeight: number = PLAYER.eyeHeight;
   private readonly waterId: number = getBlockIdByName('water') ?? 5;
 
@@ -226,40 +243,6 @@ export class PlayerController {
       this.grounded = true;
     }
     
-    // Additional safety: if player is inside solid blocks, push them up
-    const pos = this.position;
-    const minY = this.getBaseY();
-    const maxY = minY + this.height;
-    const halfX = this.getCollisionHalfExtentX();
-    const halfZ = this.getCollisionHalfExtentZ();
-    const minX = pos.x - halfX;
-    const maxX = pos.x + halfX;
-    const minZ = pos.z - halfZ;
-    const maxZ = pos.z + halfZ;
-    
-    if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) {
-      // Player is stuck inside blocks, try to push them up
-      let safeY = Math.floor(maxY) + 1;
-      let attempts = 0;
-      const maxAttempts = 10;
-      
-      while (attempts < maxAttempts) {
-        const testMinY = safeY - this.height;
-        const testMaxY = safeY;
-        
-        if (!this.aabbIntersectsSolid(minX, testMinY, minZ, maxX, testMaxY, maxZ)) {
-          // Found safe position
-          this.position.y = safeY - this.height + this.eyeHeight;
-          this.velocityY = 0;
-          this.grounded = true;
-          break;
-        }
-        
-        safeY++;
-        attempts++;
-      }
-    }
-
     // Apply post-physics elevation tween (visual only)
     this.applyElevationTween(deltaSeconds);
   }
@@ -364,10 +347,12 @@ export class PlayerController {
     const dy = this.swimVelocity.y * dt;
     const dz = this.swimVelocity.z * dt;
 
-    // Try horizontal movement; if blocked near the surface or with ground support, attempt a step-up
-    const hitX = this.resolveAxis('x', dx);
+    // Sweep the complete horizontal vector so diagonal approaches cannot slip
+    // through a voxel corner between separate X/Z axis passes.
+    const horizontalHit = this.resolveHorizontalMovement(dx, dz);
+    const hitX = horizontalHit.hitX;
     if (hitX) this.swimVelocity.x = 0;
-    const hitZ = this.resolveAxis('z', dz);
+    const hitZ = horizontalHit.hitZ;
     if (hitZ) this.swimVelocity.z = 0;
 
     const baseYNow = this.getBaseY();
@@ -414,32 +399,132 @@ export class PlayerController {
       this.swimVelocity.y = Math.max(0, this.swimVelocity.y);
     }
 
-    // If ended up intersecting solids (rare), push up
-    const pos = this.position;
-    const minY = this.getBaseY();
-    const maxY = minY + this.height;
-    const halfX = this.getCollisionHalfExtentX();
-    const halfZ = this.getCollisionHalfExtentZ();
-    const minX = pos.x - halfX;
-    const maxX = pos.x + halfX;
-    const minZ = pos.z - halfZ;
-    const maxZ = pos.z + halfZ;
-    if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) {
-      let safeY = Math.floor(maxY) + 1;
-      let attempts = 0;
-      const maxAttempts = 10;
-      while (attempts < maxAttempts) {
-        const testMinY = safeY - this.height;
-        const testMaxY = safeY;
-        if (!this.aabbIntersectsSolid(minX, testMinY, minZ, maxX, testMaxY, maxZ)) {
-          this.position.y = safeY - this.height + this.eyeHeight;
-          this.swimVelocity.y = 0;
-          break;
-        }
-        safeY++;
-        attempts++;
+  }
+
+  /**
+   * Sweep a complete underwater X/Z displacement against every pose volume.
+   * Resolving the earliest time of impact and then sliding the remaining
+   * component prevents diagonal motion from crossing a block corner when
+   * neither independent axis has crossed its face yet.
+   */
+  private resolveHorizontalMovement(deltaX: number, deltaZ: number): { hitX: boolean; hitZ: boolean } {
+    let remainingX = deltaX;
+    let remainingZ = deltaZ;
+    let hitX = false;
+    let hitZ = false;
+
+    if (this.bounds) {
+      const minX = this.bounds.minX + this.halfWidth + PlayerController.EPS;
+      const maxX = this.bounds.maxX - this.halfWidth - PlayerController.EPS;
+      const minZ = this.bounds.minZ + this.halfWidth + PlayerController.EPS;
+      const maxZ = this.bounds.maxZ - this.halfWidth - PlayerController.EPS;
+      const targetX = THREE.MathUtils.clamp(this.position.x + remainingX, minX, maxX);
+      const targetZ = THREE.MathUtils.clamp(this.position.z + remainingZ, minZ, maxZ);
+      if (targetX !== this.position.x + remainingX) hitX = true;
+      if (targetZ !== this.position.z + remainingZ) hitZ = true;
+      remainingX = targetX - this.position.x;
+      remainingZ = targetZ - this.position.z;
+    }
+
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+      const distance = Math.hypot(remainingX, remainingZ);
+      if (distance <= PlayerController.EPS) break;
+      const collision = this.findHorizontalCollision(remainingX, remainingZ);
+      if (collision === null) {
+        this.position.x += remainingX;
+        this.position.z += remainingZ;
+        break;
+      }
+
+      const safeTime = Math.max(0, collision.time - PlayerController.EPS / distance);
+      this.position.x += remainingX * safeTime;
+      this.position.z += remainingZ * safeTime;
+      if (collision.hitX) {
+        hitX = true;
+        remainingX = 0;
+      } else {
+        remainingX *= 1 - safeTime;
+      }
+      if (collision.hitZ) {
+        hitZ = true;
+        remainingZ = 0;
+      } else {
+        remainingZ *= 1 - safeTime;
       }
     }
+
+    return { hitX, hitZ };
+  }
+
+  /** Find the earliest X/Z swept-AABB contact across all current pose boxes. */
+  private findHorizontalCollision(deltaX: number, deltaZ: number): HorizontalCollision | null {
+    const pos = this.position;
+    let nearest: HorizontalCollision | null = null;
+
+    for (const volume of this.getCollisionVolumes()) {
+      const current = this.getCollisionVolumeBounds(volume, pos.x, pos.y, pos.z);
+      const centerX = pos.x + volume.offsetX;
+      const centerZ = pos.z + volume.offsetZ;
+      const minX = Math.floor(Math.min(current.minX, current.minX + deltaX) - PlayerController.EPS);
+      const maxX = Math.floor(Math.max(current.maxX, current.maxX + deltaX) + PlayerController.EPS);
+      const minZ = Math.floor(Math.min(current.minZ, current.minZ + deltaZ) - PlayerController.EPS);
+      const maxZ = Math.floor(Math.max(current.maxZ, current.maxZ + deltaZ) + PlayerController.EPS);
+
+      for (let y = Math.floor(current.minY); y <= Math.floor(current.maxY); y += 1) {
+        if (current.minY >= y + 1 - PlayerController.EPS || current.maxY <= y + PlayerController.EPS) continue;
+        for (let z = minZ; z <= maxZ; z += 1) {
+          for (let x = minX; x <= maxX; x += 1) {
+            if (!this.world.isBlockSolid(x, y, z)) continue;
+
+            const expandedMinX = x - volume.halfX;
+            const expandedMaxX = x + 1 + volume.halfX;
+            const expandedMinZ = z - volume.halfZ;
+            const expandedMaxZ = z + 1 + volume.halfZ;
+            let entry = 0;
+            let exit = 1;
+            const entries: Array<{ axis: 'x' | 'z'; time: number }> = [];
+
+            const axisSweep = (
+              center: number,
+              delta: number,
+              minimum: number,
+              maximum: number,
+              axis: 'x' | 'z',
+            ): boolean => {
+              if (Math.abs(delta) <= PlayerController.EPS) {
+                return center > minimum + PlayerController.EPS && center < maximum - PlayerController.EPS;
+              }
+              let near = (minimum - center) / delta;
+              let far = (maximum - center) / delta;
+              if (near > far) [near, far] = [far, near];
+              entries.push({ axis, time: near });
+              entry = Math.max(entry, near);
+              exit = Math.min(exit, far);
+              return entry <= exit + PlayerController.EPS;
+            };
+
+            if (!axisSweep(centerX, deltaX, expandedMinX, expandedMaxX, 'x')) continue;
+            if (!axisSweep(centerZ, deltaZ, expandedMinZ, expandedMaxZ, 'z')) continue;
+            if (entry < -PlayerController.EPS || entry > 1 + PlayerController.EPS) continue;
+
+            const hitX = entries.some((candidate) => candidate.axis === 'x'
+              && Math.abs(candidate.time - entry) <= PlayerController.EPS * 8);
+            const hitZ = entries.some((candidate) => candidate.axis === 'z'
+              && Math.abs(candidate.time - entry) <= PlayerController.EPS * 8);
+            if (!hitX && !hitZ) continue;
+            const time = THREE.MathUtils.clamp(entry, 0, 1);
+            if (nearest === null || time < nearest.time) {
+              nearest = { time, hitX, hitZ };
+            } else if (Math.abs(time - nearest.time) <= PlayerController.EPS * 8) {
+              nearest.hitX = nearest.hitX || hitX;
+              nearest.hitZ = nearest.hitZ || hitZ;
+            }
+          }
+        }
+      }
+    }
+
+    return nearest;
   }
 
   /**
@@ -449,26 +534,17 @@ export class PlayerController {
   private resolveAxis(axis: 'x' | 'y' | 'z', delta: number): boolean {
     if (delta === 0) return false;
 
-    // Compute proposed position
     const pos = this.position;
     const nextX = axis === 'x' ? pos.x + delta : pos.x;
     const nextY = axis === 'y' ? pos.y + delta : pos.y;
     const nextZ = axis === 'z' ? pos.z + delta : pos.z;
+    const sign = Math.sign(delta);
 
-    // Compute AABB for proposed position
-    const halfX = this.getCollisionHalfExtentX();
-    const halfZ = this.getCollisionHalfExtentZ();
-    const halfAxis = axis === 'x' ? halfX : halfZ;
-    const minX = nextX - halfX;
-    const maxX = nextX + halfX;
-    const minY = this.getBaseY(nextY);
-    const maxY = minY + this.height;
-    const minZ = nextZ - halfZ;
-    const maxZ = nextZ + halfZ;
-
-    // Enforce world bounds (X/Z only) by clamping proposed center before collision test
+    // Enforce the playable barrier for the physics root. The head volume is
+    // intentionally allowed to approach this edge independently; the root is
+    // what keeps the player inside the generated world.
     if (this.bounds && (axis === 'x' || axis === 'z')) {
-      const hw = halfAxis + PlayerController.EPS;
+      const hw = this.halfWidth + PlayerController.EPS;
       if (axis === 'x') {
         const min = this.bounds.minX + hw;
         const max = this.bounds.maxX - hw;
@@ -494,52 +570,77 @@ export class PlayerController {
       }
     }
 
-    if (!this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) {
-      // No collision; apply movement
+    let nearest: { volume: CollisionVolume; boundary: number; travel: number } | null = null;
+    for (const volume of this.getCollisionVolumes()) {
+      const currentBounds = this.getCollisionVolumeBounds(volume, pos.x, pos.y, pos.z);
+      const nextBounds = this.getCollisionVolumeBounds(volume, nextX, nextY, nextZ);
+      if (!this.aabbIntersectsSolid(
+        nextBounds.minX,
+        nextBounds.minY,
+        nextBounds.minZ,
+        nextBounds.maxX,
+        nextBounds.maxY,
+        nextBounds.maxZ,
+      )) continue;
+
+      const currentLeadingEdge = axis === 'x'
+        ? (sign > 0 ? currentBounds.maxX : currentBounds.minX)
+        : axis === 'z'
+          ? (sign > 0 ? currentBounds.maxZ : currentBounds.minZ)
+          : (sign > 0 ? currentBounds.maxY : currentBounds.minY);
+      const nextLeadingEdge = axis === 'x'
+        ? (sign > 0 ? nextBounds.maxX : nextBounds.minX)
+        : axis === 'z'
+          ? (sign > 0 ? nextBounds.maxZ : nextBounds.minZ)
+          : (sign > 0 ? nextBounds.maxY : nextBounds.minY);
+      const collisionBoundary = this.findCollisionBoundary(
+        axis,
+        sign,
+        nextBounds.minX,
+        nextBounds.minY,
+        nextBounds.minZ,
+        nextBounds.maxX,
+        nextBounds.maxY,
+        nextBounds.maxZ,
+        currentLeadingEdge,
+        nextLeadingEdge,
+      );
+      if (collisionBoundary === null) continue;
+
+      const travel = sign > 0
+        ? collisionBoundary - currentLeadingEdge
+        : currentLeadingEdge - collisionBoundary;
+      if (travel < -PlayerController.EPS) continue;
+      if (nearest === null || travel < nearest.travel) {
+        nearest = { volume, boundary: collisionBoundary, travel };
+      }
+    }
+
+    if (nearest === null) {
+      // An overlap that does not cross a face in this direction is trailing
+      // geometry (for example, the swimmer's legs still over the shoreline).
+      // It must not turn into a snap or a vertical recovery teleport.
       pos.set(nextX, nextY, nextZ);
       return false;
     }
 
-    // Collision: snap to boundary
-    const sign = Math.sign(delta);
-    const collisionBoundary = this.findCollisionBoundary(
-      axis,
-      sign,
-      minX,
-      minY,
-      minZ,
-      maxX,
-      maxY,
-      maxZ,
-    );
-    if (collisionBoundary === null) return true;
+    const { volume, boundary } = nearest;
     switch (axis) {
-      case 'x': {
-        if (sign > 0) {
-          pos.x = collisionBoundary - halfX - PlayerController.EPS;
-        } else {
-          pos.x = collisionBoundary + halfX + PlayerController.EPS;
-        }
+      case 'x':
+        pos.x = sign > 0
+          ? boundary - volume.offsetX - volume.halfX - PlayerController.EPS
+          : boundary - volume.offsetX + volume.halfX + PlayerController.EPS;
         return true;
-      }
-      case 'z': {
-        if (sign > 0) {
-          pos.z = collisionBoundary - halfZ - PlayerController.EPS;
-        } else {
-          pos.z = collisionBoundary + halfZ + PlayerController.EPS;
-        }
+      case 'z':
+        pos.z = sign > 0
+          ? boundary - volume.offsetZ - volume.halfZ - PlayerController.EPS
+          : boundary - volume.offsetZ + volume.halfZ + PlayerController.EPS;
         return true;
-      }
-      case 'y': {
-        if (sign > 0) {
-          // Moving up: clamp top to block minY
-          pos.y = collisionBoundary - this.height - PlayerController.EPS + this.eyeHeight;
-        } else {
-          // Moving down: clamp bottom to block maxY (blockY+1)
-          pos.y = collisionBoundary + PlayerController.EPS + this.eyeHeight;
-        }
+      case 'y':
+        pos.y = sign > 0
+          ? boundary - volume.offsetY - volume.halfY - PlayerController.EPS
+          : boundary - volume.offsetY + volume.halfY + PlayerController.EPS;
         return true;
-      }
     }
   }
 
@@ -553,6 +654,8 @@ export class PlayerController {
     maxX: number,
     maxY: number,
     maxZ: number,
+    currentLeadingEdge: number,
+    nextLeadingEdge: number,
   ): number | null {
     let boundary = sign > 0 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
     const ix0 = Math.floor(minX);
@@ -569,6 +672,12 @@ export class PlayerController {
           const face = axis === 'x' ? (sign > 0 ? x : x + 1)
             : axis === 'y' ? (sign > 0 ? y : y + 1)
               : (sign > 0 ? z : z + 1);
+          const crossed = sign > 0
+            ? face > currentLeadingEdge - PlayerController.EPS
+              && face <= nextLeadingEdge + PlayerController.EPS
+            : face < currentLeadingEdge + PlayerController.EPS
+              && face >= nextLeadingEdge - PlayerController.EPS;
+          if (!crossed) continue;
           boundary = sign > 0 ? Math.min(boundary, face) : Math.max(boundary, face);
         }
       }
@@ -577,23 +686,89 @@ export class PlayerController {
     return Number.isFinite(boundary) ? boundary : null;
   }
 
-  /**
-   * Return the horizontal half-extents of the currently authored player pose.
-   * Land and idle-swim poses use the normal player width. While moving under
-   * water, the body is rotated onto its side and the head leads the root, so
-   * project a conservative long/thin box onto world X/Z using movement yaw.
-   */
-  private getCollisionHalfExtentX(): number {
-    if (!this.underwater || !this.moving) return this.halfWidth;
-    return this.swimForwardHalfExtent * Math.abs(this.moveDirection.x)
-      + this.swimLateralHalfExtent * Math.abs(this.moveDirection.z);
+  /** Return collision volumes for the current authored pose. */
+  private getCollisionVolumes(): CollisionVolume[] {
+    const volumes: CollisionVolume[] = [{
+      offsetX: 0,
+      offsetY: -this.eyeHeight + this.height * 0.5,
+      offsetZ: 0,
+      halfX: this.halfWidth,
+      halfY: this.height * 0.5,
+      halfZ: this.halfWidth,
+    }];
+    const swimHorizontalSpeed = Math.hypot(this.swimVelocity.x, this.swimVelocity.z);
+    if (!this.underwater || (!this.moving && swimHorizontalSpeed <= 0.15)) return volumes;
+
+    const headDirection = this.moveDirection.clone();
+    if (headDirection.lengthSq() <= 1e-6 && swimHorizontalSpeed > 0.15) {
+      headDirection.set(this.swimVelocity.x, 0, this.swimVelocity.z).normalize();
+    }
+
+    // The rig is rotated around X into the swim pose. These centers and
+    // half-extents are the authored box projections (with a small margin),
+    // expressed in a forward/right frame and projected onto world X/Z for
+    // voxel collision. The body yaw is symmetric for these envelopes, so the
+    // movement direction is the stable frame shared with the visual rig.
+    const rightX = -headDirection.z;
+    const rightZ = headDirection.x;
+    const addSwimBox = (
+      forward: number,
+      lateral: number,
+      centerAboveFeet: number,
+      halfForward: number,
+      halfLateral: number,
+      halfY: number,
+    ): void => {
+      volumes.push({
+        offsetX: forward * headDirection.x + lateral * rightX,
+        offsetY: -this.eyeHeight + centerAboveFeet,
+        offsetZ: forward * headDirection.z + lateral * rightZ,
+        halfX: halfForward * Math.abs(headDirection.x) + halfLateral * Math.abs(rightX),
+        halfY,
+        halfZ: halfForward * Math.abs(headDirection.z) + halfLateral * Math.abs(rightZ),
+      });
+    };
+
+    // Legs remain near the feet, while the torso/arms and head lead the
+    // direction of travel. The head's 2-block leading envelope prevents the
+    // visible face from entering a terrain voxel before the root is stopped.
+    addSwimBox(0.28, -0.13, 0.66, 0.45, 0.16, 0.22);
+    addSwimBox(0.28, 0.13, 0.66, 0.45, 0.16, 0.22);
+    addSwimBox(1.02, 0, 0.69, 0.40, 0.26, 0.18);
+    addSwimBox(1.07, -0.375, 0.69, 0.40, 0.16, 0.18);
+    addSwimBox(1.07, 0.375, 0.69, 0.40, 0.16, 0.18);
+    addSwimBox(
+      this.swimHeadForwardOffset,
+      0,
+      this.swimHeadCenterAboveFeet,
+      this.swimHeadHalfExtent,
+      this.swimHeadHalfExtent,
+      this.swimHeadHalfExtent,
+    );
+    return volumes;
   }
 
-  private getCollisionHalfExtentZ(): number {
-    if (!this.underwater || !this.moving) return this.halfWidth;
-    return this.swimForwardHalfExtent * Math.abs(this.moveDirection.z)
-      + this.swimLateralHalfExtent * Math.abs(this.moveDirection.x);
+  private getCollisionVolumeBounds(
+    volume: CollisionVolume,
+    x: number,
+    y: number,
+    z: number,
+  ): { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number } {
+    const centerX = x + volume.offsetX;
+    const centerY = y + volume.offsetY;
+    const centerZ = z + volume.offsetZ;
+    return {
+      minX: centerX - volume.halfX,
+      minY: centerY - volume.halfY,
+      minZ: centerZ - volume.halfZ,
+      maxX: centerX + volume.halfX,
+      maxY: centerY + volume.halfY,
+      maxZ: centerZ + volume.halfZ,
+    };
   }
+
+  private getCollisionHalfExtentX(): number { return this.halfWidth; }
+  private getCollisionHalfExtentZ(): number { return this.halfWidth; }
 
   /** Camera base Y helper: returns y of feet (AABB minY) */
   private getBaseY(positionY: number = this.position.y): number {

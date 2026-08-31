@@ -639,9 +639,6 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
   blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80);
 
-  // Determine anisotropy support for any textures that can benefit (e.g., seabed sand)
-  const maxAniso = baseRenderer.capabilities.getMaxAnisotropy();
-
   // Water material uses the same shader as far ocean, but uses vUv on block meshes
   waterMaterial = new WaterSurfaceMaterial({
     map: null,
@@ -849,7 +846,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       worldRadius,
       blockMaterialSource: blockMaterial ?? undefined,
       blockWaterMaterial: waterMaterial ?? undefined,
-      anisotropy: maxAniso ? Math.min(8, maxAniso) : 8,
+      seabedAtlas: atlas.getConfig(),
       renderer: baseRenderer,
     });
     waterSystem.setSceneInputs(

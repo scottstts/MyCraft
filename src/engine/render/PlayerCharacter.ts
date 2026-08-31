@@ -663,17 +663,11 @@ export class PlayerCharacter {
 
     // Do not use the animated head pivot as the third-person orbit origin.
     // In the horizontal swim pose that pivot is intentionally forward of the
-    // physics root; using it as a camera anchor lets the orbit begin inside a
-    // seabed wall before the sweep has a valid clear segment. Keep the camera
-    // centered on the collision pose instead.
+    // physics root. The physical eye is a stable, collision-cleared anchor;
+    // using a lower feet-relative point can put the camera sphere inside the
+    // top voxel of a seabed block before the sweep even starts.
     if (this.controller) {
-      const state = this.controller.getMovementState();
-      if (state.isUnderwater) {
-        this.controller.getFeetPosition(this.scratchTarget);
-        this.scratchTarget.y += CFG.swimBodyLift + 0.45;
-      } else {
-        this.controller.getEyePosition(this.scratchTarget);
-      }
+      this.controller.getEyePosition(this.scratchTarget);
     } else {
       this.scratchTarget.y += 0.30;
     }
@@ -702,7 +696,8 @@ export class PlayerCharacter {
       // including when the camera extends past a cliff into otherwise empty
       // air. The voxel sweep below handles raised terrain and overhangs.
       const minimumCameraY = this.controller.getFeetPosition(this.scratchFeetPosition).y
-        + CFG.cameraCollisionRadius;
+        + CFG.cameraCollisionRadius
+        + CFG.cameraCollisionPadding;
       constrainCameraToSolidVoxels(
         this.controller.getWorld(),
         this.scratchTarget,

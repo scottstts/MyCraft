@@ -10,9 +10,9 @@ The camera uses the `YXZ` FPS rotation order. `createPlayerCamera()` is the cano
 
 `PlayerController` owns the eye-position physics state, gravity, walking/sprinting, jumping, swimming, water hysteresis, AABB collision queries, world bounds, and smooth emerge/elevation behavior. It queries `World.isBlockSolid()` rather than reading chunk arrays directly. Camera placement and the visual player rig consume the controller’s position, so physics remains independent of the rendered body.
 
-The horizontal swim pose is lifted relative to the rig root so its lowest rendered geometry stays on the controller's feet plane when the AABB contacts a solid seabed. Third-person camera collision uses a conservative swept sphere against radius-expanded solid voxel boxes; unlike a finite ray bundle, this also catches diagonal corners on stepped underwater terrain.
+The horizontal swim pose is lifted relative to the rig root so its lowest rendered geometry stays on the controller's feet plane when the body volume contacts a solid seabed. Third-person camera collision uses a conservative swept sphere against radius-expanded solid voxel boxes; unlike a finite ray bundle, this also catches diagonal corners on stepped underwater terrain.
 
-While moving underwater, the collision footprint projects the horizontal swim pose (including the forward-leading head) onto world X/Z. Axis resolution snaps against the nearest actually-solid voxel face, so a wide swim footprint cannot be placed inside a seabed step or side wall.
+While moving underwater, collision uses the normal body volume plus separate pose volumes for the horizontal swim legs, torso, arms, and head. Their centers and extents follow the authored rig and are projected into the voxel axes. The full X/Z displacement is swept as one vector, stopping at the earliest voxel face (including diagonal corners) and sliding only along the unblocked component. This blocks seabed steps and side walls without treating trailing shoreline geometry as a wall. There is no post-collision search that relocates the player to a higher “safe” position.
 
 The frame loop updates gameplay only while the UI says the session is in-game and not paused. Rendering continues while paused so the scene, sky, water, and pause menu remain visually stable.
 

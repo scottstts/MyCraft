@@ -121,7 +121,9 @@ describe('player character feet alignment', () => {
     const camera = new THREE.PerspectiveCamera();
     camera.position.set(0, 22, -2);
     const input = {
-      getOrientation: () => ({ yaw: 0, pitch: 0 }),
+      // Aim slightly downward so the orbit path crosses the wall while the
+      // eye-height pivot itself remains above its top face.
+      getOrientation: () => ({ yaw: 0, pitch: 0.3 }),
     } as unknown as InputSystem;
     const world = {
       isBlockSolid: (_x: number, y: number, z: number) => y === 21 && z === -2,
@@ -137,9 +139,10 @@ describe('player character feet alignment', () => {
     player.setController(controller);
     player.update(1 / 60);
 
-    // The old head-pivot orbit began inside the wall. The collision-root
-    // pivot must pull the camera back before it can enter the voxel.
-    expect(camera.position.z).toBeGreaterThan(-0.9);
+    // The old low head-pivot orbit left the camera sphere intersecting the
+    // wall's top face. The eye-height pivot must keep the sphere fully above
+    // that face while the orbit path is clipped.
+    expect(camera.position.y - 0.2).toBeGreaterThan(22);
 
     player.dispose();
   });
