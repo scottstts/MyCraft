@@ -9,6 +9,7 @@ This directory documents the implemented runtime boundaries and the contracts be
 - [Filmic lens flare](lens-flare.md) — the sun-linked optical graph, finite-disc visibility, blocker-breadth bloom response, and diagnostics.
 - [Atmosphere, lighting, and shadows](atmosphere-lighting-and-shadows.md) — time of day, sky radiance, aerial perspective, and the voxel visibility pass.
 - [Water](water.md) — authoritative water blocks, rendered water surfaces, the far ocean, caustics, and underwater medium effects.
+- [Water medium and caustics](water-medium-and-caustics.md) — participating-water integration, air/water pass ownership, differential-area transport, and receiver invariants.
 - [World and chunks](world-and-chunks.md) — voxel storage, terrain generation, worker orchestration, meshing, and mesh publication.
 - [World sizing](world-sizing.md) — named world footprints, the direct start-screen picker, and the fixed large chunk contract.
 - [Player and interaction](player-and-interaction.md) — pointer lock, movement, collision, selection, mining, placing, and inventory handoff.

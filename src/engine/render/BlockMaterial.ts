@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH, WATER_EXTINCTION, WATER_IOR } from './water/WaterOptics';
 
 function createWhiteTexture(): THREE.DataTexture {
   const texture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -154,7 +155,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform bool waterCausticEnabled;
       uniform float waterCausticLevel;
       uniform float waterCausticIntensity;
-      uniform float waterCausticTime;
+      uniform float waterCausticReferenceDepth;
+      uniform float waterCausticFieldScale;
+      uniform float waterCausticSunIntensity;
+      uniform vec3 waterCausticExtinction;
       uniform sampler2D waterCausticMap;
       uniform bool waterCausticMapEnabled;
       uniform vec2 waterCausticOrigin;
@@ -267,7 +271,14 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           return mix(base, avg4, k);
       }
 
-      vec4 calculateEnhancedLighting(vec3 albedo, vec3 normal, vec3 viewDir, float ambientOcclusion) {
+      vec3 directSunLighting(vec3 normal) {
+          vec3 sunDir = normalize(sunDirection);
+          float sunDot = max(dot(normal, sunDir), 0.0);
+          float shadowFactor = getVoxelShadowMask();
+          return sunColor * sunDot * clamp(dayLight, 0.0, 1.0) * shadowFactor;
+      }
+
+      vec4 calculateEnhancedLighting(vec3 albedo, vec3 normal, vec3 viewDir, float ambientOcclusion, vec3 directSun) {
           // Ambient visibility is kept separate from direct sun lighting.
           vec3 starAmb = vec3(0.02, 0.025, 0.04) * 0.35 * clamp(starLight, 0.0, 1.0);
           float ao = clamp(ambientOcclusion, 0.0, 1.0);
@@ -276,18 +287,13 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           // Main sun light (provided via uniforms)
           vec3 sunDir = normalize(sunDirection);
           float sunDot = max(dot(normal, sunDir), 0.0);
-          
+
           // Use the screen-space voxel DDA visibility mask only for direct sun
           // diffuse. The post-process SSAO mask is derived below from the
           // unshadowed lighting, so shadow coverage cannot amplify screen-space
           // AO at cube edges.
-          float shadowFactor = getVoxelShadowMask();
-          
-          // Apply shadow to diffuse lighting
-          // Crisper sun diffuse for stronger, clearer shadows
-          float wrappedDiffuse = sunDot;
-          vec3 unshadowedDiffuse = sunColor * wrappedDiffuse * clamp(dayLight, 0.0, 1.0);
-          vec3 diffuse = unshadowedDiffuse * shadowFactor;
+          vec3 unshadowedDiffuse = sunColor * sunDot * clamp(dayLight, 0.0, 1.0);
+          vec3 diffuse = directSun;
           
           // Fresnel rim lighting
           float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 2.0);
@@ -318,32 +324,45 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           return vec4(total, indirectMask);
       }
 
-      float waterCausticField(vec2 worldXZ, float time) {
-          vec2 p = worldXZ * 0.34;
-          float bendA = 0.55 * sin(dot(p, vec2(0.31, 0.47)) + time * 0.12);
-          float bendB = 0.42 * sin(dot(p, vec2(-0.53, 0.27)) - time * 0.08);
-          float ridgeA = 1.0 - smoothstep(0.035, 0.24, abs(sin(dot(p, vec2(1.63, 2.21)) + bendA)));
-          float ridgeB = 1.0 - smoothstep(0.035, 0.24, abs(sin(dot(p, vec2(-2.07, 1.19)) + bendB)));
-          float ridgeC = 1.0 - smoothstep(0.035, 0.24, abs(sin(dot(p, vec2(0.79, -2.67)) + bendA * 0.6 - bendB * 0.3)));
-          return clamp(max(max(ridgeA, ridgeB * 0.88), ridgeC * 0.72), 0.0, 1.0);
-      }
-
-      // The caustic pass is a differential-area projection of the live wave
-      // surface.  Sample three nearby channels so the focused web has the
-      // slight chromatic separation seen through real water.  The source is a
-      // world-anchored 17 m tile, so wrapping (rather than clamping to a
-      // camera-following rectangle) keeps the pattern continuous at the map
-      // boundary and prevents the old snap-induced flashes.
-      vec3 sampleWaterCaustics(vec2 worldXZ) {
-          vec2 causticCoord = (worldXZ - waterCausticOrigin) / max(waterCausticExtent, 1.0) + 0.5;
+      // The caustic pass stores a differential-area concentration encoded as
+      // field / waterCausticFieldScale. Project the receiver back to that
+      // reference depth along the same flat Snell ray used by the caustic
+      // rasterizer; this keeps the field coherent through the full water
+      // column instead of pinning it to a single world-height decal.
+      float sampleWaterCaustics(vec3 worldPosition) {
+          vec3 sun = normalize(sunDirection);
+          vec3 refractedSun = refract(-sun, vec3(0.0, 1.0, 0.0), 1.0 / ${WATER_IOR.toFixed(3)});
+          float depth = max(waterCausticLevel - worldPosition.y, 0.0);
+          float vertical = max(-refractedSun.y, 0.12);
+          float referenceTravel = (waterCausticReferenceDepth - depth) / vertical;
+          vec2 projected = worldPosition.xz + refractedSun.xz * referenceTravel;
+          vec2 causticCoord = (projected - waterCausticOrigin) / max(waterCausticExtent, 1.0) + 0.5;
           vec2 uv = fract(causticCoord);
           vec2 texel = 1.0 / max(waterCausticResolution, vec2(1.0));
-          float footprint = max(length(dFdx(causticCoord)), length(dFdy(causticCoord))) * max(waterCausticResolution.x, waterCausticResolution.y);
-          float footprintFade = 1.0 - smoothstep(1.2, 5.0, footprint);
-          float r = texture2D(waterCausticMap, fract(uv + texel * vec2(0.65, -0.45))).r;
-          float g = texture2D(waterCausticMap, fract(uv + texel * vec2(-0.35, 0.70))).r;
-          float b = texture2D(waterCausticMap, fract(uv + texel * vec2(-0.85, -0.25))).r;
-          return mix(vec3(0.18), vec3(r, g, b), footprintFade);
+          float center = texture2D(waterCausticMap, uv).r;
+          float neighbours = (
+            texture2D(waterCausticMap, fract(uv + vec2(texel.x, 0.0))).r
+            + texture2D(waterCausticMap, fract(uv - vec2(texel.x, 0.0))).r
+            + texture2D(waterCausticMap, fract(uv + vec2(0.0, texel.y))).r
+            + texture2D(waterCausticMap, fract(uv - vec2(0.0, texel.y))).r
+          ) * 0.25;
+          float footprint = max(length(dFdx(causticCoord)), length(dFdy(causticCoord)))
+            * max(waterCausticResolution.x, waterCausticResolution.y);
+          float filtered = mix(center, neighbours, smoothstep(0.75, 2.5, footprint));
+          filtered = mix(filtered, 0.25, smoothstep(4.0, 10.0, footprint));
+          return clamp(filtered * waterCausticFieldScale, 0.0, 8.0);
+      }
+
+      float waterSunTransmission(float cosIncident) {
+          float eta = 1.0 / ${WATER_IOR.toFixed(3)};
+          float sinTransmitted2 = eta * eta * max(1.0 - cosIncident * cosIncident, 0.0);
+          if (sinTransmitted2 >= 1.0) return 0.0;
+          float cosTransmitted = sqrt(max(1.0 - sinTransmitted2, 0.0));
+          float rs = (cosIncident - ${WATER_IOR.toFixed(3)} * cosTransmitted)
+            / max(cosIncident + ${WATER_IOR.toFixed(3)} * cosTransmitted, 0.001);
+          float rp = (${WATER_IOR.toFixed(3)} * cosIncident - cosTransmitted)
+            / max(${WATER_IOR.toFixed(3)} * cosIncident + cosTransmitted, 0.001);
+          return clamp(1.0 - 0.5 * (rs * rs + rp * rp), 0.0, 1.0);
       }
 
       void main() {
@@ -357,23 +376,33 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec3 normal = normalize(vNormal);
           vec3 viewDir = normalize(cameraPosition - vWorldPosition);
           
-          vec4 lighting = calculateEnhancedLighting(tinted, normal, viewDir, vAmbientOcclusion);
+          vec3 directSun = directSunLighting(normal);
+          vec4 lighting = calculateEnhancedLighting(tinted, normal, viewDir, vAmbientOcclusion, directSun);
           vec3 lit = lighting.rgb * tinted;
           vec3 color = mix(tinted, lit, clamp(lightingMix, 0.0, 1.0));
 
-          if (waterCausticEnabled) {
+          if (waterCausticEnabled && waterCausticMapEnabled) {
             float submerged = 1.0 - smoothstep(waterCausticLevel - 0.75, waterCausticLevel + 0.25, vWorldPosition.y);
-            float upward = smoothstep(0.10, 0.85, max(vNormal.y, 0.0));
-            float depthFade = exp(-max(waterCausticLevel - vWorldPosition.y, 0.0) * 0.055);
-            if (waterCausticMapEnabled) {
-              vec3 caustic = sampleWaterCaustics(vWorldPosition.xz);
-              float gain = max(dot(caustic, vec3(0.2126, 0.7152, 0.0722)) - 0.18, 0.0);
-              float response = gain * submerged * upward * depthFade * waterCausticIntensity;
-              color *= 1.0 + response * 0.85;
-              color += vec3(0.025, 0.090, 0.115) * response;
-            } else {
-              float caustic = waterCausticField(vWorldPosition.xz, waterCausticTime);
-              color += vec3(0.06, 0.16, 0.18) * caustic * submerged * upward * waterCausticIntensity;
+            float sunActive = smoothstep(0.02, 0.18, waterCausticSunIntensity);
+            if (submerged > 0.001 && sunActive > 0.001) {
+              vec3 sun = normalize(sunDirection);
+              vec3 refractedSun = refract(-sun, vec3(0.0, 1.0, 0.0), 1.0 / ${WATER_IOR.toFixed(3)});
+              float receiverCos = max(dot(normal, -refractedSun), 0.0);
+              float airCos = max(dot(normal, sun), 0.0);
+              float angleRatio = airCos > 0.001 ? receiverCos / airCos : 0.0;
+              float depth = max(waterCausticLevel - vWorldPosition.y, 0.0);
+              float lightDistance = depth / max(-refractedSun.y, 0.12);
+              vec3 lightTransmittance = exp(-waterCausticExtinction * lightDistance);
+              float sunScale = clamp(waterCausticSunIntensity / 1.35, 0.0, 1.0);
+              float field = sampleWaterCaustics(vWorldPosition);
+              float focusedField = mix(1.0, field, clamp(waterCausticIntensity, 0.0, 1.0));
+              vec3 transport = lightTransmittance * waterSunTransmission(max(sun.y, 0.0))
+                * sunScale * angleRatio * focusedField;
+              vec3 waterDirect = directSun * transport;
+              // Replace only direct sunlight. Ambient, star, reflection, and
+              // albedo remain under the existing block-material lighting path.
+              color += tinted * (waterDirect - directSun)
+                * submerged * sunActive * clamp(lightingMix, 0.0, 1.0);
             }
           }
           
@@ -423,7 +452,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           waterCausticEnabled: { value: false },
           waterCausticLevel: { value: 43.0 },
           waterCausticIntensity: { value: 0.0 },
-          waterCausticTime: { value: 0.0 },
+          waterCausticReferenceDepth: { value: CAUSTIC_REFERENCE_DEPTH },
+          waterCausticFieldScale: { value: CAUSTIC_FIELD_SCALE },
+          waterCausticSunIntensity: { value: 1.35 },
+          waterCausticExtinction: { value: new THREE.Vector3(...WATER_EXTINCTION) },
           waterCausticMap: { value: createWhiteTexture() },
           waterCausticMapEnabled: { value: false },
           waterCausticOrigin: { value: new THREE.Vector2(0, 0) },
@@ -560,22 +592,40 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   }
 
   /** Enable the shared render-only water caustic response on submerged faces. */
-  setWaterCaustics(enabled: boolean, waterLevel: number, intensity: number, time = 0): void {
+  setWaterCaustics(
+    enabled: boolean,
+    waterLevel: number,
+    intensity: number,
+    time = 0,
+    referenceDepth = CAUSTIC_REFERENCE_DEPTH,
+    sunIntensity = 1.35,
+  ): void {
     const uniforms = this.uniforms as Record<string, { value: unknown }>;
     uniforms.waterCausticEnabled.value = enabled;
     uniforms.waterCausticLevel.value = waterLevel;
     uniforms.waterCausticIntensity.value = Math.max(0, intensity);
-    uniforms.waterCausticTime.value = time;
+    // The field is animated by WaterCaustics itself; retain the time argument
+    // for callers that use the existing material API.
+    void time;
+    uniforms.waterCausticReferenceDepth.value = Math.max(2, referenceDepth);
+    uniforms.waterCausticSunIntensity.value = Math.max(0, sunIntensity);
   }
 
   /** Bind the render-only differential-area caustic field. */
-  setWaterCausticTexture(texture: THREE.Texture | null, origin: { x: number; y: number }, extent: number, resolution: { x: number; y: number }): void {
+  setWaterCausticTexture(
+    texture: THREE.Texture | null,
+    origin: { x: number; y: number },
+    extent: number,
+    resolution: { x: number; y: number },
+    referenceDepth = CAUSTIC_REFERENCE_DEPTH,
+  ): void {
     const uniforms = this.uniforms as Record<string, { value: unknown }>;
     uniforms.waterCausticMap.value = texture;
     uniforms.waterCausticMapEnabled.value = !!texture;
     (uniforms.waterCausticOrigin.value as THREE.Vector2).set(origin.x, origin.y);
     uniforms.waterCausticExtent.value = Math.max(1, extent);
     (uniforms.waterCausticResolution.value as THREE.Vector2).set(Math.max(1, resolution.x), Math.max(1, resolution.y));
+    uniforms.waterCausticReferenceDepth.value = Math.max(2, referenceDepth);
   }
 
 }

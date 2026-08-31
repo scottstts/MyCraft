@@ -35,11 +35,15 @@ describe('water compositing ownership', () => {
 
     expect(fragmentShader).toContain('vec3 viewRayWorld(out vec3 viewRay)');
     expect(fragmentShader).toContain('float waterMask = 1.0 - step(0.001, source.a)');
-    expect(fragmentShader).toContain('float surfaceViewDepth = -rayDistance * viewRay.z');
-    expect(fragmentShader).toContain('distanceToSurface = mix(');
+    expect(fragmentShader).toContain('float surfaceRayDistance = -1.0');
+    expect(fragmentShader).toContain('float surfaceViewDepth = -surfaceRayDistance * viewRay.z');
+    expect(fragmentShader).toContain('receiverViewDepth = mix(');
     expect(fragmentShader).toContain('float validWaterSurfaceRay = cameraAboveWater');
     expect(fragmentShader).toContain('waterMask * validWaterSurfaceRay');
     expect(fragmentShader).toContain('clamp(surfaceViewDepth, 0.0, cameraFar)');
+    expect(fragmentShader).toContain('float airViewDepth = receiverViewDepth');
+    expect(fragmentShader).toContain('float crossedBeforeReceiver = crossingAhead * receiverAfterCrossing');
+    expect(fragmentShader).toContain('float d = min(airViewDepth, maxDistance)');
   });
 
   it('does not reapply camera-side medium to above-water surface pixels', () => {
@@ -50,6 +54,11 @@ describe('water compositing ownership', () => {
     expect(fragmentShader).toContain('float cameraAboveWater = step(waterLevel, uCameraPosition.y)');
     expect(fragmentShader).toContain('if (waterSurfaceMask > 0.5 && cameraAboveWater > 0.5)');
     expect(fragmentShader).toContain('gl_FragColor = source');
+    expect(fragmentShader).toContain('float particleDensity(vec3 worldPosition)');
+    expect(fragmentShader).toContain('float relativePhase(float cosTheta, float g)');
+    expect(fragmentShader).toContain('vec3 sigmaT = sigmaBase * density');
+    expect(fragmentShader).toContain('vec3 sunSource = uSunColor * sunIntensity');
+    expect(fragmentShader).not.toContain('cameraDim');
 
     pass.dispose();
   });
@@ -66,7 +75,28 @@ describe('water compositing ownership', () => {
     expect(material.vertexShader).toContain('uniform float uWaveChop');
     expect(material.vertexShader).toContain('uniform float uWaveSpeed');
     expect(material.vertexShader).toContain('oceanWaveDisplacement');
+    expect(material.vertexShader).toContain('CAUSTIC_WAVE_LENGTH_0');
+    expect(material.vertexShader).toContain('vec2 surfaceXZ = uOrigin - flatOffset');
+    expect(material.vertexShader).toContain('vNewPosition = surfaceXZ + displacement.xz + waveRefract.xz * waveTravel');
+    expect(material.fragmentShader).toContain('float concentration = clamp(oldArea / newArea, 0.0, 8.0)');
+    expect(material.fragmentShader).not.toContain('lineMask');
+    expect(caustics.getReferenceDepth()).toBe(24);
 
     caustics.dispose();
+  });
+
+  it('modulates only direct sunlight at a depth-correct caustic receiver', () => {
+    const material = new BlockMaterial(new THREE.Texture(), null);
+    const fragmentShader = material.fragmentShader;
+
+    expect(fragmentShader).toContain('vec3 directSunLighting(vec3 normal)');
+    expect(fragmentShader).toContain('float sampleWaterCaustics(vec3 worldPosition)');
+    expect(fragmentShader).toContain('float waterSunTransmission(float cosIncident)');
+    expect(fragmentShader).toContain('waterCausticReferenceDepth - depth');
+    expect(fragmentShader).toContain('vec3 waterDirect = directSun * transport');
+    expect(fragmentShader).not.toContain('waterCausticField(vec2 worldXZ');
+    expect(fragmentShader).not.toContain('ridgeA');
+
+    material.dispose();
   });
 });

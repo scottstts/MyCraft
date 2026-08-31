@@ -1,5 +1,12 @@
 import * as THREE from 'three'
-import { OCEAN_WAVES, oceanWaveDeclarations } from './OceanWaveField'
+import {
+  OCEAN_CAUSTIC_WAVES,
+  OCEAN_WAVES,
+  oceanCausticWaveDeclarations,
+  oceanWaveDeclarations,
+} from './OceanWaveField'
+import { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH, WATER_IOR } from './WaterOptics'
+export { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH } from './WaterOptics'
 
 /** Small world-anchored tile used for stable, repeatable caustic filaments. */
 export const CAUSTIC_TILE_SIZE = 17.0
@@ -29,6 +36,7 @@ export class WaterCaustics {
   private readonly resolution: number
   private readonly extent: number
   private readonly patchExtent: number
+  private readonly referenceDepth: number
   private readonly origin = new THREE.Vector2()
   private disposed = false
   private warned = false
@@ -41,8 +49,9 @@ export class WaterCaustics {
     // thin caustic lines instead of averaging them into broad patches.
     this.extent = Math.max(8, options.extent ?? CAUSTIC_TILE_SIZE)
     this.patchExtent = Math.max(this.extent * 1.2, options.patchExtent ?? this.extent * 1.35)
+    this.referenceDepth = Math.max(2, options.projectDepth ?? CAUSTIC_REFERENCE_DEPTH)
     const supportsHalfFloat = renderer.capabilities.isWebGL2 && renderer.extensions.has('EXT_color_buffer_float')
-    const waveDeclarations = oceanWaveDeclarations()
+    const waveDeclarations = `${oceanWaveDeclarations()}\n${oceanCausticWaveDeclarations()}`
 
     this.target = new THREE.WebGLRenderTarget(this.resolution, this.resolution, {
       format: THREE.RGBAFormat,
@@ -57,28 +66,32 @@ export class WaterCaustics {
     this.target.texture.generateMipmaps = false
     this.target.texture.colorSpace = THREE.NoColorSpace
 
-    const displacement = Array.from({ length: OCEAN_WAVES.length }, (_, index) => `
+    const displacementTerms = [
+      ...Array.from({ length: OCEAN_WAVES.length }, (_, index) => ({ prefix: 'OCEAN_WAVE', index, lod: true })),
+      ...Array.from({ length: OCEAN_CAUSTIC_WAVES.length }, (_, index) => ({ prefix: 'CAUSTIC_WAVE', index, lod: false })),
+    ]
+    const displacement = displacementTerms.map(({ prefix, index, lod }) => `
       {
-        float k = 6.28318530718 / OCEAN_WAVE_LENGTH_${index};
-        float omega = oceanOmega(k, OCEAN_WAVE_SPEED_${index});
-        float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, xz) - omega * time + OCEAN_WAVE_PHASE_${index};
-        float amplitude = OCEAN_WAVE_AMPLITUDE_${index};
+        float k = 6.28318530718 / ${prefix}_LENGTH_${index};
+        float omega = oceanOmega(k, ${prefix}_SPEED_${index}) * uWaveSpeed;
+        float phase = k * dot(${prefix}_DIRECTION_${index}, xz) - omega * time + ${prefix}_PHASE_${index};
+        float amplitude = ${prefix}_AMPLITUDE_${index}${lod ? ' * min(uWaveAmp, 1.0) * oceanWaveLod(0.0, ' + prefix + '_LENGTH_' + index + ')' : ''};
         float c = cos(phase);
-        displaced.xz += OCEAN_WAVE_DIRECTION_${index} * OCEAN_WAVE_STEEPNESS_${index} * amplitude * c;
+        displaced.xz += ${prefix}_DIRECTION_${index} * ${prefix}_STEEPNESS_${index} * amplitude * uWaveChop * c;
         displaced.y += amplitude * sin(phase);
       }
     `).join('\n')
-    const normal = Array.from({ length: OCEAN_WAVES.length }, (_, index) => `
+    const normal = displacementTerms.map(({ prefix, index, lod }) => `
       {
-        float k = 6.28318530718 / OCEAN_WAVE_LENGTH_${index};
-        float omega = oceanOmega(k, OCEAN_WAVE_SPEED_${index});
-        float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, xz) - omega * time + OCEAN_WAVE_PHASE_${index};
-        float amplitude = OCEAN_WAVE_AMPLITUDE_${index};
-        float q = OCEAN_WAVE_STEEPNESS_${index};
+        float k = 6.28318530718 / ${prefix}_LENGTH_${index};
+        float omega = oceanOmega(k, ${prefix}_SPEED_${index}) * uWaveSpeed;
+        float phase = k * dot(${prefix}_DIRECTION_${index}, xz) - omega * time + ${prefix}_PHASE_${index};
+        float amplitude = ${prefix}_AMPLITUDE_${index}${lod ? ' * min(uWaveAmp, 1.0) * oceanWaveLod(0.0, ' + prefix + '_LENGTH_' + index + ')' : ''};
+        float q = ${prefix}_STEEPNESS_${index};
         float s = sin(phase);
         float c = cos(phase);
-        float dx = OCEAN_WAVE_DIRECTION_${index}.x;
-        float dz = OCEAN_WAVE_DIRECTION_${index}.y;
+        float dx = ${prefix}_DIRECTION_${index}.x;
+        float dz = ${prefix}_DIRECTION_${index}.y;
         float phaseDx = k * dx;
         float phaseDz = k * dz;
         tangentX += vec3(-q * amplitude * dx * phaseDx * s, amplitude * phaseDx * c, -q * amplitude * dz * phaseDx * s);
@@ -94,8 +107,9 @@ export class WaterCaustics {
         uExtent: { value: this.extent },
         uPatchExtent: { value: this.patchExtent },
         uTime: { value: 0 },
-        uProjectDepth: { value: options.projectDepth ?? 24 },
-        uEta: { value: 1.0 / 1.333 },
+        uProjectDepth: { value: this.referenceDepth },
+        uEta: { value: 1.0 / WATER_IOR },
+        uFieldScale: { value: CAUSTIC_FIELD_SCALE },
         // oceanWaveDeclarations also emits the shared displacement helper.
         // Keep its controls declared here even though this projection uses
         // the fixed full-spectrum caustic path below.
@@ -148,11 +162,15 @@ export class WaterCaustics {
         }
 
         void main() {
-          vec2 surfaceXZ = uOrigin + (uv - 0.5) * uPatchExtent;
           vec3 sun = normalize(uSunDirection);
           vec3 flatRefract = refract(-sun, vec3(0.0, 1.0, 0.0), uEta);
           float flatTravel = uProjectDepth / max(abs(flatRefract.y), 0.12);
           vec2 flatOffset = flatRefract.xz * flatTravel;
+          // Center the source patch so its flat Snell projection is centered
+          // on the same world tile as the receiver. This is the inverse of
+          // the depth-correct receiver projection used by terrain and the
+          // underwater volume.
+          vec2 surfaceXZ = uOrigin - flatOffset + (uv - 0.5) * uPatchExtent;
 
           vec3 displacement = oceanDisplacement(surfaceXZ, uTime);
           vec3 surfaceNormal = oceanNormal(surfaceXZ, uTime);
@@ -162,15 +180,14 @@ export class WaterCaustics {
           // The old projection is the undeformed optical map.  The new map
           // carries horizontal Gerstner displacement and bent Snell rays.
           vOldPosition = surfaceXZ + flatOffset;
-          vNewPosition = surfaceXZ + displacement.xz + waveRefract.xz * waveTravel - flatOffset;
+          vNewPosition = surfaceXZ + displacement.xz + waveRefract.xz * waveTravel;
           vec2 ndc = (vNewPosition - uOrigin) / max(uExtent, 1.0) * 2.0;
           gl_Position = vec4(ndc, 0.0, 1.0);
         }
       `,
       fragmentShader: `
         precision highp float;
-        uniform vec3 uSunDirection;
-        uniform float uTime;
+        uniform float uFieldScale;
         varying vec2 vOldPosition;
         varying vec2 vNewPosition;
 
@@ -181,32 +198,12 @@ export class WaterCaustics {
           vec2 newDy = dFdy(vNewPosition);
           float oldArea = abs(oldDx.x * oldDy.y - oldDx.y * oldDy.x);
           float newArea = max(abs(newDx.x * newDy.y - newDx.y * newDy.x), 1e-5);
-          float concentration = clamp((oldArea / newArea) * 0.18, 0.0, 6.0);
-          // Differential area supplies the physically meaningful envelope;
-          // these three incommensurate ridge bands turn that envelope into
-          // the thin, branching caustic lines visible on a pool floor.  The
-          // phase is evaluated in the refracted (new) domain, so the live
-          // wave field bends and advects the filaments rather than a detached
-          // scrolling light decal.
-          vec2 p = vNewPosition;
-          float bendA = 0.58 * sin(dot(p, vec2(0.37, 0.53)) + uTime * 0.06);
-          float bendB = 0.42 * sin(dot(p, vec2(-0.61, 0.29)) - uTime * 0.043);
-          float phaseA = dot(p, vec2(1.67, 2.31)) + bendA + 0.35 * bendB;
-          float phaseB = dot(p, vec2(-2.09, 1.27)) + bendB - 0.28 * bendA;
-          float phaseC = dot(p, vec2(0.83, -2.73)) + 0.55 * sin(dot(p, vec2(0.52, -0.74)) + bendA);
-          float aaA = max(fwidth(phaseA), 0.018);
-          float aaB = max(fwidth(phaseB), 0.018);
-          float aaC = max(fwidth(phaseC), 0.018);
-          float ridgeA = 1.0 - smoothstep(0.025 + aaA, 0.27 + aaA, abs(sin(phaseA)));
-          float ridgeB = 1.0 - smoothstep(0.025 + aaB, 0.27 + aaB, abs(sin(phaseB)));
-          float ridgeC = 1.0 - smoothstep(0.025 + aaC, 0.27 + aaC, abs(sin(phaseC)));
-          float deformation = max(length(newDx - oldDx), length(newDy - oldDy));
-          float waveFocus = smoothstep(0.008, 0.18, deformation);
-          float lineMask = clamp(max(max(ridgeA, ridgeB * 0.88), ridgeC * 0.72) + ridgeA * ridgeB * 0.24, 0.0, 1.0);
-          lineMask *= 0.24 + 0.76 * waveFocus;
-          float sunVisibility = smoothstep(0.06, 0.22, max(uSunDirection.y, 0.0));
-          float field = clamp(concentration * 0.52 + lineMask * (0.72 + 0.42 * smoothstep(0.12, 0.75, concentration)), 0.0, 6.0);
-          gl_FragColor = vec4(vec3(field * sunVisibility), 1.0);
+          // The ratio is the irradiance concentration for a regular bundle
+          // of rays. No independent line pattern is added: every filament is
+          // produced by the live wave slope and Snell projection above.
+          float concentration = clamp(oldArea / newArea, 0.0, 8.0);
+          float encodedField = clamp(concentration / max(uFieldScale, 1.0), 0.0, 1.0);
+          gl_FragColor = vec4(vec3(encodedField), 1.0);
         }
       `,
       depthTest: false,
@@ -277,6 +274,8 @@ export class WaterCaustics {
 
   getExtent(): number { return this.extent }
 
+  getReferenceDepth(): number { return this.referenceDepth }
+
   getResolution(): { x: number; y: number } { return { x: this.resolution, y: this.resolution } }
 
   getDiagnostics(): Record<string, unknown> {
@@ -284,6 +283,8 @@ export class WaterCaustics {
       resolution: this.resolution,
       extent: this.extent,
       patchExtent: this.patchExtent,
+      referenceDepth: this.referenceDepth,
+      fieldScale: CAUSTIC_FIELD_SCALE,
       origin: this.origin.toArray(),
       disposed: this.disposed,
     }

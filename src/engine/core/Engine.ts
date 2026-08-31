@@ -27,6 +27,7 @@ import { WATER_LEVEL } from '../world/TerrainGenerator';
 import { WaterSystem } from '../render/water/WaterSystem';
 import { WaterSurfaceMaterial } from '../render/water/WaterSurfaceMaterial';
 import { OCEAN_WATER_CENTER_OFFSET } from '../render/water/OceanWaveField';
+import { CAUSTIC_REFERENCE_DEPTH } from '../render/water/WaterOptics';
 import { InputSystem } from '../systems/Input';
 import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
@@ -486,7 +487,14 @@ function update(dtSeconds: number) {
     blockMaterial.setDayLight(dayLight);
     blockMaterial.setStarLight(atmosphereState.starVisibility * 0.35);
     blockMaterial.setSkyAmbient(atmosphereState.skyIrradiance);
-    blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80, waterSystem?.getTime() ?? 0);
+    blockMaterial.setWaterCaustics(
+      true,
+      VISUAL_WATER_LEVEL,
+      0.80,
+      waterSystem?.getTime() ?? 0,
+      waterSystem?.getCausticReferenceDepth() ?? CAUSTIC_REFERENCE_DEPTH,
+      atmosphereState.sunIntensity,
+    );
     if (grassSystem) grassSystem.setSunUniforms(sdir, atmosphereState.sunColor);
     if (grassSystem) grassSystem.setDayNight(dayLight, atmosphereState.starVisibility * 0.35);
     if (grassSystem) grassSystem.setSkyAmbient(atmosphereState.skyIrradiance);
@@ -510,7 +518,7 @@ function update(dtSeconds: number) {
       );
     }
     if (waterSystem) {
-      waterSystem.setSun(sdir, atmosphereState.sunColor);
+      waterSystem.setSun(sdir, atmosphereState.sunColor, atmosphereState.sunIntensity);
       waterSystem.setAmbientLighting(waterAmbient, atmosphereState.nightTint);
       waterSystem.setSkyColors(atmosphereState.skyZenith, atmosphereState.skyHorizon);
       waterSystem.setSkyAtmosphere(
@@ -538,7 +546,9 @@ function update(dtSeconds: number) {
         waterSystem.getCausticOrigin(),
         waterSystem.getCausticExtent(),
         waterSystem.getCausticResolution(),
+        waterSystem.getCausticReferenceDepth(),
       );
+      composer.setUnderwaterTime(waterSystem.getTime());
     }
   }
 
@@ -645,7 +655,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
-  blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80);
+  blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80, 0, CAUSTIC_REFERENCE_DEPTH, 1.35);
 
   // Water material uses the same shader as far ocean, but uses vUv on block meshes
   waterMaterial = new WaterSurfaceMaterial({

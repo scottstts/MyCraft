@@ -73,6 +73,24 @@ export const OCEAN_WAVES: readonly OceanWave[] = [
   { directionX: -0.999391, directionZ: -0.034899, amplitude: 0.007, wavelength: 8.3, steepness: 0.11, speed: 0.99, phase: 3.31 },
 ];
 
+/**
+ * Short optical wave bands used by the bounded caustic projection.
+ *
+ * These components are intentionally not added to the visible ocean mesh:
+ * their role is to represent the sub-grid surface slope spectrum that bends
+ * sunlight into caustic filaments. Keeping them in the same deterministic
+ * wave family gives the optical pass a finite, inspectable source of slope
+ * energy instead of a decorative screen-space line mask.
+ */
+export const OCEAN_CAUSTIC_WAVES: readonly OceanWave[] = [
+  { directionX: 0.819152, directionZ: 0.573576, amplitude: 0.022, wavelength: 6.8, steepness: 0.18, speed: 0.94, phase: 0.73 },
+  { directionX: -0.241922, directionZ: 0.970296, amplitude: 0.016, wavelength: 4.9, steepness: 0.16, speed: 1.02, phase: 3.18 },
+  { directionX: 0.939693, directionZ: -0.342020, amplitude: 0.011, wavelength: 3.55, steepness: 0.14, speed: 1.08, phase: 5.27 },
+  { directionX: 0.422618, directionZ: 0.906308, amplitude: 0.007, wavelength: 2.55, steepness: 0.12, speed: 0.88, phase: 1.42 },
+  { directionX: -0.766044, directionZ: 0.642788, amplitude: 0.004, wavelength: 1.82, steepness: 0.10, speed: 1.12, phase: 4.44 },
+  { directionX: 0.173648, directionZ: -0.984808, amplitude: 0.002, wavelength: 1.26, steepness: 0.08, speed: 0.96, phase: 2.05 },
+];
+
 const GRAVITY = 9.81;
 /** Effective shelf depth used by the finite-depth dispersion relation. */
 export const OCEAN_WATER_DEPTH = 64.0;
@@ -196,4 +214,16 @@ export function oceanWaveDeclarations(): string {
       return vec2(1.65 * (a + 0.62 * b), 1.35 * (b - 0.70 * c));
     }
   `;
+}
+
+/** GLSL constants for the unresolved optical wave bands. */
+export function oceanCausticWaveDeclarations(): string {
+  return OCEAN_CAUSTIC_WAVES.map((wave, index) => `
+    const vec2 CAUSTIC_WAVE_DIRECTION_${index} = vec2(${wave.directionX.toFixed(6)}, ${wave.directionZ.toFixed(6)});
+    const float CAUSTIC_WAVE_AMPLITUDE_${index} = ${wave.amplitude.toFixed(6)};
+    const float CAUSTIC_WAVE_LENGTH_${index} = ${wave.wavelength.toFixed(6)};
+    const float CAUSTIC_WAVE_STEEPNESS_${index} = ${wave.steepness.toFixed(6)};
+    const float CAUSTIC_WAVE_SPEED_${index} = ${wave.speed.toFixed(6)};
+    const float CAUSTIC_WAVE_PHASE_${index} = ${wave.phase.toFixed(6)};
+  `).join('\n');
 }

@@ -124,7 +124,7 @@ export class AerialPerspectivePass extends ShaderPass {
 
           vec3 viewRay;
           vec3 ray = viewRayWorld(viewRay);
-          float distanceToSurface = readDepth(vUv);
+          float receiverViewDepth = readDepth(vUv);
 
           // The opaque ocean writes a zero-alpha marker into the color pass.
           // Its separate capture intentionally contains the seabed, so the
@@ -136,17 +136,43 @@ export class AerialPerspectivePass extends ShaderPass {
           float waterMask = 1.0 - step(0.001, source.a);
           vec3 cameraPosition = cameraMatrixWorld[3].xyz;
           float cameraAboveWater = step(waterLevel, cameraPosition.y);
+          float surfaceRayDistance = -1.0;
+          if (abs(ray.y) > 0.001) {
+            surfaceRayDistance = (waterLevel - cameraPosition.y) / ray.y;
+          }
           float rayDown = step(0.001, -ray.y);
-          float rayDistance = (waterLevel - cameraPosition.y) / min(ray.y, -0.001);
-          float surfaceViewDepth = -rayDistance * viewRay.z;
+          float surfaceViewDepth = -surfaceRayDistance * viewRay.z;
           float validWaterSurfaceRay = cameraAboveWater
             * rayDown
-            * step(0.001, rayDistance);
-          distanceToSurface = mix(
-            distanceToSurface,
+            * step(0.001, surfaceRayDistance);
+          receiverViewDepth = mix(
+            receiverViewDepth,
             clamp(surfaceViewDepth, 0.0, cameraFar),
             waterMask * validWaterSurfaceRay
           );
+
+          // Aerial perspective belongs only to the air segment. Applying it
+          // to the full capture depth fogged seabed through air and water a
+          // second time before UnderwaterPass integrated the water medium.
+          // Compare view-depth values so the reconstruction stays compatible
+          // with the pass's axial depth convention.
+          float cameraBelowWater = step(0.001, waterLevel - cameraPosition.y);
+          float crossingAhead = max(
+            step(0.001, surfaceRayDistance),
+            step(abs(surfaceRayDistance), 0.001) * step(0.0, -ray.y)
+          );
+          float receiverAfterCrossing = step(0.001, receiverViewDepth - surfaceViewDepth);
+          float crossedBeforeReceiver = crossingAhead * receiverAfterCrossing;
+          float airViewDepth = receiverViewDepth;
+          if (cameraBelowWater > 0.5) {
+            airViewDepth = crossedBeforeReceiver > 0.5
+              ? max(receiverViewDepth - surfaceViewDepth, 0.0)
+              : 0.0;
+          } else {
+            airViewDepth = crossedBeforeReceiver > 0.5
+              ? min(receiverViewDepth, max(surfaceViewDepth, 0.0))
+              : receiverViewDepth;
+          }
 
           float up = max(ray.y, 0.0);
           float vertical = pow(up, 0.48);
@@ -166,13 +192,13 @@ export class AerialPerspectivePass extends ShaderPass {
           float horizonBand = exp(-pow(abs(ray.y) / max(horizonHazeWidth, 1e-3), 2.0));
           vec3 horizonAirlight = mix(seaMist, skyHorizon, 0.25) * skyRadianceScale;
           float horizonMix = clamp(horizonBand * horizonHazeStrength, 0.0, 1.0);
-          if (distanceToSurface >= cameraFar * 0.999) {
+          if (receiverViewDepth >= cameraFar * 0.999) {
             gl_FragColor = vec4(mix(source.rgb, horizonAirlight, horizonMix), source.a);
             return;
           }
 
-          float d = min(distanceToSurface, maxDistance);
-          vec3 position = worldPosition(distanceToSurface);
+          float d = min(airViewDepth, maxDistance);
+          vec3 position = worldPosition(airViewDepth);
           float altitude = max(position.y - waterLevel, 0.0);
           float density = mix(1.0, 0.35, 1.0 - exp(-altitude / max(0.25, mieScaleHeight * 4.0)));
           float horizonPath = 1.0 + 3.2 * pow(1.0 - abs(ray.y), 2.0);

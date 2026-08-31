@@ -5,7 +5,7 @@ import { CHUNK_SIZE } from '../../../config/constants'
 import { getHeightAtPosition } from '../../world/TerrainGenerator'
 import { getOceanMaxAmplitude, OCEAN_WATER_CENTER_OFFSET, OCEAN_WAVES, sampleOceanHeight } from './OceanWaveField'
 import { WaterSurfaceMaterial } from './WaterSurfaceMaterial'
-import { CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
+import { CAUSTIC_REFERENCE_DEPTH, CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
 import sandTextureUrl from '../../../assets/textures/sand.png'
 
 const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
@@ -105,6 +105,7 @@ export class WaterSystem {
   private opaqueCaptureActive = false
   private oceanWasVisible = true
   private blockWaterWasVisible = true
+  private sunIntensity = 1.35
 
   constructor(scene: THREE.Scene, options: WaterSystemOptions) {
     this.scene = scene
@@ -231,6 +232,8 @@ export class WaterSystem {
 
   getCausticResolution(): { x: number; y: number } { return this.caustics?.getResolution() ?? { x: 1, y: 1 } }
 
+  getCausticReferenceDepth(): number { return this.caustics?.getReferenceDepth() ?? CAUSTIC_REFERENCE_DEPTH }
+
   setSeed(seed: number): void {
     if (this.options.seed === seed || this.disposed) return
     this.options.seed = seed
@@ -278,7 +281,8 @@ export class WaterSystem {
     this.blockWaterMaterial?.setSunVisibility(texture)
   }
 
-  setSun(direction: THREE.Vector3, color?: THREE.Color): void {
+  setSun(direction: THREE.Vector3, color?: THREE.Color, sunIntensity = 1.35): void {
+    this.sunIntensity = Math.max(0, sunIntensity)
     this.material.setSun(direction, color)
     this.caustics?.setSun(direction)
     if (this.seabedMaterial) this.seabedMaterial.setSunUniforms(direction, color ?? new THREE.Color(1, 1, 1))
@@ -492,7 +496,7 @@ export class WaterSystem {
       this.seabedMaterial.setAntialiasing(false)
       this.seabedMaterial.setAALodBias(false)
       this.seabedMaterial.setMaterialProperties(0.8, 0.0, 0.3)
-      this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.80)
+      this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.80, 0, this.getCausticReferenceDepth(), this.sunIntensity)
       this.syncSeabedMaterial()
 
       if (this.disposed || buildToken !== this.seabedBuildToken) {
@@ -964,7 +968,7 @@ export class WaterSystem {
       // Composer's feedback-safe depth capture.
       this.seabedMaterial.shareVoxelShadowState(source)
     }
-    this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.80, this.time)
+    this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.80, this.time, this.getCausticReferenceDepth(), this.sunIntensity)
   }
 
   private applyCaustics(): void {
@@ -973,7 +977,8 @@ export class WaterSystem {
     const origin = this.caustics.getOrigin()
     const extent = this.caustics.getExtent()
     const resolution = this.caustics.getResolution()
-    this.options.blockMaterialSource?.setWaterCausticTexture(texture, origin, extent, resolution)
-    this.seabedMaterial?.setWaterCausticTexture(texture, origin, extent, resolution)
+    const referenceDepth = this.caustics.getReferenceDepth()
+    this.options.blockMaterialSource?.setWaterCausticTexture(texture, origin, extent, resolution, referenceDepth)
+    this.seabedMaterial?.setWaterCausticTexture(texture, origin, extent, resolution, referenceDepth)
   }
 }
