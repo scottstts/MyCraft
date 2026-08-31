@@ -32,8 +32,10 @@ describe('WaterSurfaceMaterial', () => {
     expect(material.fragmentShader).toContain('for (int backtrackIndex = 0; backtrackIndex < 5; backtrackIndex++)');
     expect(material.fragmentShader).toContain('vec2 candidateUv = mix(screenUv, projectedUv, backtrack)');
     expect(material.fragmentShader).toContain('vec3 candidateDirection = normalize(mix(');
-    expect(material.fragmentShader).toContain('float acceptCandidate = (1.0 - sceneHitValidity) *');
-    expect(material.fragmentShader).toContain('step(0.5, candidateValidity)');
+    expect(material.fragmentShader).toContain('float acceptCandidate = (1.0 - sceneHitValidity) * candidateValidity');
+    expect(material.fragmentShader).toContain('resolvedUv = resolvedUv + (safeCandidateUv - screenUv) * acceptCandidate');
+    expect(material.fragmentShader).toContain('sceneHitValidity + acceptCandidate');
+    expect(material.fragmentShader).not.toContain('step(0.5, candidateValidity)');
     expect(material.fragmentShader).toContain('float swashArrival = smoothstep(');
     expect(material.fragmentShader).toContain('shorelineBand * patchMask * swashArrival');
     expect(material.fragmentShader).not.toContain('shorelineBand * (1.0 - patchMask) * foamFront');
@@ -44,6 +46,7 @@ describe('WaterSurfaceMaterial', () => {
     expect(material.fragmentShader).not.toContain('mix(refractedUv, screenUv, foregroundReject)');
     expect(material.fragmentShader).not.toContain('vec2 resolvedUv = refractedUv;\n            float resolvedRawDepth = uHasSceneDepth');
     expect(material.fragmentShader).not.toContain('step(uWaterLevel - 0.05, candidateWorld.y)');
+    expect(material.fragmentShader).toContain('float refractionResolveCoverage = 1.0;');
     expect(material.fragmentShader).not.toContain('pow(sun, 2200.0)');
     expect(material.fragmentShader).not.toContain('refractedDirection.xz * uRefractAmount');
     expect(material.fragmentShader).not.toContain('abs(refractedDirection.z)');

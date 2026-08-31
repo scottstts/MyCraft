@@ -652,14 +652,16 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
               step(projectedUv.x, 0.998) * step(projectedUv.y, 0.998);
             screenProjectionCoverage = projectedValid * insideUv;
             vec2 refractedUv = clamp(projectedUv, vec2(0.002), vec2(0.998));
-            vec3 backgroundWorld = vWorld + opticalDirection * estimatedTravel;
+            vec3 fallbackBackgroundWorld = vWorld + opticalDirection * estimatedTravel;
+            vec3 backgroundWorld = fallbackBackgroundWorld;
             vec2 resolvedUv = refractedUv;
             float resolvedRawDepth = 1.0;
             if (uHasSceneDepth == 1) {
               // Walk from the fully refracted projection back toward the
-              // incident pixel. The first valid receiver keeps the maximum
-              // safe distortion. A hard first-hit selection avoids turning a
-              // soft depth rejection into a bright sky-reflection contour.
+              // incident pixel. Receiver validity is a soft coverage value:
+              // each tap consumes only the still-unresolved portion. The
+              // remainder stays on the incident sample, so a rejected
+              // receiver cannot become a reflection mask.
               resolvedUv = screenUv;
               resolvedRawDepth = baseRawDepth;
               for (int backtrackIndex = 0; backtrackIndex < 5; backtrackIndex++) {
@@ -679,24 +681,18 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
                   candidateRawDepth,
                   candidateWorld
                 );
-                float acceptCandidate = (1.0 - sceneHitValidity) *
-                  step(0.5, candidateValidity);
-                resolvedUv = mix(
-                  resolvedUv,
-                  clamp(candidateUv, vec2(0.002), vec2(0.998)),
-                  acceptCandidate
+                float acceptCandidate = (1.0 - sceneHitValidity) * candidateValidity;
+                vec2 safeCandidateUv = clamp(candidateUv, vec2(0.002), vec2(0.998));
+                resolvedUv = resolvedUv + (safeCandidateUv - screenUv) * acceptCandidate;
+                resolvedRawDepth = resolvedRawDepth +
+                  (candidateRawDepth - baseRawDepth) * acceptCandidate;
+                backgroundWorld = backgroundWorld +
+                  (candidateWorld - fallbackBackgroundWorld) * acceptCandidate;
+                sceneHitValidity = clamp(
+                  sceneHitValidity + acceptCandidate,
+                  0.0,
+                  1.0
                 );
-                resolvedRawDepth = mix(
-                  resolvedRawDepth,
-                  candidateRawDepth,
-                  acceptCandidate
-                );
-                backgroundWorld = mix(
-                  backgroundWorld,
-                  candidateWorld,
-                  acceptCandidate
-                );
-                sceneHitValidity = max(sceneHitValidity, acceptCandidate);
                 if (backtrackIndex == 0) foregroundReject = 1.0 - candidateValidity;
               }
             } else {
@@ -767,12 +763,11 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             0.140 + grazingWidth,
             geometricCosIncident
           );
-          // Backtracking normally resolves silhouette crossings to a safe
-          // lower-distortion receiver. Only a genuinely unresolved ray gives
-          // its transmission share back to reflection.
-          float refractionResolveCoverage = uHasSceneDepth == 1
-            ? sceneHitValidity
-            : screenProjectionCoverage;
+          // Receiver validity controls only how far the screen-space sample
+          // may distort toward the refracted projection. A rejected lookup
+          // already falls back toward screenUv above; it is not an optical
+          // event and must not give extra energy to sky reflection.
+          float refractionResolveCoverage = 1.0;
           float interfaceTransmission = underwaterView
             ? windowCoverage * (1.0 - fresnel)
             : (1.0 - fresnel) * grazingTransmissionCoverage * refractionResolveCoverage;
