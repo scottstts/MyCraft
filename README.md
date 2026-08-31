@@ -4,7 +4,7 @@
 
 MyCraft is a quiet voxel sandbox for wandering, shaping terrain, and watching a living world move from dawn to night.
 
-![MyCraft world](public/og_cover.jpeg)
+![MyCraft world](assets/screenshot.jpeg)
 
 Explore coastlines, climb into the hills, dive beneath the surface, and make a place your own one block at a time. Gather materials, build freely, and let the atmosphere do the rest.
 
