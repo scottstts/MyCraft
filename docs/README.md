@@ -10,6 +10,7 @@ This directory documents the implemented runtime boundaries and the contracts be
 - [Atmosphere, lighting, and shadows](atmosphere-lighting-and-shadows.md) — time of day, sky radiance, aerial perspective, and the voxel visibility pass.
 - [Water](water.md) — authoritative water blocks, rendered water surfaces, the far ocean, caustics, and underwater medium effects.
 - [World and chunks](world-and-chunks.md) — voxel storage, terrain generation, worker orchestration, meshing, and mesh publication.
+- [World sizing](world-sizing.md) — named world footprints, the direct start-screen picker, and the fixed large chunk contract.
 - [Player and interaction](player-and-interaction.md) — pointer lock, movement, collision, selection, mining, placing, and inventory handoff.
 - [Audio and persistence](audio-and-persistence.md) — music, spatially driven sound effects, save files, and load validation.
 - [UI and state](ui-and-state.md) — the React shell, Zustand state, HUD ownership, pause semantics, and entry controls.

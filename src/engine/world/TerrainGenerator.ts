@@ -5,7 +5,7 @@
  */
 
 import { createNoise2D } from 'simplex-noise';
-import { PLAYER } from '../../config/constants';
+import { CHUNK_SIZE, PLAYER } from '../../config/constants';
 
 // Must roughly mirror generator.worker.ts island configuration
 export const WATER_LEVEL = 42; // keep in sync with generator.worker.ts
@@ -82,8 +82,9 @@ export function getHeightAtPosition(x: number, z: number, seed: number, worldRad
   const nLakes     = createNoise2D(rngLakes);
   const nOceanFloor = createNoise2D(rngOceanFloor);
 
-  // Use provided world radius or estimate from chunk size (7x7 default, 48x48 chunks)
-  const estimatedRadius = worldRadius || (7 * 48 / 2);
+  // Use the provided world radius or a medium-footprint fallback with the
+  // fixed large chunk dimensions.
+  const estimatedRadius = worldRadius || (7 * CHUNK_SIZE.x / 2);
 
   // Domain warp for natural terrain variation
   const wx = nWarpX(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;

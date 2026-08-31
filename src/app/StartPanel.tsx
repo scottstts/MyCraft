@@ -7,17 +7,9 @@ import { CHUNK_SIZE } from '../config/constants'
 import { replaceInventory } from '../state/inventory'
 import { isMobileDevice, isSafari } from '../shared/browser'
 import { BOOT_STAGE_LABELS } from '../shared/startup'
+import { getWorldSizeOption, normalizeWorldChunkCount, WORLD_SIZE_OPTIONS } from '../shared/worldSizes'
 import bgImage from '../assets/others/bg_img.png'
-
-// Allowed total chunk options: odd squares to ensure a single center chunk
-const CHUNK_COUNT_OPTIONS = [1, 9, 25, 49, 81, 121, 169] // 1x1, 3x3, 5x5, 7x7, 9x9, 11x11, 13x13
-
-// Chunk size options: { label, size }
-const CHUNK_SIZE_OPTIONS = [
-  { label: 'Small (32×64×32)', size: { x: 32, y: 64, z: 32 } },
-  { label: 'Medium (48×96×48)', size: { x: 48, y: 96, z: 48 } }, // Default
-  { label: 'Large (64×128×64)', size: { x: 64, y: 128, z: 64 } },
-]
+import { WorldSizePicker } from './WorldSizePicker'
 
 type StartAction = 'new' | 'load'
 const START_BUTTON_HEIGHT = 52
@@ -50,8 +42,6 @@ export function StartPanel() {
   const setGameStarted = useUIStore(s => s.setGameStarted)
   const chunkCount = useUIStore(s => s.chunkCount)
   const setChunkCount = useUIStore(s => s.setChunkCount)
-  const chunkSize = useUIStore(s => s.chunkSize)
-  const setChunkSize = useUIStore(s => s.setChunkSize)
   const setInGame = useUIStore(s => s.setInGame)
   const setPaused = useUIStore(s => s.setPaused)
   const setLoading = useUIStore(s => s.setLoading)
@@ -63,19 +53,15 @@ export function StartPanel() {
 
   const clearStartupError = () => setStartupError(null)
 
-  const [localCount, setLocalCount] = useState<number>(chunkCount || 9)
-  const [localSize, setLocalSize] = useState<{ x: number; y: number; z: number }>(
-    chunkSize || { x: 48, y: 96, z: 48 }
-  )
+  const [localCount, setLocalCount] = useState<number>(() => normalizeWorldChunkCount(chunkCount))
   const [showControls, setShowControls] = useState<boolean>(false)
   const [loadingAction, setLoadingAction] = useState<StartAction | null>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // Keep in sync if store changes elsewhere
-    setLocalCount(chunkCount)
-    setLocalSize(chunkSize)
-  }, [chunkCount, chunkSize])
+    setLocalCount(normalizeWorldChunkCount(chunkCount))
+  }, [chunkCount])
 
   useEffect(() => {
     // Close controls when clicking outside
@@ -223,6 +209,13 @@ export function StartPanel() {
           setLoading(false)
           return
         }
+        const savedWorldSize = getWorldSizeOption(payload.settings.chunkCount)
+        if (!savedWorldSize) {
+          const supported = WORLD_SIZE_OPTIONS.map((option) => option.label).join(', ')
+          alert(`Save world size is not supported. Choose one of: ${supported}.`)
+          setLoading(false)
+          return
+        }
         // Validate chunks array shape and data sanity
         if (!Array.isArray(payload.chunks) || payload.chunks.length === 0) {
           alert('Save has no chunks.')
@@ -297,8 +290,7 @@ export function StartPanel() {
         ;(window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT = payload
         ;(window as Window & { __WORLD_SNAPSHOT?: WorldSaveFile; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED = true
         // Sync UI selections from save for consistency
-        setChunkCount(payload.settings.chunkCount)
-        setChunkSize(payload.settings.chunkSize)
+        setChunkCount(savedWorldSize.chunkCount)
         setGameStarted(true)
       }
       input.click()
@@ -321,7 +313,6 @@ export function StartPanel() {
     }
     clearStartupError()
     setChunkCount(localCount)
-    setChunkSize(localSize)
     delete (window as Window & { __WORLD_SNAPSHOT?: unknown; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT
     delete (window as Window & { __WORLD_SNAPSHOT?: unknown; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED
     setLoadingAction('new')
@@ -342,6 +333,9 @@ export function StartPanel() {
       display: 'flex', 
       alignItems: 'center', 
       justifyContent: 'center', 
+      padding: '16px 0',
+      boxSizing: 'border-box',
+      overflowY: 'auto',
       backgroundImage: `url(${bgImage})`,
       backgroundSize: 'cover',
       backgroundPosition: 'center',
@@ -367,7 +361,9 @@ export function StartPanel() {
         backdropFilter: 'blur(20px)',
         position: 'relative',
         zIndex: 1,
-        boxSizing: 'border-box'
+        boxSizing: 'border-box',
+        maxHeight: 'calc(100dvh - 32px)',
+        overflowY: 'auto'
       }}>
         <div style={{ 
           display: 'flex', 
@@ -742,113 +738,25 @@ export function StartPanel() {
           </div>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 'clamp(16px, 4vw, 24px)' }}>
-          <label style={{ display: 'grid', gap: 12 }}>
-            <span style={{ 
-              fontSize: 14, 
+          <div style={{ display: 'grid', gap: 12 }}>
+            <div style={{
+              fontSize: 14,
               fontWeight: 600,
               color: '#e2e8f0',
               textTransform: 'uppercase',
               letterSpacing: 0.5
             }}>
               World Size
-            </span>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <select
-                value={localCount}
-                onChange={(e) => setLocalCount(Number(e.target.value))}
-                style={{ 
-                  flex: 1, 
-                  padding: 'clamp(12px, 3vw, 14px) 16px', 
-                  background: '#111827', 
-                  color: '#f1f5f9', 
-                  border: '1px solid rgba(148,163,184,0.2)', 
-                  borderRadius: 12,
-                  fontSize: 'clamp(13px, 3vw, 14px)',
-                  fontWeight: 500,
-                  outline: 'none',
-                  transition: 'all 0.2s ease',
-                  cursor: 'pointer',
-                  minHeight: 44
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.borderColor = 'rgba(148,163,184,0.4)'
-                  e.currentTarget.style.background = '#182332'
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.borderColor = 'rgba(148,163,184,0.2)'
-                  e.currentTarget.style.background = '#111827'
-                }}
-              >
-                {CHUNK_COUNT_OPTIONS.map((opt) => (
-                  <option key={opt} value={opt} style={{ background: '#1e2532', color: '#f1f5f9' }}>
-                    {opt} chunks ({Math.sqrt(opt)}×{Math.sqrt(opt)} grid)
-                  </option>
-                ))}
-              </select>
             </div>
-            <div style={{ 
-              fontSize: 12, 
+            <WorldSizePicker value={localCount} onChange={setLocalCount} disabled={loading} />
+            <div style={{
+              fontSize: 12,
               color: '#64748b',
               fontStyle: 'italic',
               lineHeight: 1.4
             }}>
-              Start with 9 chunks. Larger worlds may impact performance depending on your device.
             </div>
-          </label>
-
-          <label style={{ display: 'grid', gap: 12 }}>
-            <span style={{ 
-              fontSize: 14, 
-              fontWeight: 600,
-              color: '#e2e8f0',
-              textTransform: 'uppercase',
-              letterSpacing: 0.5
-            }}>
-              Chunk Size
-            </span>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <select
-                value={JSON.stringify(localSize)}
-                onChange={(e) => setLocalSize(JSON.parse(e.target.value))}
-                style={{ 
-                  flex: 1, 
-                  padding: 'clamp(12px, 3vw, 14px) 16px', 
-                  background: '#111827', 
-                  color: '#f1f5f9', 
-                  border: '1px solid rgba(148,163,184,0.2)', 
-                  borderRadius: 12,
-                  fontSize: 'clamp(13px, 3vw, 14px)',
-                  fontWeight: 500,
-                  outline: 'none',
-                  transition: 'all 0.2s ease',
-                  cursor: 'pointer',
-                  minHeight: 44
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.borderColor = 'rgba(148,163,184,0.4)'
-                  e.currentTarget.style.background = '#182332'
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.borderColor = 'rgba(148,163,184,0.2)'
-                  e.currentTarget.style.background = '#111827'
-                }}
-              >
-                {CHUNK_SIZE_OPTIONS.map((opt) => (
-                  <option key={opt.label} value={JSON.stringify(opt.size)} style={{ background: '#1e2532', color: '#f1f5f9' }}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={{ 
-              fontSize: 12, 
-              color: '#64748b',
-              fontStyle: 'italic',
-              lineHeight: 1.4
-            }}>
-              Chunk size affects world detail and performance.
-            </div>
-          </label>
+          </div>
 
           <button
             onClick={handleStartNewWorld}

@@ -12,12 +12,17 @@ The local diagnostics route intentionally returns only `CanvasHost` with a deter
 
 - session state: `gameStarted`, `loading`, `inGame`, and `paused`;
 - hotbar selection and display values;
-- restart signaling and world-size choices;
+- restart signaling and the normalized world-size choice;
 - FPS reporting from the engine;
 - `startupStage` and `startupError` for terminal boot feedback;
 - settings/debug/audio panel visibility.
 
 The engine reads the store with `useUIStore.getState()` inside its frame loop and event callbacks. React components subscribe to small selectors so HUD updates do not require engine objects to be exposed as React state.
+
+`WorldSizePicker` presents the six supported footprints as an accessible radio
+grid (`tiny` through `full world`). The store keeps only the normalized total
+chunk count used by the engine; chunk dimensions are fixed by the build and are
+not UI state.
 
 ## Pause and entry semantics
 

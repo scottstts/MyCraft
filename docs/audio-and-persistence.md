@@ -23,7 +23,7 @@ The current envelope is `WorldSaveFile` version 2. The plaintext `WorldSavePaylo
 
 - the `MyCraftWorld` kind and version;
 - creation metadata;
-- seed, chunk count, chunk size, bounds, and world radius;
+- seed, named-footprint chunk count, fixed chunk size, bounds, and world radius;
 - loaded chunks as keys plus base64 voxel arrays;
 - the nine inventory slots and selected slot.
 
@@ -33,6 +33,11 @@ The engine serializes loaded authoritative chunks, signs the payload with the pr
 
 ## Loading
 
-`StartPanel` reads the selected JSON file, validates the envelope identifiers, decrypts and verifies the payload, checks chunk dimensions against the current build, normalizes inventory state, and places the verified payload in a short-lived window handoff. `Engine` consumes that handoff once, ingests each chunk into `ChunkPipeline`, and clears it in a `finally` block so a restart cannot reuse stale save data.
+`StartPanel` reads the selected JSON file, validates the envelope identifiers,
+decrypts and verifies the payload, checks the named world footprint and fixed
+chunk dimensions against the current build, normalizes inventory state, and
+places the verified payload in a short-lived window handoff. `Engine` consumes
+that handoff once, ingests each chunk into `ChunkPipeline`, and clears it in a
+`finally` block so a restart cannot reuse stale save data.
 
 Day/night UI state is not part of the save payload. A loaded world restores terrain, seed, bounds, and inventory; the render clock starts from the normal engine/diagnostic initialization path.

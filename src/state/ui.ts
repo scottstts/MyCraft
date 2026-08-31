@@ -7,6 +7,7 @@
 
 import { create } from 'zustand';
 import type { BootStage, StartupErrorInfo } from '../shared/startup';
+import { DEFAULT_WORLD_CHUNK_COUNT, normalizeWorldChunkCount } from '../shared/worldSizes';
 
 export interface UIState {
   selectedSlot: number; // 0..8
@@ -44,13 +45,9 @@ export interface UIState {
   gameStarted: boolean; // false shows StartPanel
   setGameStarted: (started: boolean) => void;
 
-  // World sizing (non-persistent). User selects total chunks (prefer odd squares: 1, 9, 25...)
+  // World sizing (non-persistent). User selects one of the named odd-square footprints.
   chunkCount: number; // total chunks to generate (default 9 = 3x3)
   setChunkCount: (count: number) => void;
-
-  // Chunk sizing options: { x: width, y: height, z: depth } in blocks
-  chunkSize: { x: number; y: number; z: number }; 
-  setChunkSize: (size: { x: number; y: number; z: number }) => void;
 
   // Loading state for save/load operations
   loading: boolean;
@@ -97,11 +94,8 @@ export const useUIStore = create<UIState>((set) => ({
   gameStarted: false,
   setGameStarted: (started: boolean) => set({ gameStarted: started }),
 
-  chunkCount: 9,
-  setChunkCount: (count: number) => set({ chunkCount: Math.max(1, Math.floor(count)) }),
-
-  chunkSize: { x: 48, y: 96, z: 48 }, // Default from constants
-  setChunkSize: (size: { x: number; y: number; z: number }) => set({ chunkSize: size }),
+  chunkCount: DEFAULT_WORLD_CHUNK_COUNT,
+  setChunkCount: (count: number) => set({ chunkCount: normalizeWorldChunkCount(count) }),
 
   loading: false,
   setLoading: (loading: boolean) => set({ loading }),

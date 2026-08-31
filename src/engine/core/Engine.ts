@@ -39,8 +39,8 @@ import { USE_OCEAN_HORIZON } from '../../config/flags';
 import { SoundEffects } from '../audio/SoundEffects';
 import type { WorldSavePayload, SavedChunk, SavedInventory, WorldSaveFile } from '../../types/save';
 import { base64FromBytes, signPayload, encryptPayload, SAVE_ENC_ALG, SAVE_SIGNATURE_ALG, SAVE_PUBLIC_KEY_ID } from '../../shared/save';
-import { CHUNK_SIZE as CONST_CHUNK_SIZE } from '../../config/constants';
 import { getInventorySlots } from '../../state/inventory';
+import { DEFAULT_WORLD_CHUNK_COUNT, getWorldSizeOption, normalizeWorldChunkCount } from '../../shared/worldSizes';
 import PlayerCharacter from '../render/PlayerCharacter';
 import { applyDiagnosticCameraPose, type DiagnosticCameraId } from '../../diagnostics/cameras';
 import { VoxelOccupancyVolume } from '../render/lighting/VoxelOccupancyVolume.js';
@@ -213,8 +213,7 @@ function rejectFirstFrameIfPending(reason: unknown): void {
 }
 
 function computeBoundsFromChunkCount(totalChunks: number) {
-  const sideApprox = Math.max(1, Math.round(Math.sqrt(totalChunks)));
-  const side = sideApprox;
+  const side = getWorldSizeOption(totalChunks)?.side ?? Math.sqrt(DEFAULT_WORLD_CHUNK_COUNT);
   const negRadius = Math.floor(side / 2);
   const posRadius = side - 1 - negRadius;
   const bounds = {
@@ -228,7 +227,7 @@ function computeBoundsFromChunkCount(totalChunks: number) {
 }
 
 function getGeneratedChunkKeys(totalChunks: number): ChunkKey[] {
-  const side = Math.max(1, Math.round(Math.sqrt(totalChunks)));
+  const side = getWorldSizeOption(totalChunks)?.side ?? Math.sqrt(DEFAULT_WORLD_CHUNK_COUNT);
   const negRadius = Math.floor(side / 2);
   const posRadius = side - 1 - negRadius;
   const keys: ChunkKey[] = [];
@@ -257,7 +256,7 @@ async function saveWorldToFile(): Promise<void> {
   try {
     if (!world) throw new Error('World not initialized');
     const ui = useUIStore.getState();
-    const totalChunks = Math.max(1, Math.floor(ui.chunkCount || 9));
+    const totalChunks = normalizeWorldChunkCount(ui.chunkCount);
     const { bounds, worldRadius } = computeBoundsFromChunkCount(totalChunks);
 
     const chunks = world.getLoadedChunkKeys().map((key): SavedChunk => {
@@ -281,7 +280,7 @@ async function saveWorldToFile(): Promise<void> {
       settings: {
         seed: world.getSeed(),
         chunkCount: totalChunks,
-        chunkSize: { ...CONST_CHUNK_SIZE },
+        chunkSize: { ...CHUNK_SIZE },
         bounds,
         worldRadius,
       },

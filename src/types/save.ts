@@ -26,7 +26,7 @@ export interface SavedChunk {
 export interface WorldSettings {
   seed: number;
   chunkCount: number; // total chunks (N*N)
-  chunkSize: V3i;     // block dimensions (must match current build)
+  chunkSize: V3i;     // fixed build dimensions (must match current build)
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
   worldRadius: number;
 }

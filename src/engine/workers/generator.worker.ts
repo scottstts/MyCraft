@@ -102,8 +102,9 @@ function createHeightFunction(seed: number, worldRadius?: number) {
   const nLakes     = createNoise2D(rngLakes);
   const nOceanFloor = createNoise2D(rngOceanFloor);
 
-  // Use provided world radius or estimate from chunk size (assume 7x7 default, 48x48 chunks)
-  const effectiveRadius = worldRadius || (7 * 48 / 2);
+  // Use the provided world radius or a medium-footprint fallback with the
+  // fixed large chunk dimensions.
+  const effectiveRadius = worldRadius || (7 * CHUNK_SIZE.x / 2);
 
   return (x: number, z: number): { height: number; isLand: boolean } => {
     // Domain warp for natural terrain variation

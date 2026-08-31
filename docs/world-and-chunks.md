@@ -4,7 +4,11 @@
 
 `World` owns the loaded `Map<ChunkKey, Chunk>`, the world seed, coordinate conversion, block reads/writes, chunk events, and flooded-air marks. `worldToChunk()` and `chunkKey()` are the only coordinate mapping used by the world-facing systems. A missing chunk is not silently created by a block read; reads return air, while collision treats an unloaded region conservatively to avoid falling through during streaming.
 
-`Chunk` stores a validated flat `Uint8Array` using the build-time `CHUNK_SIZE` from `src/config/constants.ts` (currently 48×96×48). Local coordinate validation and flattening live in `src/engine/world/chunk`. Save loading rejects a payload whose chunk dimensions do not match this constant.
+`Chunk` stores a validated flat `Uint8Array` using the build-time `CHUNK_SIZE` from `src/config/constants.ts` (currently 64×128×64, the fixed large chunk layout). Local coordinate validation and flattening live in `src/engine/world/chunk`. Save loading rejects a payload whose chunk dimensions do not match this constant.
+
+The player selects one of six named odd-square world footprints (3×3 through
+13×13 chunks). The mapping lives in `src/shared/worldSizes.ts`; `Engine` uses
+it to derive world bounds and the expected startup chunk keys.
 
 ## Worker pipeline
 

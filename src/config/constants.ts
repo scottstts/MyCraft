@@ -5,8 +5,9 @@
  * Invariants: Values are read-only at runtime.
  */
 
-// Larger chunk dimensions to make each chunk span a much bigger area
-export const CHUNK_SIZE = { x: 48, y: 96, z: 48 } as const;
+// Large chunk dimensions are fixed in the build; players choose only the
+// number of chunks in the world footprint.
+export const CHUNK_SIZE = { x: 64, y: 128, z: 64 } as const;
 
 export const PLAYER = {
   height: 1.8,
