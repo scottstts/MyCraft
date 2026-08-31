@@ -35,6 +35,8 @@ No independent phase, ridge, scrolling decal, or color mask is added after the a
 
 The block receiver changes only direct sun. It combines concentration with interface transmission, water absorption along the refracted light path, receiver-angle correction, sun altitude, and the existing voxel shadow visibility. Ambient sky, stars, material albedo, and shadows are not brightened by the caustic texture. If the render target is unavailable, the sampler is neutral and no synthetic caustic pattern is invented.
 
+Both block and underwater receivers pass the continuous, unwrapped caustic coordinate to mipmapped `texture2D` samples. `RepeatWrapping` performs the tile wrap after derivatives are calculated; applying `fract` in a receiver would manufacture a derivative discontinuity at each tile edge and select neutral coarse mips, producing straight no-caustics bands.
+
 ## Review invariants
 
 - `WaterSurfaceMaterial` remains the owner of visible interface Fresnel, reflection, and refraction.

@@ -195,7 +195,10 @@ export class UnderwaterPass extends ShaderPass {
           float referenceTravel = (causticReferenceDepth - depth) / vertical;
           vec2 projected = worldPosition.xz + refractedSun.xz * referenceTravel;
           vec2 causticCoord = (projected - causticOrigin) / max(causticExtent, 1.0) + 0.5;
-          vec2 uv = fract(causticCoord);
+          // Keep the coordinate unwrapped until after implicit derivatives are
+          // calculated by texture2D. RepeatWrapping performs the actual tile
+          // wrap without manufacturing a large derivative at each seam.
+          vec2 uv = causticCoord;
           vec2 texel = 1.0 / max(causticResolution, vec2(1.0));
           float footprint = worldFilterWidth / max(causticExtent, 1.0)
             * max(causticResolution.x, causticResolution.y);
@@ -209,10 +212,10 @@ export class UnderwaterPass extends ShaderPass {
             return clamp(center * causticFieldScale, 0.0, 8.0);
           }
           float neighbours = (
-            texture2D(causticMap, fract(uv + vec2(texel.x, 0.0))).r
-            + texture2D(causticMap, fract(uv - vec2(texel.x, 0.0))).r
-            + texture2D(causticMap, fract(uv + vec2(0.0, texel.y))).r
-            + texture2D(causticMap, fract(uv - vec2(0.0, texel.y))).r
+            texture2D(causticMap, uv + vec2(texel.x, 0.0)).r
+            + texture2D(causticMap, uv - vec2(texel.x, 0.0)).r
+            + texture2D(causticMap, uv + vec2(0.0, texel.y)).r
+            + texture2D(causticMap, uv - vec2(0.0, texel.y)).r
           ) * 0.25;
           float filtered = mix(center, neighbours, smoothstep(0.75, 2.5, footprint));
           // The encoded neutral concentration is 1 / fieldScale. A wide ray

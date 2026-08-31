@@ -135,6 +135,22 @@ describe('water compositing ownership', () => {
     pass.dispose();
   });
 
+  it('keeps underwater caustic coordinates unwrapped for implicit mip derivatives', () => {
+    const pass = new UnderwaterPass();
+    const fragmentShader = (pass.material as THREE.ShaderMaterial).fragmentShader;
+    const samplerStart = fragmentShader.indexOf('float sampleCausticField');
+    const samplerEnd = fragmentShader.indexOf('void main()', samplerStart);
+    const sampler = fragmentShader.slice(samplerStart, samplerEnd);
+
+    expect(sampler).toContain('vec2 uv = causticCoord;');
+    expect(sampler).toContain('texture2D(causticMap, uv).r');
+    expect(sampler).toContain('texture2D(causticMap, uv + vec2(texel.x, 0.0)).r');
+    expect(sampler).not.toContain('fract(causticCoord)');
+    expect(sampler).not.toContain('fract(uv');
+
+    pass.dispose();
+  });
+
   it('keeps every repeating caustic slope band periodic over the transport tile', () => {
     for (const wave of OCEAN_CAUSTIC_WAVES) {
       const xCycles = CAUSTIC_TILE_SIZE * wave.directionX / wave.wavelength;
