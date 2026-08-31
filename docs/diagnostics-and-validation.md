@@ -16,6 +16,12 @@ Optional `time` accepts a normalized cycle value or `sunrise`, `noon`, `sunset`,
 
 Every diagnostic view uses `createPlayerCamera()` and the ordinary `Engine` renderer, materials, world, atmosphere, water, shadow, and first-frame readiness. The diagnostic module supplies only a deterministic world-space pose and optional clock value; it does not create a second camera or render pipeline.
 
+## Ocean evidence modes
+
+`WaterSystem.setDebugMode()` is the local validation hook for the render-only ocean. Modes 1–7 cover height, resolved normal, Fresnel, refraction rejection, transmittance, foam/crest, and screen-space receiver coverage. Modes 8 and 9 are the spectral/glint checks: mode 8 visualizes shared unresolved slope variance, local roughness, and sun-lobe response; mode 9 visualizes the undeformed base-plane pixel footprint and retained long/short-band LOD. The expected evidence is continuous band retention across the inner/outer mesh transition, spatially varied roughness that follows the normal field, and no color-only stripe or independent glint mask.
+
+The ocean field is deterministic: its fixed phases, directional components, finite-depth dispersion, and normalized half-block envelope are shared by CPU sampling, vertex displacement, fragment normals/optical carrier reconstruction, and caustic projection. Captures should keep the same camera pose, time, resolution, and sun direction when comparing changes. Use the no-post baseline when isolating water; lens flare and aerial perspective can otherwise make a water seam appear to belong to the surface. The active post-process contract is that ocean scene/depth/refraction data is Fresnel-weighted at the interface, while the internal ocean marker makes aerial perspective use water-surface depth instead of the water-free seabed capture and prevents above-water medium reprocessing.
+
 ## Read-only evidence hooks
 
 The engine exposes two local validation hooks on `window`:

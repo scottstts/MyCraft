@@ -388,9 +388,12 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           }
 
           // Opaque block pixels use alpha as an internal indirect-light mask
-          // for the post-process SSAO pass. This material is never blended.
+          // for post-processing. Reserve the exact zero value for the opaque
+          // ocean's internal surface marker; the one-byte floor is far below
+          // the lighting-mask precision that affects the scene color.
           float indirectMask = lighting.a * clamp(lightingMix, 0.0, 1.0);
-          gl_FragColor = vec4(color, 1.0 - indirectMask);
+          float directLightFraction = max(1.0 - indirectMask, 1.0 / 255.0);
+          gl_FragColor = vec4(color, directLightFraction);
       }
     `;
 

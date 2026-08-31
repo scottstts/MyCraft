@@ -89,11 +89,12 @@ export class AerialPerspectivePass extends ShaderPass {
           return -viewZ;
         }
 
-        vec3 viewRayWorld() {
+        vec3 viewRayWorld(out vec3 viewRay) {
           vec2 ndc = vUv * 2.0 - 1.0;
           vec4 farView = invProjectionMatrix * vec4(ndc, 1.0, 1.0);
           farView /= farView.w;
-          return normalize((cameraMatrixWorld * vec4(normalize(farView.xyz), 0.0)).xyz);
+          viewRay = normalize(farView.xyz);
+          return normalize((cameraMatrixWorld * vec4(viewRay, 0.0)).xyz);
         }
 
         vec3 worldPosition(float viewDepth) {
@@ -116,13 +117,37 @@ export class AerialPerspectivePass extends ShaderPass {
 
         void main() {
           vec4 source = texture2D(tDiffuse, vUv);
-          float distanceToSurface = readDepth(vUv);
           if (!enabled) {
             gl_FragColor = source;
             return;
           }
 
-          vec3 ray = viewRayWorld();
+          vec3 viewRay;
+          vec3 ray = viewRayWorld(viewRay);
+          float distanceToSurface = readDepth(vUv);
+
+          // The opaque ocean writes a zero-alpha marker into the color pass.
+          // Its separate capture intentionally contains the seabed, so the
+          // capture depth is not the visible receiver depth for an ocean pixel.
+          // Replace it with the camera ray's intersection with the nominal
+          // water plane before applying aerial extinction. This keeps the
+          // atmosphere pass from reintroducing a depth/LOD seam after the
+          // surface shader has already performed its Fresnel mix.
+          float waterMask = 1.0 - step(0.001, source.a);
+          vec3 cameraPosition = cameraMatrixWorld[3].xyz;
+          float cameraAboveWater = step(waterLevel, cameraPosition.y);
+          float rayDown = step(0.001, -ray.y);
+          float rayDistance = (waterLevel - cameraPosition.y) / min(ray.y, -0.001);
+          float surfaceViewDepth = -rayDistance * viewRay.z;
+          float validWaterSurfaceRay = cameraAboveWater
+            * rayDown
+            * step(0.001, rayDistance);
+          distanceToSurface = mix(
+            distanceToSurface,
+            clamp(surfaceViewDepth, 0.0, cameraFar),
+            waterMask * validWaterSurfaceRay
+          );
+
           float up = max(ray.y, 0.0);
           float vertical = pow(up, 0.48);
           vec3 gradient = mix(skyHorizon, skyZenith, vertical);

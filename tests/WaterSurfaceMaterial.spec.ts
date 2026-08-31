@@ -11,7 +11,7 @@ describe('WaterSurfaceMaterial', () => {
     expect(material.fragmentShader).toContain('projectWorldToUv');
     expect(material.fragmentShader).toContain('reconstructWorldPosition');
     expect(material.fragmentShader).toContain('uProjectionMatrix * viewMatrix');
-    expect(material.fragmentShader).toContain('length(backgroundWorld - vWorld)');
+    expect(material.fragmentShader).toContain('length(backgroundWorld - opticalWorld)');
     expect(material.fragmentShader).toContain('dielectricFresnel');
     expect(material.fragmentShader).toContain('criticalSafeRefract');
     expect(material.fragmentShader).toContain('bool underwaterView = uOceanMode ? !gl_FrontFacing : uCameraUnderwater');
@@ -20,6 +20,16 @@ describe('WaterSurfaceMaterial', () => {
     expect(material.fragmentShader).not.toContain('bool tir =');
     expect(material.fragmentShader).not.toContain('if (!tir)');
     expect(material.fragmentShader).toContain('ggxDistribution');
+    expect(material.vertexShader).toContain('float oceanPixelFootprint(vec3 surfacePosition)');
+    expect(material.vertexShader).toContain('return oceanWaveDisplacement(worldPosition, time, vertexFootprint)');
+    expect(material.vertexShader).toContain('oceanWaveLod(footprint, OCEAN_WAVE_LENGTH_');
+    expect(material.fragmentShader).toContain('float surfaceFootprint = oceanPixelFootprint(vBaseWorld)');
+    expect(material.fragmentShader).toContain('opticalWorld = vBaseWorld + oceanWaveDisplacement(');
+    expect(material.fragmentShader).toContain('waveNormal(vBaseWorld.xz, uTime, surfaceFootprint');
+    expect(material.fragmentShader).not.toContain('float surfaceDepth = vViewDepth');
+    expect(material.fragmentShader).toContain('float slopeVariance');
+    expect(material.fragmentShader).toContain('float filteredRoughness');
+    expect(material.fragmentShader).toContain('float solarVariance');
     expect(material.fragmentShader).toContain('float skirtAlpha');
     expect(material.fragmentShader).toContain('float sunLobe = mix(coreLobe, skirtLobe, 0.42)');
     expect(material.fragmentShader).toContain('normalFootprint');
@@ -48,6 +58,10 @@ describe('WaterSurfaceMaterial', () => {
     expect(material.fragmentShader).not.toContain('step(uWaterLevel - 0.05, candidateWorld.y)');
     expect(material.fragmentShader).toContain('float refractionResolveCoverage = 1.0;');
     expect(material.fragmentShader).not.toContain('pow(sun, 2200.0)');
+    expect(material.fragmentShader).toContain('uDebugMode == 8');
+    expect(material.fragmentShader).toContain('uDebugMode == 9');
+    expect(material.fragmentShader).not.toContain('length(dFdx(vWorld.xz))');
+    expect(material.fragmentShader).not.toContain('dFdx(normal)');
     expect(material.fragmentShader).not.toContain('refractedDirection.xz * uRefractAmount');
     expect(material.fragmentShader).not.toContain('abs(refractedDirection.z)');
     expect(material.fragmentShader).not.toContain('pow((1.0 - 1.333)');
@@ -279,6 +293,88 @@ describe('WaterSurfaceMaterial', () => {
     expect(map.generateMipmaps).toBe(false);
     expect(far!.material.uniforms.aaEnabled.value).toBe(false);
     expect(far!.material.uniforms.aaLodBiasEnabled.value).toBe(false);
+
+    water.dispose();
+    textureLoad.mockRestore();
+  });
+
+  it('stitches the inner ocean lattice into every horizon strip', () => {
+    const textureLoad = vi.spyOn(THREE.TextureLoader.prototype, 'load')
+      .mockImplementation((_url, onLoad) => {
+        const texture = new THREE.Texture();
+        onLoad?.(texture);
+        return texture;
+      });
+    const scene = new THREE.Scene();
+    const water = new WaterSystem(scene, {
+      bounds: { minX: -16, maxX: 16, minZ: -16, maxZ: 16 },
+      waterLevel: 42,
+      farDistance: 128,
+      seed: 17,
+      worldRadius: 32,
+    });
+
+    const ocean = scene.getObjectByName('OceanSurface') as THREE.Group;
+    const inner = ocean.getObjectByName('OceanSurfaceInner') as THREE.Mesh;
+    const innerPosition = inner.geometry.getAttribute('position');
+    const uniqueValues = (attribute: THREE.BufferAttribute, component: 'x' | 'z'): number[] => {
+      const values: number[] = [];
+      for (let index = 0; index < attribute.count; index += 1) {
+        const value = component === 'x' ? attribute.getX(index) : attribute.getZ(index);
+        if (!values.some((existing) => Math.abs(existing - value) < 1e-5)) values.push(value);
+      }
+      return values.sort((a, b) => a - b);
+    };
+    const innerZ = uniqueValues(innerPosition, 'z');
+    const innerX = uniqueValues(innerPosition, 'x');
+    const valuesAtBoundary = (
+      attribute: THREE.BufferAttribute,
+      boundaryAxis: 'x' | 'z',
+      boundaryValue: number,
+      tangentAxis: 'x' | 'z',
+    ): number[] => {
+      const values: number[] = [];
+      for (let index = 0; index < attribute.count; index += 1) {
+        const boundary = boundaryAxis === 'x' ? attribute.getX(index) : attribute.getZ(index);
+        if (Math.abs(boundary - boundaryValue) >= 1e-5) continue;
+        const value = tangentAxis === 'x' ? attribute.getX(index) : attribute.getZ(index);
+        if (!values.some((existing) => Math.abs(existing - value) < 1e-5)) values.push(value);
+      }
+      return values.sort((a, b) => a - b);
+    };
+    const assertStitchedStrip = (config: {
+      name: string;
+      boundaryAxis: 'x' | 'z';
+      innerEdge: 'min' | 'max';
+      stripEdge: 'min' | 'max';
+      tangentAxis: 'x' | 'z';
+    }): void => {
+      const mesh = ocean.getObjectByName(config.name) as THREE.Mesh;
+      const position = mesh.geometry.getAttribute('position');
+      const radialLevels = uniqueValues(position, config.boundaryAxis);
+      const innerRadialLevels = config.boundaryAxis === 'x' ? innerX : innerZ;
+      const stripBoundary = config.stripEdge === 'min' ? radialLevels[0] : radialLevels[radialLevels.length - 1];
+      const innerBoundary = config.innerEdge === 'min' ? innerRadialLevels[0] : innerRadialLevels[innerRadialLevels.length - 1];
+      const stripStep = config.stripEdge === 'min'
+        ? radialLevels[1] - radialLevels[0]
+        : radialLevels[radialLevels.length - 1] - radialLevels[radialLevels.length - 2];
+      const innerStep = config.innerEdge === 'min'
+        ? innerRadialLevels[1] - innerRadialLevels[0]
+        : innerRadialLevels[innerRadialLevels.length - 1] - innerRadialLevels[innerRadialLevels.length - 2];
+      const innerTangent = valuesAtBoundary(innerPosition, config.boundaryAxis, innerBoundary, config.tangentAxis);
+      const stripTangent = valuesAtBoundary(position, config.boundaryAxis, stripBoundary, config.tangentAxis);
+
+      expect(stripBoundary).toBeCloseTo(innerBoundary, 6);
+      expect(stripStep).toBeCloseTo(Math.abs(innerStep), 6);
+      for (const value of innerTangent) {
+        expect(stripTangent.some((candidate) => Math.abs(candidate - value) < 1e-5)).toBe(true);
+      }
+    };
+
+    assertStitchedStrip({ name: 'OceanSurfaceNorth', boundaryAxis: 'z', innerEdge: 'max', stripEdge: 'min', tangentAxis: 'x' });
+    assertStitchedStrip({ name: 'OceanSurfaceSouth', boundaryAxis: 'z', innerEdge: 'min', stripEdge: 'max', tangentAxis: 'x' });
+    assertStitchedStrip({ name: 'OceanSurfaceWest', boundaryAxis: 'x', innerEdge: 'min', stripEdge: 'max', tangentAxis: 'z' });
+    assertStitchedStrip({ name: 'OceanSurfaceEast', boundaryAxis: 'x', innerEdge: 'max', stripEdge: 'min', tangentAxis: 'z' });
 
     water.dispose();
     textureLoad.mockRestore();

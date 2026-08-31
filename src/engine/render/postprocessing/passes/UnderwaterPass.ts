@@ -116,6 +116,18 @@ export class UnderwaterPass extends ShaderPass {
             return;
           }
 
+          // Above-water ocean pixels already contain the interface reflection
+          // and Fresnel-weighted scene transmission from WaterSurfaceMaterial.
+          // Do not run the camera-side medium over those pixels again: its
+          // depth prepass intentionally sees the seabed, which would otherwise
+          // make that hidden vertical separation visible near the waterline.
+          float waterSurfaceMask = 1.0 - step(0.001, source.a);
+          float cameraAboveWater = step(waterLevel, uCameraPosition.y);
+          if (waterSurfaceMask > 0.5 && cameraAboveWater > 0.5) {
+            gl_FragColor = source;
+            return;
+          }
+
           vec3 viewRay;
           vec3 ray = worldRay(viewRay);
           float sceneViewDepth = readViewDepth(texture2D(tDepth, vUv).r);

@@ -1,10 +1,10 @@
 /**
- * Shared authored wave field for the WebGL ocean.
+ * Shared deterministic directional spectrum for the WebGL ocean.
  *
  * The same constants are consumed by the CPU camera/diagnostic helpers and
- * emitted into the water vertex/fragment shaders.  This is intentionally an
- * analytic wave field rather than an FFT simulation: the game renderer is a
- * WebGL path and the water feature must stay bounded and inspectable.
+ * emitted into the water vertex/fragment shaders. This is a discrete spectral
+ * cascade rather than a full FFT simulation: the game renderer is a WebGL path
+ * and the water feature must stay bounded and inspectable.
  */
 
 export interface OceanWave {
@@ -40,6 +40,17 @@ export const OCEAN_WAVES: readonly OceanWave[] = [
   { directionX: -0.731354, directionZ: 0.681998, amplitude: 0.050, wavelength: 43.5, steepness: 0.28, speed: 1.01, phase: 5.91 },
   { directionX: -0.309017, directionZ: 0.951057, amplitude: 0.042, wavelength: 37.0, steepness: 0.27, speed: 1.03, phase: 2.35 },
   { directionX: -0.898794, directionZ: 0.438371, amplitude: 0.035, wavelength: 32.0, steepness: 0.26, speed: 0.99, phase: 0.18 },
+  // Long-period secondary swell. These oblique modes carry modest energy but
+  // survive into the far cascade, so the horizon is not a single primary
+  // direction with a short repeating beat layered over it.
+  { directionX: -0.707107, directionZ: 0.707107, amplitude: 0.062, wavelength: 118.0, steepness: 0.30, speed: 0.96, phase: 3.06 },
+  { directionX: -0.342020, directionZ: 0.939693, amplitude: 0.055, wavelength: 101.0, steepness: 0.29, speed: 1.04, phase: 5.44 },
+  { directionX: 0.275637, directionZ: 0.961262, amplitude: 0.049, wavelength: 91.0, steepness: 0.28, speed: 0.97, phase: 1.02 },
+  { directionX: -0.970296, directionZ: 0.241922, amplitude: 0.043, wavelength: 82.0, steepness: 0.27, speed: 1.05, phase: 4.26 },
+  { directionX: 0.642788, directionZ: -0.766044, amplitude: 0.037, wavelength: 68.0, steepness: 0.26, speed: 0.95, phase: 2.71 },
+  { directionX: -0.866025, directionZ: -0.500000, amplitude: 0.031, wavelength: 56.0, steepness: 0.25, speed: 1.02, phase: 0.53 },
+  { directionX: 0.500000, directionZ: 0.866025, amplitude: 0.026, wavelength: 45.0, steepness: 0.24, speed: 1.06, phase: 5.09 },
+  { directionX: -0.173648, directionZ: -0.984808, amplitude: 0.021, wavelength: 39.5, steepness: 0.23, speed: 0.98, phase: 3.88 },
   // Wind sea: progressively broader directions and lower energy. These bands
   // keep mid-distance normals stochastic after sub-pixel waves have faded.
   { directionX: 0.848048, directionZ: -0.529919, amplitude: 0.040, wavelength: 27.4, steepness: 0.25, speed: 1.01, phase: 3.79 },
@@ -128,6 +139,48 @@ export function oceanWaveDeclarations(): string {
     const float OCEAN_WATER_DEPTH = ${OCEAN_WATER_DEPTH.toFixed(6)};
     const float OCEAN_SURFACE_TENSION_OVER_DENSITY = ${OCEAN_SURFACE_TENSION_OVER_DENSITY.toFixed(9)};
     const float OCEAN_WAVE_HALF_RANGE = ${OCEAN_WAVE_HALF_RANGE.toFixed(6)};
+
+    // The resolved grid and the unresolved slope field use the same smooth
+    // spectral cutoff. The lower floor transfers a fading band into the
+    // material response instead of making it disappear at one screen-space
+    // distance, which would turn a bright sun lobe into a horizontal seam.
+    float oceanWaveLod(float footprint, float wavelength) {
+      float cyclesPerPixel = footprint / max(wavelength, 0.001);
+      float fadeStart = wavelength >= 28.0 ? 0.52 : wavelength >= 12.0 ? 0.34 : 0.22;
+      float fadeEnd = wavelength >= 28.0 ? 1.25 : wavelength >= 12.0 ? 0.92 : 0.68;
+      float resolved = 1.0 - smoothstep(fadeStart, fadeEnd, cyclesPerPixel);
+      return mix(0.10, 1.0, resolved);
+    }
+
+    // Shared parametric displacement for both rasterization and optical
+    // shading. The fragment path supplies the interpolated base-plane
+    // position, so view/refraction inputs do not inherit the mesh's triangle
+    // interpolation at an inner/outer ocean transition.
+    vec3 oceanWaveDisplacement(vec3 worldPosition, float time, float footprint) {
+      vec3 displaced = vec3(0.0);
+      vec2 xz = worldPosition.xz;
+      ${OCEAN_WAVES.map((_, index) => `
+        {
+          float k = 6.28318530718 / OCEAN_WAVE_LENGTH_${index};
+          float depthK = min(k * OCEAN_WATER_DEPTH, 20.0);
+          float depthExp = exp(min(2.0 * depthK, 20.0));
+          float depthTanh = (depthExp - 1.0) / (depthExp + 1.0);
+          float omega = sqrt(max(
+            9.81 * k * depthTanh +
+            OCEAN_SURFACE_TENSION_OVER_DENSITY * k * k * k,
+            0.0
+          )) * OCEAN_WAVE_SPEED_${index} * uWaveSpeed;
+          float phase = k * dot(OCEAN_WAVE_DIRECTION_${index}, xz) - omega * time + OCEAN_WAVE_PHASE_${index};
+          float amplitude = OCEAN_WAVE_AMPLITUDE_${index} * min(uWaveAmp, 1.0) *
+            oceanWaveLod(footprint, OCEAN_WAVE_LENGTH_${index});
+          float c = cos(phase);
+          displaced.xz += OCEAN_WAVE_DIRECTION_${index} * OCEAN_WAVE_STEEPNESS_${index} * amplitude * uWaveChop * c;
+          displaced.y += amplitude * sin(phase);
+        }
+      `).join('\n')}
+      displaced.y = clamp(displaced.y, -OCEAN_WAVE_HALF_RANGE, OCEAN_WAVE_HALF_RANGE);
+      return displaced;
+    }
 
     // Detail-only domain warp. Macro displacement remains a stationary sum of
     // physical wave components so its analytic derivatives and CPU height

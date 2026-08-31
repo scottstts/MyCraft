@@ -3,7 +3,7 @@ import { BlockMaterial } from '../BlockMaterial'
 import type { AtlasConfig } from '../Atlas'
 import { CHUNK_SIZE } from '../../../config/constants'
 import { getHeightAtPosition } from '../../world/TerrainGenerator'
-import { getOceanMaxAmplitude, OCEAN_WATER_CENTER_OFFSET, sampleOceanHeight } from './OceanWaveField'
+import { getOceanMaxAmplitude, OCEAN_WATER_CENTER_OFFSET, OCEAN_WAVES, sampleOceanHeight } from './OceanWaveField'
 import { WaterSurfaceMaterial } from './WaterSurfaceMaterial'
 import { CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
 import sandTextureUrl from '../../../assets/textures/sand.png'
@@ -11,6 +11,7 @@ import sandTextureUrl from '../../../assets/textures/sand.png'
 const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
 const SEABED_FLOOR_Y = 0
 const SEABED_FAR_CELL_SIZE = 16
+const OCEAN_OUTER_CELL_SIZE = 10
 // The lowest bounded wave trough is at WATER_LEVEL. Keep the render-only
 // receiver one complete voxel below it so no generated "seabed" top can
 // cross the optical interface and enter the water-free scene capture.
@@ -152,13 +153,18 @@ export class WaterSystem {
 
     const far = Math.max(128, options.farDistance)
     const innerSize = Math.min(512, Math.max(256, far * 0.42))
-    const outerSize = far * 2.05
     const innerSegments = innerSize <= 320 ? 128 : 160
+    const innerHalf = innerSize * 0.5
+    const outerHalf = far * 2.05 * 0.5
+    const innerCellSize = innerSize / innerSegments
     // Keep the horizon strips sampled often enough that long swells do not
-    // collapse into broad, parallel quads.  Their shader still fades the
-    // shortest detail by footprint; this budget only preserves the cascade's
-    // large directional shape at distance.
-    const outerSegments = Math.max(64, Math.min(192, Math.ceil(outerSize / 10)))
+    // collapse into broad, parallel quads. Their shader still filters the
+    // shortest detail by footprint; this budget preserves the cascade's
+    // large directional shape without introducing an inner/outer grid seam.
+    // The strip lattice is stitched explicitly below: the outer radial cell
+    // starts at the inner grid's cell width and grows smoothly toward the
+    // horizon, rather than interpolating over a separate coarse edge lattice.
+    const outerBandSegments = Math.max(2, Math.ceil((outerHalf - innerHalf) / OCEAN_OUTER_CELL_SIZE))
 
     const inner = new THREE.Mesh(this.createGridGeometry(innerSize, innerSegments), this.material)
     inner.name = 'OceanSurfaceInner'
@@ -166,16 +172,38 @@ export class WaterSystem {
     inner.frustumCulled = false
     this.oceanGroup.add(inner)
 
-    const innerHalf = innerSize * 0.5
-    const outerHalf = outerSize * 0.5
-    const strips: Array<{ x0: number; z0: number; x1: number; z1: number; nx: number; nz: number; name: string }> = [
-      { x0: -outerHalf, z0: innerHalf, x1: outerHalf, z1: outerHalf, nx: outerSegments, nz: Math.max(4, Math.ceil((outerHalf - innerHalf) / 16)), name: 'OceanSurfaceNorth' },
-      { x0: -outerHalf, z0: -outerHalf, x1: outerHalf, z1: -innerHalf, nx: outerSegments, nz: Math.max(4, Math.ceil((outerHalf - innerHalf) / 16)), name: 'OceanSurfaceSouth' },
-      { x0: -outerHalf, z0: -innerHalf, x1: -innerHalf, z1: innerHalf, nx: Math.max(4, Math.ceil((outerHalf - innerHalf) / 16)), nz: Math.max(4, Math.ceil(innerSize / 16)), name: 'OceanSurfaceWest' },
-      { x0: innerHalf, z0: -innerHalf, x1: outerHalf, z1: innerHalf, nx: Math.max(4, Math.ceil((outerHalf - innerHalf) / 16)), nz: Math.max(4, Math.ceil(innerSize / 16)), name: 'OceanSurfaceEast' },
+    const innerAxis = this.createUniformCoordinates(-innerHalf, innerHalf, innerSegments)
+    const negativeOuterAxis = this.createTransitionCoordinates(
+      -innerHalf,
+      -outerHalf,
+      outerBandSegments,
+      innerCellSize,
+    ).reverse()
+    const positiveOuterAxis = this.createTransitionCoordinates(
+      innerHalf,
+      outerHalf,
+      outerBandSegments,
+      innerCellSize,
+    )
+    const fullTangentAxis = [
+      ...negativeOuterAxis.slice(0, -1),
+      ...innerAxis,
+      ...positiveOuterAxis.slice(1),
+    ]
+    const northRadialAxis = positiveOuterAxis
+    const southRadialAxis = negativeOuterAxis
+    const strips: Array<{ x: number[]; z: number[]; name: string }> = [
+      // The central part of every strip reuses the inner grid's exact
+      // boundary coordinates. The outer portions use a smoothly expanding
+      // lattice, so no displaced edge is reconstructed from a different set
+      // of samples at the inner/outer join.
+      { x: fullTangentAxis, z: northRadialAxis, name: 'OceanSurfaceNorth' },
+      { x: fullTangentAxis, z: southRadialAxis, name: 'OceanSurfaceSouth' },
+      { x: southRadialAxis, z: fullTangentAxis, name: 'OceanSurfaceWest' },
+      { x: northRadialAxis, z: fullTangentAxis, name: 'OceanSurfaceEast' },
     ]
     for (const strip of strips) {
-      const mesh = new THREE.Mesh(this.createRectGeometry(strip.x0, strip.z0, strip.x1, strip.z1, strip.nx, strip.nz), this.material)
+      const mesh = new THREE.Mesh(this.createCoordinateGeometry(strip.x, strip.z), this.material)
       mesh.name = strip.name
       mesh.renderOrder = 2
       mesh.frustumCulled = false
@@ -301,6 +329,12 @@ export class WaterSystem {
       cameraUnderwater: this.cameraUnderwater,
       surfaceY: this.surfaceY,
       maxWaveAmplitude: getOceanMaxAmplitude(),
+      waveField: {
+        representation: 'deterministic-discrete-directional-spectrum',
+        components: OCEAN_WAVES.length,
+        lod: 'undeformed-base-plane-pixel-footprint',
+        sharedSlopeResponse: true,
+      },
       oceanMeshes: this.oceanGroup.children.length,
       seabedReady: !!this.seabedGroup,
       seabedMeshes: seabedMeshes.length,
@@ -336,18 +370,60 @@ export class WaterSystem {
   }
 
   private createRectGeometry(x0: number, z0: number, x1: number, z1: number, nx: number, nz: number): THREE.BufferGeometry {
-    const positions = new Float32Array((nx + 1) * (nz + 1) * 3)
-    const normals = new Float32Array((nx + 1) * (nz + 1) * 3)
-    const uvs = new Float32Array((nx + 1) * (nz + 1) * 2)
+    return this.createCoordinateGeometry(
+      this.createUniformCoordinates(x0, x1, nx),
+      this.createUniformCoordinates(z0, z1, nz),
+    )
+  }
+
+  private createUniformCoordinates(start: number, end: number, segments: number): number[] {
+    const count = Math.max(1, Math.floor(segments))
+    return Array.from({ length: count + 1 }, (_, index) => THREE.MathUtils.lerp(start, end, index / count))
+  }
+
+  /**
+   * Build a transition axis from an inner patch edge toward an outer edge.
+   * The first cell exactly matches the dense inner grid and later cells grow
+   * gradually. This keeps the displaced surface and its raster footprint
+   * continuous without paying the inner-grid vertex cost to the horizon.
+   */
+  private createTransitionCoordinates(
+    boundary: number,
+    outer: number,
+    segments: number,
+    firstCellSize: number,
+  ): number[] {
+    const count = Math.max(1, Math.floor(segments))
+    const span = Math.abs(outer - boundary)
+    if (span <= 1e-6 || count === 1) return [boundary, outer]
+
+    const direction = Math.sign(outer - boundary)
+    const firstCell = Math.min(Math.abs(firstCellSize), span)
+    const lastCell = 2 * span / count - firstCell
+    if (lastCell <= 0) return this.createUniformCoordinates(boundary, outer, count)
+
+    const coordinates = [boundary]
+    let distance = 0
+    for (let index = 0; index < count; index += 1) {
+      const t = count === 1 ? 0 : index / (count - 1)
+      const cellSize = firstCell + (lastCell - firstCell) * t
+      distance += cellSize
+      coordinates.push(index === count - 1 ? outer : boundary + direction * distance)
+    }
+    return coordinates
+  }
+
+  private createCoordinateGeometry(xCoordinates: number[], zCoordinates: number[]): THREE.BufferGeometry {
+    const nx = Math.max(1, xCoordinates.length - 1)
+    const nz = Math.max(1, zCoordinates.length - 1)
+    const positions = new Float32Array(xCoordinates.length * zCoordinates.length * 3)
+    const normals = new Float32Array(xCoordinates.length * zCoordinates.length * 3)
+    const uvs = new Float32Array(xCoordinates.length * zCoordinates.length * 2)
     let p = 0
     let n = 0
     let uv = 0
-    for (let j = 0; j <= nz; j += 1) {
-      const tz = j / nz
-      const z = THREE.MathUtils.lerp(z0, z1, tz)
-      for (let i = 0; i <= nx; i += 1) {
-        const tx = i / nx
-        const x = THREE.MathUtils.lerp(x0, x1, tx)
+    for (const z of zCoordinates) {
+      for (const x of xCoordinates) {
         positions[p++] = x
         positions[p++] = 0
         positions[p++] = z

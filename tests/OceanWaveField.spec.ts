@@ -5,6 +5,7 @@ import {
   OCEAN_WAVE_HALF_RANGE,
   OCEAN_WAVE_HEIGHT_SCALE,
   getOceanMaxAmplitude,
+  oceanWaveDeclarations,
   sampleOceanHeight,
 } from '../src/engine/render/water/OceanWaveField';
 
@@ -30,7 +31,7 @@ describe('bounded ocean wave field', () => {
   });
 
   it('uses a normalized multi-directional spectrum instead of one repeating wave train', () => {
-    expect(OCEAN_WAVES.length).toBeGreaterThanOrEqual(32);
+    expect(OCEAN_WAVES.length).toBeGreaterThanOrEqual(40);
 
     const theoreticalHalfRange = OCEAN_WAVES.reduce(
       (sum, wave) => sum + Math.abs(wave.amplitude * OCEAN_WAVE_HEIGHT_SCALE),
@@ -57,5 +58,6 @@ describe('bounded ocean wave field', () => {
     for (const wave of OCEAN_WAVES) {
       expect(Math.hypot(wave.directionX, wave.directionZ)).toBeCloseTo(1, 5);
     }
+    expect(oceanWaveDeclarations()).toContain('float oceanWaveLod(float footprint, float wavelength)');
   });
 });
