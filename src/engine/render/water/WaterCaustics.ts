@@ -96,6 +96,12 @@ export class WaterCaustics {
         uTime: { value: 0 },
         uProjectDepth: { value: options.projectDepth ?? 24 },
         uEta: { value: 1.0 / 1.333 },
+        // oceanWaveDeclarations also emits the shared displacement helper.
+        // Keep its controls declared here even though this projection uses
+        // the fixed full-spectrum caustic path below.
+        uWaveAmp: { value: 1.0 },
+        uWaveChop: { value: 1.0 },
+        uWaveSpeed: { value: 1.0 },
         uSunDirection: { value: new THREE.Vector3(0.35, 0.9, 0.2).normalize() },
       },
       vertexShader: `
@@ -106,6 +112,9 @@ export class WaterCaustics {
         uniform float uTime;
         uniform float uProjectDepth;
         uniform float uEta;
+        uniform float uWaveAmp;
+        uniform float uWaveChop;
+        uniform float uWaveSpeed;
         uniform vec3 uSunDirection;
         ${waveDeclarations}
 

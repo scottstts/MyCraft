@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 import { AerialPerspectivePass } from '../src/engine/render/postprocessing/passes/AerialPerspectivePass';
 import { UnderwaterPass } from '../src/engine/render/postprocessing/passes/UnderwaterPass';
+import { WaterCaustics } from '../src/engine/render/water/WaterCaustics';
 import { WaterSurfaceMaterial } from '../src/engine/render/water/WaterSurfaceMaterial';
 
 describe('water compositing ownership', () => {
@@ -51,5 +52,21 @@ describe('water compositing ownership', () => {
     expect(fragmentShader).toContain('gl_FragColor = source');
 
     pass.dispose();
+  });
+
+  it('declares the shared wave controls in the caustic projection vertex shader', () => {
+    const renderer = {
+      capabilities: { isWebGL2: false },
+      extensions: { has: () => false },
+    } as unknown as THREE.WebGLRenderer;
+    const caustics = new WaterCaustics(renderer, { resolution: 128 });
+    const material = (caustics as unknown as { material: THREE.ShaderMaterial }).material;
+
+    expect(material.vertexShader).toContain('uniform float uWaveAmp');
+    expect(material.vertexShader).toContain('uniform float uWaveChop');
+    expect(material.vertexShader).toContain('uniform float uWaveSpeed');
+    expect(material.vertexShader).toContain('oceanWaveDisplacement');
+
+    caustics.dispose();
   });
 });
