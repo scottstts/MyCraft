@@ -442,6 +442,56 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           return clip.xy / max(clip.w, 0.0001) * 0.5 + 0.5;
         }
 
+        // Validate one candidate along the screen-space refraction segment.
+        // The candidate direction changes with the UV backtrack, so the
+        // receiver is checked against the matching ray rather than the full
+        // refraction ray. This lets silhouettes reduce distortion locally
+        // without ever accepting an above-water foreground sample.
+        float refractedReceiverValidity(
+          vec2 uv,
+          float surfaceDepth,
+          vec3 candidateDirection,
+          out float rawDepth,
+          out vec3 worldPosition
+        ) {
+          float insideUv = step(0.002, uv.x) * step(0.002, uv.y) *
+            step(uv.x, 0.998) * step(uv.y, 0.998);
+          vec2 safeUv = clamp(uv, vec2(0.002), vec2(0.998));
+          rawDepth = texture2D(tSceneDepth, safeUv).r;
+          float finiteReceiver = 1.0 - step(0.999999, rawDepth);
+          float backgroundDepth = decodeDepth(rawDepth);
+          float depthSeparation = backgroundDepth - surfaceDepth;
+          float depthTransition = clamp(fwidth(depthSeparation) * 1.5, 0.025, 0.35);
+          float depthValidity = smoothstep(
+            0.025 - depthTransition,
+            0.10 + depthTransition,
+            depthSeparation
+          );
+
+          worldPosition = reconstructWorldPosition(safeUv, rawDepth);
+          float interfaceSeparation = worldPosition.y - vWorld.y;
+          float interfaceTransition = clamp(fwidth(interfaceSeparation) * 1.5, 0.06, 0.30);
+          float belowInterfaceValidity = 1.0 - smoothstep(
+            0.10 - interfaceTransition,
+            0.32 + interfaceTransition,
+            interfaceSeparation
+          );
+
+          vec3 candidateOffset = worldPosition - vWorld;
+          float rayAdvance = dot(candidateOffset, candidateDirection);
+          float rayMiss = length(
+            candidateOffset - candidateDirection * max(rayAdvance, 0.0)
+          );
+          float worldPerPixel = 2.0 * max(rayAdvance, 0.0) /
+            max(abs(uProjectionMatrix[1][1]) * uResolution.y, 1.0);
+          float rayCone = max(0.65, worldPerPixel * 2.5);
+          float rayConsistency = step(0.0, rayAdvance) *
+            (1.0 - smoothstep(rayCone, rayCone * 3.0, rayMiss));
+
+          return insideUv * finiteReceiver * depthValidity *
+            belowInterfaceValidity * rayConsistency;
+        }
+
         float ggxDistribution(float noH, float alpha) {
           float alpha2 = alpha * alpha;
           float denominator = noH * noH * (alpha2 - 1.0) + 1.0;
@@ -493,16 +543,51 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           return vec3(fresnel, canTransmit, cosTransmitted);
         }
 
+        // GLSL refract() returns a zero vector outside the transmissive cone.
+        // Evaluate the limiting critical-angle direction as well so the
+        // Snell-window radiance remains numerically continuous while physical
+        // windowCoverage and Fresnel reduce its energy to zero in TIR.
+        vec3 criticalSafeRefract(
+          vec3 incidentDirection,
+          vec3 orientedNormal,
+          float etaRatio
+        ) {
+          float incidentCos = clamp(
+            -dot(orientedNormal, incidentDirection),
+            0.0,
+            1.0
+          );
+          vec3 incidentTangent = incidentDirection +
+            orientedNormal * incidentCos;
+          float incidentSin = length(incidentTangent);
+          vec3 tangentDirection = incidentTangent /
+            max(incidentSin, 0.0001);
+          float transmittedSin = min(etaRatio * incidentSin, 0.9999);
+          float safeTransmittedCos = sqrt(max(
+            1.0 - transmittedSin * transmittedSin,
+            0.0
+          ));
+          return normalize(
+            tangentDirection * transmittedSin -
+            orientedNormal * safeTransmittedCos
+          );
+        }
+
         void main() {
           float crest = 0.0;
           float jacobian = 1.0;
           vec3 normal = uOceanMode ? waveNormal(vOceanXZ, uTime, crest, jacobian) : normalize(vNormalVary);
-          if (uCameraUnderwater && normal.y > 0.0) normal = -normal;
-          if (!uCameraUnderwater && normal.y < 0.0) normal = -normal;
+          // The ocean grid is consistently wound upward. Classify its optical
+          // side from the face actually being shaded, not a camera-height
+          // boolean whose threshold can change as a third-person orbit camera
+          // pitches. Legacy block-water faces retain the explicit medium flag.
+          bool underwaterView = uOceanMode ? !gl_FrontFacing : uCameraUnderwater;
+          if (underwaterView && normal.y > 0.0) normal = -normal;
+          if (!underwaterView && normal.y < 0.0) normal = -normal;
           vec3 viewDirection = normalize(cameraPosition - vWorld);
-          float eta = uCameraUnderwater ? (1.0 / uEtaAirWater) : uEtaAirWater;
-          float etaIncident = uCameraUnderwater ? (1.0 / uEtaAirWater) : 1.0;
-          float etaTransmitted = uCameraUnderwater ? 1.0 : (1.0 / uEtaAirWater);
+          float eta = underwaterView ? (1.0 / uEtaAirWater) : uEtaAirWater;
+          float etaIncident = underwaterView ? (1.0 / uEtaAirWater) : 1.0;
+          float etaTransmitted = underwaterView ? 1.0 : (1.0 / uEtaAirWater);
           float cosIncident = clamp(abs(dot(normal, viewDirection)), 0.0, 1.0);
           float windowCoverage = 0.0;
           float transmittedCos = 0.0;
@@ -523,10 +608,9 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             geometricCoverage,
             geometricTransmittedCos
           );
-          if (!uCameraUnderwater) fresnel = max(fresnel, geometricFresnelResult.x);
+          if (!underwaterView) fresnel = max(fresnel, geometricFresnelResult.x);
           vec3 incident = -viewDirection;
           vec3 refractedDirection = refract(incident, normal, eta);
-          bool tir = windowCoverage < 0.5 || length(refractedDirection) < 0.0001;
 
           vec3 deep = uColor;
           vec3 transmitted = deep;
@@ -537,7 +621,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float screenProjectionCoverage = 1.0;
           float sceneHitValidity = 0.0;
 
-          if (!uCameraUnderwater) {
+          if (!underwaterView) {
             reflected = skyRadiance(reflect(incident, normal));
             vec2 screenUv = gl_FragCoord.xy / max(uResolution, vec2(1.0));
             float surfaceDepth = vViewDepth;
@@ -568,48 +652,56 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
               step(projectedUv.x, 0.998) * step(projectedUv.y, 0.998);
             screenProjectionCoverage = projectedValid * insideUv;
             vec2 refractedUv = clamp(projectedUv, vec2(0.002), vec2(0.998));
-            float refractedRawDepth = uHasSceneDepth == 1 ? texture2D(tSceneDepth, refractedUv).r : 1.0;
-            float backgroundDepth = decodeDepth(refractedRawDepth);
-            float depthSeparation = backgroundDepth - surfaceDepth;
-            float depthTransition = clamp(fwidth(depthSeparation) * 1.5, 0.025, 0.35);
-            float depthForegroundReject = 1.0 - smoothstep(
-              0.025 - depthTransition,
-              0.10 + depthTransition,
-              depthSeparation
-            );
-            foregroundReject = max(1.0 - screenProjectionCoverage, depthForegroundReject);
             vec3 backgroundWorld = vWorld + opticalDirection * estimatedTravel;
-            if (uHasSceneDepth == 1 && refractedRawDepth < 0.999999) {
-              vec3 candidateWorld = reconstructWorldPosition(refractedUv, refractedRawDepth);
-              // A transmitted water ray cannot reveal geometry above the
-              // interface. Reject those screen-space crossings so torsos and
-              // shoreline blocks do not smear down into the submerged image.
-              float interfaceSeparation = candidateWorld.y - vWorld.y;
-              float interfaceTransition = clamp(fwidth(interfaceSeparation) * 1.5, 0.06, 0.30);
-              float aboveInterfaceReject = smoothstep(
-                0.10 - interfaceTransition,
-                0.32 + interfaceTransition,
-                interfaceSeparation
-              );
-              foregroundReject = max(foregroundReject, aboveInterfaceReject);
-              vec3 candidateOffset = candidateWorld - vWorld;
-              float rayAdvance = dot(candidateOffset, opticalDirection);
-              float rayMiss = length(candidateOffset - opticalDirection * max(rayAdvance, 0.0));
-              float worldPerPixel = 2.0 * max(rayAdvance, 0.0) /
-                max(abs(uProjectionMatrix[1][1]) * uResolution.y, 1.0);
-              float rayCone = max(0.65, worldPerPixel * 2.5);
-              float rayConsistency = step(0.0, rayAdvance) *
-                (1.0 - smoothstep(rayCone, rayCone * 3.0, rayMiss));
-              sceneHitValidity = screenProjectionCoverage *
-                (1.0 - foregroundReject) * rayConsistency;
-              backgroundWorld = candidateWorld;
-            }
-            // Keep the projected candidate independent from its validity.
-            // Validity gates transmission energy below; pre-blending this
-            // color toward deep water would apply the shoreline mask twice
-            // and leave a saturated contour at partial-coverage pixels.
             vec2 resolvedUv = refractedUv;
-            float resolvedRawDepth = uHasSceneDepth == 1 ? texture2D(tSceneDepth, resolvedUv).r : 1.0;
+            float resolvedRawDepth = 1.0;
+            if (uHasSceneDepth == 1) {
+              // Walk from the fully refracted projection back toward the
+              // incident pixel. The first valid receiver keeps the maximum
+              // safe distortion. A hard first-hit selection avoids turning a
+              // soft depth rejection into a bright sky-reflection contour.
+              resolvedUv = screenUv;
+              resolvedRawDepth = baseRawDepth;
+              for (int backtrackIndex = 0; backtrackIndex < 5; backtrackIndex++) {
+                float backtrack = 1.0 - float(backtrackIndex) * 0.25;
+                vec2 candidateUv = mix(screenUv, projectedUv, backtrack);
+                vec3 candidateDirection = normalize(mix(
+                  incident,
+                  opticalDirection,
+                  backtrack
+                ));
+                float candidateRawDepth = 1.0;
+                vec3 candidateWorld = vWorld + candidateDirection * estimatedTravel;
+                float candidateValidity = refractedReceiverValidity(
+                  candidateUv,
+                  surfaceDepth,
+                  candidateDirection,
+                  candidateRawDepth,
+                  candidateWorld
+                );
+                float acceptCandidate = (1.0 - sceneHitValidity) *
+                  step(0.5, candidateValidity);
+                resolvedUv = mix(
+                  resolvedUv,
+                  clamp(candidateUv, vec2(0.002), vec2(0.998)),
+                  acceptCandidate
+                );
+                resolvedRawDepth = mix(
+                  resolvedRawDepth,
+                  candidateRawDepth,
+                  acceptCandidate
+                );
+                backgroundWorld = mix(
+                  backgroundWorld,
+                  candidateWorld,
+                  acceptCandidate
+                );
+                sceneHitValidity = max(sceneHitValidity, acceptCandidate);
+                if (backtrackIndex == 0) foregroundReject = 1.0 - candidateValidity;
+              }
+            } else {
+              sceneHitValidity = screenProjectionCoverage;
+            }
             vec4 sceneSample = vec4(deep, 0.0);
             if (uHasSceneColor == 1) sceneSample = texture2D(tSceneColor, resolvedUv);
 
@@ -632,42 +724,39 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             scatterColor += uSunColor * uFogColor * forwardScatter * 0.08;
             transmitted = sceneRefraction * transmittance + scatterColor * (1.0 - transmittance);
           } else {
-            // Underwater Snell window: transmit the shared sky radiance only
-            // inside the water-to-air cone, and keep a bright upwelling body
-            // outside it so the critical rim reads as total internal
-            // reflection instead of a dark pasted band.
+            // Underwater Snell window: evaluate one continuous transmitted
+            // sky body on every underside fragment. Fresnel and the filtered
+            // critical-angle coverage below own the smooth transition to TIR;
+            // there is no second boolean material mode.
             float viewUpness = smoothstep(-0.55, 0.72, viewDirection.y);
             vec3 ambientDown = vec3(0.012, 0.035, 0.055);
             vec3 ambientUp = vec3(0.035, 0.120, 0.160);
             vec3 mediumAmbient = mix(ambientDown, ambientUp, viewUpness);
             float upwellingSun = pow(max(dot(normalize(reflect(incident, normal)), normalize(uSunDir)), 0.0), 6.0) * 0.06;
-            vec3 tirBody = mediumAmbient * (0.66 + 0.18 * max(dot(normal, viewDirection), 0.0));
-            tirBody += uColor * 0.28 + uSunColor * upwellingSun;
-            if (!tir) {
-              vec3 windowDirection = normalize(refractedDirection);
-              vec3 window = skyRadiance(windowDirection);
-              // Snell stretch broadens the transmitted sun lobe at grazing
-              // incidence.  Derivative filtering keeps the lobe stable while
-              // preserving a sharp disc at normal incidence.
-              float snellEta = etaIncident / max(etaTransmitted, 0.001);
-              float snellStretch = max(snellEta * cosIncident / max(transmittedCos, 0.04), 1.0);
-              float normalVariation = max(length(dFdx(normal)), length(dFdy(normal)));
-              float snellSpread = (snellStretch - 1.0) * normalVariation * 0.5;
-              float lobeExponent = 1.0 / max(1.0 / 700.0 + snellSpread * snellSpread, 0.0001);
-              float windowSun = max(dot(windowDirection, normalize(uSunDir)), 0.0);
-              float transmittedSun = pow(windowSun, lobeExponent) * lobeExponent * (24.0 / 700.0);
-              float transmittedHalo = pow(windowSun, 24.0) * 0.08;
-              window += uSunColor * (transmittedSun + transmittedHalo);
-              transmitted = window;
-            } else {
-              transmitted = tirBody;
-            }
-            reflected = tirBody;
+            vec3 underwaterReflection = mediumAmbient *
+              (0.66 + 0.18 * max(dot(normal, viewDirection), 0.0));
+            underwaterReflection += uColor * 0.28 + uSunColor * upwellingSun;
+            vec3 windowDirection = criticalSafeRefract(incident, normal, eta);
+            vec3 window = skyRadiance(windowDirection);
+            // Snell stretch broadens the transmitted sun lobe at grazing
+            // incidence. Derivative filtering keeps the lobe stable while
+            // preserving a sharp disc at normal incidence.
+            float snellEta = etaIncident / max(etaTransmitted, 0.001);
+            float snellStretch = max(snellEta * cosIncident / max(transmittedCos, 0.04), 1.0);
+            float normalVariation = max(length(dFdx(normal)), length(dFdy(normal)));
+            float snellSpread = (snellStretch - 1.0) * normalVariation * 0.5;
+            float lobeExponent = 1.0 / max(1.0 / 700.0 + snellSpread * snellSpread, 0.0001);
+            float windowSun = max(dot(windowDirection, normalize(uSunDir)), 0.0);
+            float transmittedSun = pow(windowSun, lobeExponent) * lobeExponent * (24.0 / 700.0);
+            float transmittedHalo = pow(windowSun, 24.0) * 0.08;
+            window += uSunColor * (transmittedSun + transmittedHalo);
+            transmitted = window;
+            reflected = underwaterReflection;
             pathLength = 0.0;
           }
 
           float bodyFog = 1.0 - exp(-max(pathLength, 0.0) / max(uWaterClarity, 1.0));
-          if (uCameraUnderwater) transmitted = mix(transmitted, uFogColor, bodyFog * uUnderwaterFogStrength);
+          if (underwaterView) transmitted = mix(transmitted, uFogColor, bodyFog * uUnderwaterFogStrength);
           // Screen-space refraction becomes ill-conditioned as the projected
           // water footprint approaches the horizon. Fade that bounded
           // approximation out over the reflection-dominated interval; exact
@@ -678,14 +767,13 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             0.140 + grazingWidth,
             geometricCosIncident
           );
-          // A rejected screen-space receiver has no trustworthy transmitted
-          // radiance. Reallocate that unresolved share to reflection instead
-          // of exposing the saturated deep-water fallback as a cyan contour
-          // around terrain intersections.
+          // Backtracking normally resolves silhouette crossings to a safe
+          // lower-distortion receiver. Only a genuinely unresolved ray gives
+          // its transmission share back to reflection.
           float refractionResolveCoverage = uHasSceneDepth == 1
             ? sceneHitValidity
             : screenProjectionCoverage;
-          float interfaceTransmission = uCameraUnderwater
+          float interfaceTransmission = underwaterView
             ? windowCoverage * (1.0 - fresnel)
             : (1.0 - fresnel) * grazingTransmissionCoverage * refractionResolveCoverage;
           float reflectionWeight = 1.0 - interfaceTransmission;
@@ -714,7 +802,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float sunLobe = mix(coreLobe, skirtLobe, 0.42);
           float specular = sunLobe * sunFresnel * noL /
             max(4.0 * noV * noL, 0.001);
-          if (!uCameraUnderwater) color += uSunColor * specular * uSpecular;
+          if (!underwaterView) color += uSunColor * specular * uSpecular;
 
           float foamFold = uOceanMode ? smoothstep(0.92, 0.20, jacobian) : 0.0;
           float foamNoiseLarge = noise(vWorld.xz * 0.115 + uTime * vec2(uFoamDrift * 0.24, -uFoamDrift * 0.16));
@@ -738,15 +826,19 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float patchFine = noise(foamDomain * 0.88 + uTime * vec2(-0.071, 0.048));
           float patchValue = patchLarge * 0.52 + patchMedium * 0.32 + patchFine * 0.16;
           float patchMask = smoothstep(0.47, 0.70, patchValue);
-          // A noisy moving front makes each patch taper into the water rather
-          // than forming a continuous contour line along the entire coast.
+          // A noisy moving front makes each patch taper into the water. Foam
+          // still requires a resolved wave arrival below; the shoreline mask
+          // alone must never become a permanent contour around the water.
           float frontOffset = (patchMedium - 0.5) * 1.35 + (patchFine - 0.5) * 0.55;
           float foamFront = 1.0 - smoothstep(-0.28, 1.35, waterColumn + frontOffset);
           float wavePulse = smoothstep(0.08, 0.46, max(vWorld.y - uWaterLevel, 0.0) + crest * 0.26 + foamFold * 0.30);
-          float shoreFoam = shorelineBand * patchMask * (0.42 + 0.58 * max(foamFront, wavePulse * 0.72));
-          // Keep a small broken swash trace at the waterline even during a
-          // trough; it is still terrain-gated and cannot appear offshore.
-          shoreFoam += shorelineBand * (1.0 - patchMask) * foamFront * 0.10;
+          float swashArrival = smoothstep(
+            0.10,
+            0.62,
+            wavePulse + foamFold * 0.28 + crest * 0.18
+          );
+          float shoreFoam = shorelineBand * patchMask * swashArrival *
+            (0.24 + 0.76 * max(foamFront, wavePulse));
           shoreFoam = clamp(shoreFoam, 0.0, 1.0);
           float foamPotential = max(max(foamFold, crest * 0.72), shoreFoam);
           float foam = smoothstep(uFoamThreshold * 0.72, 0.92, foamPotential * mix(0.66, 1.38, foamBreakup * uFoamNoise));
@@ -758,7 +850,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           if (uDebugMode == 1) color = vec3(clamp(vHeight - uWaterLevel + 0.5, 0.0, 1.0));
           else if (uDebugMode == 2) color = normal * 0.5 + 0.5;
           else if (uDebugMode == 3) color = vec3(fresnel);
-          else if (uDebugMode == 4) color = vec3(foregroundReject, tir ? 1.0 : 0.0, clamp(pathLength / 16.0, 0.0, 1.0));
+          else if (uDebugMode == 4) color = vec3(foregroundReject, 1.0 - windowCoverage, clamp(pathLength / 16.0, 0.0, 1.0));
           else if (uDebugMode == 5) color = exp(-uAbsorption * max(pathLength, 0.0));
           else if (uDebugMode == 6) color = vec3(foam, crest, 1.0 - normal.y);
           else if (uDebugMode == 7) color = vec3(screenProjectionCoverage, sceneHitValidity, grazingTransmissionCoverage);
