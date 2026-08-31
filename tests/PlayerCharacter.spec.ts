@@ -4,6 +4,7 @@ import { PLAYER } from '../src/config/constants';
 import PlayerCharacter from '../src/engine/render/PlayerCharacter';
 import type { InputSystem } from '../src/engine/systems/Input';
 import type { PlayerController, PlayerMovementState } from '../src/engine/systems/PlayerController';
+import type { World } from '../src/engine/world/World';
 
 function installCanvasStub(): void {
   vi.stubGlobal('document', {
@@ -108,6 +109,37 @@ describe('player character feet alignment', () => {
     visualRoot.updateMatrixWorld(true);
     const visualBounds = new THREE.Box3().setFromObject(visualRoot, true);
     expect(visualBounds.min.y).toBeGreaterThanOrEqual(feetY - 1e-5);
+
+    player.dispose();
+  });
+
+  it('keeps the third-person orbit outside a wall when the swim head leads the root', () => {
+    installCanvasStub();
+
+    const player = new PlayerCharacter();
+    const playerRoot = new THREE.Group();
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(0, 22, -2);
+    const input = {
+      getOrientation: () => ({ yaw: 0, pitch: 0 }),
+    } as unknown as InputSystem;
+    const world = {
+      isBlockSolid: (_x: number, y: number, z: number) => y === 21 && z === -2,
+    } as unknown as World;
+    const controller = {
+      getFeetPosition: (target = new THREE.Vector3()) => target.set(0, 21, 0),
+      getEyePosition: (target = new THREE.Vector3()) => target.set(0, 22.7, 0),
+      getMovementState: () => createSwimmingState(),
+      getWorld: () => world,
+    } as unknown as PlayerController;
+
+    player.init(playerRoot, camera, input);
+    player.setController(controller);
+    player.update(1 / 60);
+
+    // The old head-pivot orbit began inside the wall. The collision-root
+    // pivot must pull the camera back before it can enter the voxel.
+    expect(camera.position.z).toBeGreaterThan(-0.9);
 
     player.dispose();
   });

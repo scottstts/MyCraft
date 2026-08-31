@@ -76,4 +76,30 @@ describe('player controller feet collision', () => {
     expect(controller.isUnderwater()).toBe(true);
     expect(controller.getFeetPosition().y).toBeCloseTo(seabedTop, 4);
   });
+
+  it('keeps the leading head clear of a side wall while swimming', () => {
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(12.5, 35, 12.5);
+    const input = {
+      getMoveInput: () => ({ x: 0, z: 1 }),
+      getOrientation: () => ({ yaw: 0, pitch: 0 }),
+      isSprinting: () => false,
+      consumeJumpRequested: () => false,
+      isJumpHeld: () => false,
+    } as unknown as InputSystem;
+    const world = {
+      getBlock: (_x: number, y: number) => y <= 42 ? 5 : 0,
+      isAirFlooded: () => false,
+      // The wall is ahead of the swimmer (movement is toward -Z). Its vertical
+      // column intersects the horizontal body/head pose but not the upright
+      // collider at the initial position.
+      isBlockSolid: (_x: number, y: number, z: number) => y >= 30 && y <= 42 && z === 8,
+    } as unknown as World;
+    const controller = new PlayerController(camera, world, input);
+
+    for (let frame = 0; frame < 120; frame += 1) controller.update(1 / 60);
+
+    expect(controller.isUnderwater()).toBe(true);
+    expect(controller.getEyePosition().z).toBeGreaterThan(9.74);
+  });
 });

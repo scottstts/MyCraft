@@ -12,6 +12,8 @@ The camera uses the `YXZ` FPS rotation order. `createPlayerCamera()` is the cano
 
 The horizontal swim pose is lifted relative to the rig root so its lowest rendered geometry stays on the controller's feet plane when the AABB contacts a solid seabed. Third-person camera collision uses a conservative swept sphere against radius-expanded solid voxel boxes; unlike a finite ray bundle, this also catches diagonal corners on stepped underwater terrain.
 
+While moving underwater, the collision footprint projects the horizontal swim pose (including the forward-leading head) onto world X/Z. Axis resolution snaps against the nearest actually-solid voxel face, so a wide swim footprint cannot be placed inside a seabed step or side wall.
+
 The frame loop updates gameplay only while the UI says the session is in-game and not paused. Rendering continues while paused so the scene, sky, water, and pause menu remain visually stable.
 
 ## Selection, mining, and placing

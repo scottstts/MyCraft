@@ -661,7 +661,22 @@ export class PlayerCharacter {
       return;
     }
 
-    this.scratchTarget.y += 0.30;
+    // Do not use the animated head pivot as the third-person orbit origin.
+    // In the horizontal swim pose that pivot is intentionally forward of the
+    // physics root; using it as a camera anchor lets the orbit begin inside a
+    // seabed wall before the sweep has a valid clear segment. Keep the camera
+    // centered on the collision pose instead.
+    if (this.controller) {
+      const state = this.controller.getMovementState();
+      if (state.isUnderwater) {
+        this.controller.getFeetPosition(this.scratchTarget);
+        this.scratchTarget.y += CFG.swimBodyLift + 0.45;
+      } else {
+        this.controller.getEyePosition(this.scratchTarget);
+      }
+    } else {
+      this.scratchTarget.y += 0.30;
+    }
     const camDistance = CFG.cameraDistance;
     const cosPitch = Math.cos(pitch);
     // Start the orbit on the character's front side. The player heading is

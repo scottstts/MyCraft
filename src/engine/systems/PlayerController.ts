@@ -56,6 +56,12 @@ export class PlayerController {
   private readonly width: number = PLAYER.width;
   private readonly height: number = PLAYER.height;
   private readonly halfWidth: number = this.width / 2;
+  // The authored swim animation rotates the body around its feet. In the
+  // moving pose the head leads the feet by roughly the character height, so
+  // the horizontal collider must expand along the movement heading to keep
+  // the rendered head from entering a voxel wall or seabed step.
+  private readonly swimForwardHalfExtent: number = 1.75;
+  private readonly swimLateralHalfExtent: number = 0.45;
   private readonly eyeHeight: number = PLAYER.eyeHeight;
   private readonly waterId: number = getBlockIdByName('water') ?? 5;
 
@@ -224,10 +230,12 @@ export class PlayerController {
     const pos = this.position;
     const minY = this.getBaseY();
     const maxY = minY + this.height;
-    const minX = pos.x - this.halfWidth;
-    const maxX = pos.x + this.halfWidth;
-    const minZ = pos.z - this.halfWidth;
-    const maxZ = pos.z + this.halfWidth;
+    const halfX = this.getCollisionHalfExtentX();
+    const halfZ = this.getCollisionHalfExtentZ();
+    const minX = pos.x - halfX;
+    const maxX = pos.x + halfX;
+    const minZ = pos.z - halfZ;
+    const maxZ = pos.z + halfZ;
     
     if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) {
       // Player is stuck inside blocks, try to push them up
@@ -410,10 +418,12 @@ export class PlayerController {
     const pos = this.position;
     const minY = this.getBaseY();
     const maxY = minY + this.height;
-    const minX = pos.x - this.halfWidth;
-    const maxX = pos.x + this.halfWidth;
-    const minZ = pos.z - this.halfWidth;
-    const maxZ = pos.z + this.halfWidth;
+    const halfX = this.getCollisionHalfExtentX();
+    const halfZ = this.getCollisionHalfExtentZ();
+    const minX = pos.x - halfX;
+    const maxX = pos.x + halfX;
+    const minZ = pos.z - halfZ;
+    const maxZ = pos.z + halfZ;
     if (this.aabbIntersectsSolid(minX, minY, minZ, maxX, maxY, maxZ)) {
       let safeY = Math.floor(maxY) + 1;
       let attempts = 0;
@@ -446,16 +456,19 @@ export class PlayerController {
     const nextZ = axis === 'z' ? pos.z + delta : pos.z;
 
     // Compute AABB for proposed position
-    const minX = nextX - this.halfWidth;
-    const maxX = nextX + this.halfWidth;
+    const halfX = this.getCollisionHalfExtentX();
+    const halfZ = this.getCollisionHalfExtentZ();
+    const halfAxis = axis === 'x' ? halfX : halfZ;
+    const minX = nextX - halfX;
+    const maxX = nextX + halfX;
     const minY = this.getBaseY(nextY);
     const maxY = minY + this.height;
-    const minZ = nextZ - this.halfWidth;
-    const maxZ = nextZ + this.halfWidth;
+    const minZ = nextZ - halfZ;
+    const maxZ = nextZ + halfZ;
 
     // Enforce world bounds (X/Z only) by clamping proposed center before collision test
     if (this.bounds && (axis === 'x' || axis === 'z')) {
-      const hw = this.halfWidth + PlayerController.EPS;
+      const hw = halfAxis + PlayerController.EPS;
       if (axis === 'x') {
         const min = this.bounds.minX + hw;
         const max = this.bounds.maxX - hw;
@@ -489,49 +502,97 @@ export class PlayerController {
 
     // Collision: snap to boundary
     const sign = Math.sign(delta);
+    const collisionBoundary = this.findCollisionBoundary(
+      axis,
+      sign,
+      minX,
+      minY,
+      minZ,
+      maxX,
+      maxY,
+      maxZ,
+    );
+    if (collisionBoundary === null) return true;
     switch (axis) {
       case 'x': {
         if (sign > 0) {
-          // Moving +X, collide against the block whose minX we hit
-          const probeMaxX = Math.floor(maxX);
-          const clampX = probeMaxX - this.halfWidth - PlayerController.EPS;
-          pos.x = clampX;
+          pos.x = collisionBoundary - halfX - PlayerController.EPS;
         } else {
-          // Moving -X, collide against the block's maxX (blockX+1)
-          const probeMinX = Math.floor(minX);
-          const clampX = probeMinX + 1 + this.halfWidth + PlayerController.EPS;
-          pos.x = clampX;
+          pos.x = collisionBoundary + halfX + PlayerController.EPS;
         }
         return true;
       }
       case 'z': {
         if (sign > 0) {
-          const probeMaxZ = Math.floor(maxZ);
-          const clampZ = probeMaxZ - this.halfWidth - PlayerController.EPS;
-          pos.z = clampZ;
+          pos.z = collisionBoundary - halfZ - PlayerController.EPS;
         } else {
-          const probeMinZ = Math.floor(minZ);
-          const clampZ = probeMinZ + 1 + this.halfWidth + PlayerController.EPS;
-          pos.z = clampZ;
+          pos.z = collisionBoundary + halfZ + PlayerController.EPS;
         }
         return true;
       }
       case 'y': {
         if (sign > 0) {
           // Moving up: clamp top to block minY
-          const probeMaxY = Math.floor(maxY);
-          const clampYTop = probeMaxY - this.height - PlayerController.EPS;
-          pos.y = clampYTop + this.eyeHeight; // convert base->camera
+          pos.y = collisionBoundary - this.height - PlayerController.EPS + this.eyeHeight;
         } else {
           // Moving down: clamp bottom to block maxY (blockY+1)
-          const probeMinY = Math.floor(minY);
-          const clampYBase = probeMinY + 1 + PlayerController.EPS;
-          // camera.y = base + eyeHeight
-          pos.y = clampYBase + this.eyeHeight;
+          pos.y = collisionBoundary + PlayerController.EPS + this.eyeHeight;
         }
         return true;
       }
     }
+  }
+
+  /** Find the nearest solid voxel face along the axis being resolved. */
+  private findCollisionBoundary(
+    axis: 'x' | 'y' | 'z',
+    sign: number,
+    minX: number,
+    minY: number,
+    minZ: number,
+    maxX: number,
+    maxY: number,
+    maxZ: number,
+  ): number | null {
+    let boundary = sign > 0 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+    const ix0 = Math.floor(minX);
+    const iy0 = Math.floor(minY);
+    const iz0 = Math.floor(minZ);
+    const ix1 = Math.floor(maxX);
+    const iy1 = Math.floor(maxY);
+    const iz1 = Math.floor(maxZ);
+
+    for (let y = iy0; y <= iy1; y += 1) {
+      for (let z = iz0; z <= iz1; z += 1) {
+        for (let x = ix0; x <= ix1; x += 1) {
+          if (!this.world.isBlockSolid(x, y, z)) continue;
+          const face = axis === 'x' ? (sign > 0 ? x : x + 1)
+            : axis === 'y' ? (sign > 0 ? y : y + 1)
+              : (sign > 0 ? z : z + 1);
+          boundary = sign > 0 ? Math.min(boundary, face) : Math.max(boundary, face);
+        }
+      }
+    }
+
+    return Number.isFinite(boundary) ? boundary : null;
+  }
+
+  /**
+   * Return the horizontal half-extents of the currently authored player pose.
+   * Land and idle-swim poses use the normal player width. While moving under
+   * water, the body is rotated onto its side and the head leads the root, so
+   * project a conservative long/thin box onto world X/Z using movement yaw.
+   */
+  private getCollisionHalfExtentX(): number {
+    if (!this.underwater || !this.moving) return this.halfWidth;
+    return this.swimForwardHalfExtent * Math.abs(this.moveDirection.x)
+      + this.swimLateralHalfExtent * Math.abs(this.moveDirection.z);
+  }
+
+  private getCollisionHalfExtentZ(): number {
+    if (!this.underwater || !this.moving) return this.halfWidth;
+    return this.swimForwardHalfExtent * Math.abs(this.moveDirection.z)
+      + this.swimLateralHalfExtent * Math.abs(this.moveDirection.x);
   }
 
   /** Camera base Y helper: returns y of feet (AABB minY) */
@@ -662,13 +723,14 @@ export class PlayerController {
   /** Check if there is solid ground directly below player's footprint */
   private hasSolidGroundBelow(offset: number = 0.01): boolean {
     const pos = this.position;
-    const half = this.halfWidth;
+    const halfX = this.getCollisionHalfExtentX();
+    const halfZ = this.getCollisionHalfExtentZ();
     const baseY = this.getBaseY(pos.y) - offset;
     const yBlock = Math.floor(baseY);
-    const minX = Math.floor(pos.x - half);
-    const maxX = Math.floor(pos.x + half);
-    const minZ = Math.floor(pos.z - half);
-    const maxZ = Math.floor(pos.z + half);
+    const minX = Math.floor(pos.x - halfX);
+    const maxX = Math.floor(pos.x + halfX);
+    const minZ = Math.floor(pos.z - halfZ);
+    const maxZ = Math.floor(pos.z + halfZ);
     for (let z = minZ; z <= maxZ; z++) {
       for (let x = minX; x <= maxX; x++) {
         if (this.world.isBlockSolid(x, yBlock, z)) return true;
@@ -690,10 +752,10 @@ export class PlayerController {
     const nx = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.x + forwardDir.x * preNudge : pos.x;
     const nz = forwardDir && forwardDir.lengthSq() > 1e-6 ? pos.z + forwardDir.z * preNudge : pos.z;
     const eps = PlayerController.EPS * 4;
-    const minX = nx - this.halfWidth + eps;
-    const maxX = nx + this.halfWidth - eps;
-    const minZ = nz - this.halfWidth + eps;
-    const maxZ = nz + this.halfWidth - eps;
+    const minX = nx - this.getCollisionHalfExtentX() + eps;
+    const maxX = nx + this.getCollisionHalfExtentX() - eps;
+    const minZ = nz - this.getCollisionHalfExtentZ() + eps;
+    const maxZ = nz + this.getCollisionHalfExtentZ() - eps;
     const minY = this.getBaseY(nextY) + eps;
     const maxY = minY + this.height - eps;
     // Require clearance at the new height
@@ -730,10 +792,10 @@ export class PlayerController {
     const nx = hasForward ? pos.x + (forwardDir as THREE.Vector3).x * preNudge : pos.x;
     const nz = hasForward ? pos.z + (forwardDir as THREE.Vector3).z * preNudge : pos.z;
     const eps = PlayerController.EPS * 4;
-    const minX = nx - this.halfWidth + eps;
-    const maxX = nx + this.halfWidth - eps;
-    const minZ = nz - this.halfWidth + eps;
-    const maxZ = nz + this.halfWidth - eps;
+    const minX = nx - this.getCollisionHalfExtentX() + eps;
+    const maxX = nx + this.getCollisionHalfExtentX() - eps;
+    const minZ = nz - this.getCollisionHalfExtentZ() + eps;
+    const maxZ = nz + this.getCollisionHalfExtentZ() - eps;
     const minY = this.getBaseY(nextY) + eps;
     const maxY = minY + this.height - eps;
     // Clearance at target height must be empty of solids
@@ -765,10 +827,10 @@ export class PlayerController {
     for (const dir of aheadDirs) {
       const ax = nx + dir.x * aheadDist;
       const az = nz + dir.z * aheadDist;
-      const ax0 = Math.floor(ax - this.halfWidth + eps);
-      const ax1 = Math.floor(ax + this.halfWidth - eps);
-      const az0 = Math.floor(az - this.halfWidth + eps);
-      const az1 = Math.floor(az + this.halfWidth - eps);
+      const ax0 = Math.floor(ax - this.getCollisionHalfExtentX() + eps);
+      const ax1 = Math.floor(ax + this.getCollisionHalfExtentX() - eps);
+      const az0 = Math.floor(az - this.getCollisionHalfExtentZ() + eps);
+      const az1 = Math.floor(az + this.getCollisionHalfExtentZ() - eps);
       for (let y = supportY; y >= supportY - 1; y--) {
         for (let z = az0; z <= az1; z++) {
           for (let x = ax0; x <= ax1; x++) {
