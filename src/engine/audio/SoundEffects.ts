@@ -1,3 +1,4 @@
+import type * as THREE from 'three'
 import { WATER_LEVEL } from '../world/TerrainGenerator'
 import { getBlockIdByName } from '../world/blocks/BlockRegistry'
 import type { World } from '../world/World'
@@ -9,6 +10,26 @@ import waterStepUrl from '../../assets/sounds/sound_effects/water_step.mp3'
 import underwaterUrl from '../../assets/sounds/sound_effects/underwater.mp3'
 import blockUrl from '../../assets/sounds/sound_effects/block.mp3'
 import oceanUrl from '../../assets/sounds/sound_effects/ocean.mp3'
+
+export const CAMERA_AUDIO_SUBMERSION_THRESHOLD = 0.5
+export const CAMERA_AUDIO_SAMPLE_HEIGHT = 0.4
+
+/**
+ * Treat a small vertical camera envelope as the audio listener volume. At the
+ * 50% threshold, the waterline passes through the envelope midpoint, so the
+ * switch happens at the active camera's water surface rather than at the
+ * player's physics head position.
+ */
+export function getCameraWaterSubmersion(
+  cameraY: number,
+  surfaceY: number = WATER_LEVEL + 1.0,
+): number {
+  const upperEdge = surfaceY + CAMERA_AUDIO_SAMPLE_HEIGHT / 2
+  return Math.max(
+    0,
+    Math.min(1, (upperEdge - cameraY) / CAMERA_AUDIO_SAMPLE_HEIGHT),
+  )
+}
 
 function makeLoopingAudio(src: string, volume: number): HTMLAudioElement {
   const a = new Audio(src)
@@ -77,6 +98,7 @@ export class SoundEffects {
   private world: World
   private input: InputSystem
   private player: PlayerController
+  private camera: THREE.PerspectiveCamera
 
   private lastX: number
   private lastY: number
@@ -96,10 +118,11 @@ export class SoundEffects {
   private oceanVolCurrent = 0 // smoothed volume
   private readonly waterId: number = getBlockIdByName('water') ?? 5
 
-  constructor(world: World, input: InputSystem, player: PlayerController) {
+  constructor(world: World, input: InputSystem, player: PlayerController, camera: THREE.PerspectiveCamera) {
     this.world = world
     this.input = input
     this.player = player
+    this.camera = camera
     const position = player.getEyePosition()
     this.lastX = position.x
     this.lastY = position.y
@@ -192,8 +215,10 @@ export class SoundEffects {
     // Determine if touching water surface blocks
     const touchingWater = this.isTouchingWaterSurface()
 
-    // Determine underwater: inside a water block OR inside flooded-air volume (head/ears only)
-    const isUnderWater = this.isEyesInWater() || this.isEyesInFloodedAir()
+    // The audio listener is the active gameplay camera. This intentionally
+    // differs from the player's physics swim state so third-person audio
+    // follows the orbit camera as well as first-person camera movement.
+    const isUnderWater = this.isCameraUnderwater()
 
     // Footstep loop when grounded and moving on solid, not touching water and not underwater
     const inputVec = this.input.getMoveInput?.() || { x: 0, z: 0 }
@@ -346,62 +371,9 @@ export class SoundEffects {
     return false
   }
 
-  // Eyes/head below water surface: underwater if there's unobstructed water above OR literal water at head,
-  // otherwise rely on flooded-air connectivity. This avoids triggering underwater in sealed tunnels under water.
-  private isEyesInWater(): boolean {
-    const eyeHeight = this.player.getEyeHeight()
-    const position = this.player.getEyePosition()
-    const headY = position.y + (this.player.getHeight() - eyeHeight)
-    // Above or at the surface → not underwater for audio
-    if (headY >= WATER_LEVEL + 1.0) return false
-
-    const y = Math.floor(headY)
-    const half = this.player.getWidth() / 2
-    const r = Math.min(0.18, half * 0.9)
-    const cx = position.x
-    const cz = position.z
-    const samples: Array<[number, number]> = [[0,0],[ r,0],[-r,0],[0,r],[0,-r]]
-
-    for (const [ox, oz] of samples) {
-      const sx = Math.floor(cx + ox)
-      const sz = Math.floor(cz + oz)
-      // Primary: if this column has water at WATER_LEVEL and there is no solid between head and surface,
-      // treat as underwater. This prevents false positives in sealed tunnels.
-      if (this.world.getBlock(sx, WATER_LEVEL, sz) === this.waterId) {
-        let occluded = false
-        for (let yy = Math.floor(headY); yy < WATER_LEVEL; yy++) {
-          if (this.world.isBlockSolid(sx, yy, sz)) { occluded = true; break }
-        }
-        if (!occluded) return true
-      }
-      // Fallback: literal water block at head (e.g., enclosed water placed by player)
-      if (this.world.getBlock(sx, y, sz) === this.waterId) return true;
-    }
-    return false
+  private isCameraUnderwater(): boolean {
+    return getCameraWaterSubmersion(this.camera.position.y) >= CAMERA_AUDIO_SUBMERSION_THRESHOLD
   }
-
-  // Eyes/head inside flooded air check (underwater volume) for audio
-  private isEyesInFloodedAir(): boolean {
-    const eyeHeight = this.player.getEyeHeight()
-    const position = this.player.getEyePosition()
-    const headY = position.y + (this.player.getHeight() - eyeHeight)
-    // If head is at or above water top, not underwater
-    if (headY >= WATER_LEVEL + 1.0) return false
-    const y = Math.floor(headY)
-    const half = this.player.getWidth() / 2
-    const r = Math.min(0.18, half * 0.9)
-    const cx = position.x
-    const cz = position.z
-    const samples: Array<[number, number]> = [[0,0],[ r,0],[-r,0],[0,r],[0,-r]]
-    for (const [ox, oz] of samples) {
-      const x = Math.floor(cx + ox)
-      const z = Math.floor(cz + oz)
-      if (this.world.isAirFlooded(x, y, z)) return true
-    }
-    return false
-  }
-
-  // Feet submerged should not force underwater audio; no method needed.
 
   dispose() {
     // Stop and release references

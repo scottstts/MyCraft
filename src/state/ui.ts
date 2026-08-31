@@ -8,6 +8,11 @@
 import { create } from 'zustand';
 import type { BootStage, StartupErrorInfo } from '../shared/startup';
 import { DEFAULT_WORLD_CHUNK_COUNT, normalizeWorldChunkCount } from '../shared/worldSizes';
+import {
+  DEFAULT_PLAYER_CHARACTER,
+  normalizePlayerCharacter,
+  type PlayerCharacterId,
+} from '../shared/playerCharacters';
 
 export interface UIState {
   selectedSlot: number; // 0..8
@@ -36,6 +41,11 @@ export interface UIState {
   // Audio panel visibility
   audioVisible: boolean;
   setAudioVisible: (visible: boolean) => void;
+
+  // Appearance selection. The renderer consumes the same stable id through
+  // the narrow window bridge exposed by Engine.
+  playerCharacter: PlayerCharacterId;
+  setPlayerCharacter: (character: PlayerCharacterId) => void;
 
   // Restart signal: incrementing token triggers restart side-effect in host
   restartToken: number;
@@ -88,6 +98,8 @@ export const useUIStore = create<UIState>((set) => ({
   setDebugVisible: (visible: boolean) => set({ debugVisible: visible }),
   audioVisible: false,
   setAudioVisible: (visible: boolean) => set({ audioVisible: visible }),
+  playerCharacter: DEFAULT_PLAYER_CHARACTER,
+  setPlayerCharacter: (character: PlayerCharacterId) => set({ playerCharacter: normalizePlayerCharacter(character) }),
   restartToken: 0,
   bumpRestartToken: () => set((s) => ({ restartToken: s.restartToken + 1 })),
 

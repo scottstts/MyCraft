@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Character Switch Transition VFX</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    canvas { display: block; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.166.1/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.166.1/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(3.05, 1.55, 4.95);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.95, 0.75, 0.18);
+bloom.threshold = 0.18;
+bloom.strength = 0.92;
+bloom.radius = 0.82;
+composer.addPass(bloom);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.enablePan = false;
+controls.target.set(0, 0.98, 0);
+controls.minDistance = 2.7;
+controls.maxDistance = 8.0;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.48;
+
+scene.add(new THREE.HemisphereLight(0xffebb8, 0x040404, 0.42));
+
+const key = new THREE.DirectionalLight(0xfff2cf, 1.65);
+key.position.set(2.6, 3.8, 3.1);
+scene.add(key);
+
+const rim = new THREE.DirectionalLight(0xffc35d, 1.35);
+rim.position.set(-2.8, 1.8, -3.4);
+scene.add(rim);
+
+const runnerLight = new THREE.PointLight(0xffc44d, 7.0, 5.5, 2.0);
+runnerLight.position.set(0.0, 1.5, 1.2);
+scene.add(runnerLight);
+
+function transformedGeometry(geometry, px, py, pz, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) {
+  const g = geometry.clone();
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz));
+  m.compose(new THREE.Vector3(px, py, pz), q, new THREE.Vector3(sx, sy, sz));
+  g.applyMatrix4(m);
+  return g;
+}
+
+const bodyParts = [];
+bodyParts.push(transformedGeometry(new THREE.BoxGeometry(0.96, 1.42, 0.52, 10, 14, 8), 0, 1.03, 0));
+bodyParts.push(transformedGeometry(new THREE.BoxGeometry(0.84, 0.42, 0.43, 10, 6, 8), 0, 0.12, 0));
+bodyParts.push(transformedGeometry(new THREE.BoxGeometry(0.62, 0.64, 0.62, 10, 10, 10), 0, 2.08, 0));
+bodyParts.push(transformedGeometry(new THREE.CylinderGeometry(0.12, 0.14, 0.18, 18, 2), 0, 1.67, 0));
+bodyParts.push(transformedGeometry(new THREE.SphereGeometry(0.20, 22, 16), -0.52, 1.60, 0, 0, 0, 1.16, 1.0, 1.0));
+bodyParts.push(transformedGeometry(new THREE.SphereGeometry(0.20, 22, 16), 0.52, 1.60, 0, 0, 0, 1.16, 1.0, 1.0));
+bodyParts.push(transformedGeometry(new THREE.CapsuleGeometry(0.15, 0.90, 8, 12), -0.70, 0.97, 0.0, 0, 0, 0.08));
+bodyParts.push(transformedGeometry(new THREE.CapsuleGeometry(0.15, 0.90, 8, 12), 0.70, 0.97, 0.0, 0, 0, -0.08));
+bodyParts.push(transformedGeometry(new THREE.CapsuleGeometry(0.17, 1.08, 8, 12), -0.23, -0.78, 0.0, 0, 0, 0.02));
+bodyParts.push(transformedGeometry(new THREE.CapsuleGeometry(0.17, 1.08, 8, 12), 0.23, -0.78, 0.0, 0, 0, -0.02));
+bodyParts.push(transformedGeometry(new THREE.SphereGeometry(0.12, 20, 14), -0.23, -1.45, 0.04, 0, 0, 0, 1.2, 0.6, 1.45));
+bodyParts.push(transformedGeometry(new THREE.SphereGeometry(0.12, 20, 14), 0.23, -1.45, 0.04, 0, 0, 0, 1.2, 0.6, 1.45));
+bodyParts.push(transformedGeometry(new THREE.SphereGeometry(0.11, 18, 14), -0.70, 0.37, 0.0, 0, 0, 0, 1.0, 0.85, 1.0));
+bodyParts.push(transformedGeometry(new THREE.SphereGeometry(0.11, 18, 14), 0.70, 0.37, 0.0, 0, 0, 0, 1.0, 0.85, 1.0));
+
+const geometry = mergeGeometries(bodyParts, true);
+geometry.computeVertexNormals();
+geometry.computeBoundingBox();
+const bounds = geometry.boundingBox;
+const topY = bounds.max.y;
+const bottomY = bounds.min.y;
+const spanY = topY - bottomY;
+
+const group = new THREE.Group();
+group.rotation.y = 0.34;
+scene.add(group);
+
+const baseMat = new THREE.MeshPhysicalMaterial({
+  color: 0x0e0f12,
+  metalness: 0.18,
+  roughness: 0.54,
+  clearcoat: 0.45,
+  clearcoatRoughness: 0.65,
+  sheen: 0.4,
+  sheenColor: new THREE.Color(0x25201a),
+  sheenRoughness: 0.9
+});
+
+const body = new THREE.Mesh(geometry, baseMat);
+group.add(body);
+
+const fxUniforms = {
+  uTime: { value: 0 },
+  uSweep: { value: topY },
+  uTop: { value: topY },
+  uBottom: { value: bottomY },
+  uCoreWidth: { value: 0.038 },
+  uGlowWidth: { value: 0.15 },
+  uShellOffset: { value: 0.018 }
+};
+
+const fxMat = new THREE.ShaderMaterial({
+  uniforms: fxUniforms,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  vertexShader: /* glsl */`
+    uniform float uTime;
+    uniform float uSweep;
+    uniform float uGlowWidth;
+    uniform float uShellOffset;
+
+    varying vec3 vObjPos;
+    varying vec3 vWorldPos;
+    varying vec3 vWorldNormal;
+    varying vec3 vViewDir;
+    varying float vBand;
+    varying float vAz;
+
+    void main() {
+      vObjPos = position;
+      vAz = atan(position.x, position.z + 1e-5);
+
+      float flow = sin(vAz * 6.0 + position.y * 4.5 - uTime * 6.2) * 0.035
+                 + sin(vAz * 11.0 - position.y * 3.2 + uTime * 10.5) * 0.018;
+      float distToSweep = abs(position.y - (uSweep + flow));
+      float band = 1.0 - smoothstep(0.0, uGlowWidth, distToSweep);
+      float flutter = 0.45 + 0.55 * sin(uTime * 18.0 + vAz * 7.0 + position.y * 13.0);
+      float push = uShellOffset + band * (0.006 + 0.016 * flutter);
+
+      vec3 displaced = position + normal * push;
+      vec4 world = modelMatrix * vec4(displaced, 1.0);
+      vec3 worldNormal = normalize(mat3(modelMatrix) * normal);
+
+      vWorldPos = world.xyz;
+      vWorldNormal = worldNormal;
+      vViewDir = normalize(cameraPosition - world.xyz);
+      vBand = band;
+
+      gl_Position = projectionMatrix * viewMatrix * world;
+    }
+  `,
+  fragmentShader: /* glsl */`
+    uniform float uTime;
+    uniform float uSweep;
+    uniform float uTop;
+    uniform float uBottom;
+    uniform float uCoreWidth;
+    uniform float uGlowWidth;
+
+    varying vec3 vObjPos;
+    varying vec3 vWorldPos;
+    varying vec3 vWorldNormal;
+    varying vec3 vViewDir;
+    varying float vBand;
+    varying float vAz;
+
+    float hash31(vec3 p) {
+      p = fract(p * 0.1031);
+      p += dot(p, p.yzx + 33.33);
+      return fract((p.x + p.y) * p.z);
+    }
+
+    float noise3(vec3 x) {
+      vec3 i = floor(x);
+      vec3 f = fract(x);
+      f = f * f * (3.0 - 2.0 * f);
+      float n000 = hash31(i + vec3(0.0,0.0,0.0));
+      float n100 = hash31(i + vec3(1.0,0.0,0.0));
+      float n010 = hash31(i + vec3(0.0,1.0,0.0));
+      float n110 = hash31(i + vec3(1.0,1.0,0.0));
+      float n001 = hash31(i + vec3(0.0,0.0,1.0));
+      float n101 = hash31(i + vec3(1.0,0.0,1.0));
+      float n011 = hash31(i + vec3(0.0,1.0,1.0));
+      float n111 = hash31(i + vec3(1.0,1.0,1.0));
+      float nx00 = mix(n000, n100, f.x);
+      float nx10 = mix(n010, n110, f.x);
+      float nx01 = mix(n001, n101, f.x);
+      float nx11 = mix(n011, n111, f.x);
+      float nxy0 = mix(nx00, nx10, f.y);
+      float nxy1 = mix(nx01, nx11, f.y);
+      return mix(nxy0, nxy1, f.z);
+    }
+
+    float fbm(vec3 p) {
+      float v = 0.0;
+      float a = 0.5;
+      for (int i = 0; i < 4; i++) {
+        v += a * noise3(p);
+        p *= 2.0;
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    void main() {
+      vec3 N = normalize(vWorldNormal);
+      vec3 V = normalize(vViewDir);
+      float fresnel = pow(1.0 - max(dot(N, V), 0.0), 2.3);
+
+      float swirl = (fbm(vec3(vAz * 1.8, vObjPos.y * 2.6 - uTime * 1.6, length(vObjPos.xz) * 5.0)) - 0.5) * 0.08
+                  + sin(vAz * 7.0 + vObjPos.y * 5.0 - uTime * 8.0) * 0.022
+                  + sin(-vAz * 13.0 + vObjPos.y * 8.0 + uTime * 12.0) * 0.012;
+
+      float dist = abs(vObjPos.y - (uSweep + swirl));
+      float core = 1.0 - smoothstep(0.0, uCoreWidth, dist);
+      float aura = 1.0 - smoothstep(uCoreWidth, uGlowWidth, dist);
+
+      float strand1 = 0.5 + 0.5 * sin(vAz * 16.0 + vObjPos.y * 11.0 - uTime * 24.0 + fbm(vec3(vObjPos * 4.0 + uTime)) * 5.0);
+      float strand2 = 0.5 + 0.5 * sin(-vAz * 12.0 + vObjPos.y * 15.0 - uTime * 18.5);
+      float strands = (pow(strand1, 7.0) + pow(strand2, 7.0)) * aura;
+
+      float spark = 0.0;
+      for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        float streak = sin(vAz * (21.0 + fi * 3.0) + vObjPos.y * (17.0 - fi * 1.5) - uTime * (28.0 + fi * 8.0) + fi * 1.7);
+        spark += smoothstep(0.96, 0.997, streak);
+      }
+      spark *= aura * (0.3 + 0.7 * fresnel);
+
+      float frontEdge = smoothstep(-0.06, 0.0, vObjPos.y - uSweep) * (1.0 - smoothstep(0.0, 0.08, vObjPos.y - uSweep));
+      float frontFlash = frontEdge * (0.65 + 0.35 * sin(uTime * 24.0 + vAz * 6.0));
+
+      float trailDelta = uSweep - vObjPos.y;
+      float trail = smoothstep(0.03, 0.12, trailDelta) * (1.0 - smoothstep(0.12, 0.55, trailDelta));
+      trail *= 0.25 + 0.75 * fbm(vec3(vObjPos.xy * 3.6, uTime * 1.25));
+
+      vec3 gold = mix(vec3(1.0, 0.63, 0.10), vec3(1.0, 0.93, 0.68), clamp(0.25 + 0.5 * fresnel + 0.35 * aura, 0.0, 1.0));
+      vec3 ember = vec3(1.0, 0.52, 0.08);
+      vec3 pale = vec3(1.0, 0.98, 0.84);
+
+      vec3 color = vec3(0.0);
+      color += gold * aura * (0.32 + 0.85 * fresnel);
+      color += mix(gold, pale, 0.35) * core * (1.25 + 1.5 * fresnel);
+      color += mix(gold, ember, 0.4) * strands * (0.9 + 1.1 * fresnel);
+      color += ember * spark * 0.85;
+      color += pale * frontFlash * 0.65;
+      color += gold * trail * 0.26;
+
+      float alpha = aura * 0.16 + core * 0.42 + strands * 0.18 + spark * 0.12 + frontFlash * 0.10 + trail * 0.08;
+      alpha *= 0.65 + 0.8 * fresnel;
+      alpha = clamp(alpha, 0.0, 0.92);
+
+      if (alpha < 0.01) discard;
+      gl_FragColor = vec4(color, alpha);
+    }
+  `
+});
+
+const fxMesh = new THREE.Mesh(geometry, fxMat);
+group.add(fxMesh);
+
+const clock = new THREE.Clock();
+function sweepPosition(t) {
+  const cycle = 1.7;
+  const p = (t % cycle) / cycle;
+  const eased = 1.0 - Math.pow(1.0 - p, 2.35);
+  return THREE.MathUtils.lerp(topY + 0.04, bottomY - 0.04, eased);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+
+  fxUniforms.uTime.value = t;
+  fxUniforms.uSweep.value = sweepPosition(t);
+
+  group.rotation.y = 0.34 + Math.sin(t * 0.38) * 0.065;
+  group.position.y = Math.sin(t * 1.3) * 0.03;
+
+  const s = (fxUniforms.uSweep.value - bottomY) / spanY;
+  runnerLight.position.set(0.35 * Math.sin(t * 1.9), fxUniforms.uSweep.value, 1.35);
+  runnerLight.intensity = 4.0 + 4.5 * Math.exp(-Math.abs(s - 0.5) * 3.0);
+
+  controls.update();
+  composer.render();
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  bloom.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

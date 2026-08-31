@@ -42,6 +42,11 @@ import { base64FromBytes, signPayload, encryptPayload, SAVE_ENC_ALG, SAVE_SIGNAT
 import { getInventorySlots } from '../../state/inventory';
 import { DEFAULT_WORLD_CHUNK_COUNT, getWorldSizeOption, normalizeWorldChunkCount } from '../../shared/worldSizes';
 import PlayerCharacter from '../render/PlayerCharacter';
+import {
+  getNextPlayerCharacter,
+  normalizePlayerCharacter,
+  type PlayerCharacterId,
+} from '../../shared/playerCharacters';
 import { applyDiagnosticCameraPose, type DiagnosticCameraId } from '../../diagnostics/cameras';
 import { VoxelOccupancyVolume } from '../render/lighting/VoxelOccupancyVolume.js';
 import { VoxelSunShadowPass } from '../render/lighting/VoxelSunShadowPass.js';
@@ -111,6 +116,7 @@ declare global {
     __saveWorld?: () => void;
     __getVoxelShadowDiagnostics?: () => unknown;
     __getRenderDiagnostics?: () => unknown;
+    __setPlayerCharacter?: (character: PlayerCharacterId) => void;
     // UI can set this before triggering save to make the browser show a native save dialog.
     // We avoid tight typing here to keep DOM lib compatibility across environments.
     __nextSaveFileHandle?: unknown;
@@ -450,6 +456,9 @@ function update(dtSeconds: number) {
   if (playerBody && inGame && !paused && diagnosticMode) {
     playerBody.update(dtSeconds, false);
   }
+  // The switch burst is presentation-only, so it continues while the world
+  // is paused and can finish if selected from the settings panel.
+  playerBody?.updateSwitchVfx(dtSeconds);
   
   // Time-of-day and lighting: pause only when UI paused
   if (sunController) {
@@ -662,7 +671,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   playerRigRoot = new THREE.Group();
   playerRigRoot.name = 'PlayerRigRoot';
   scene.add(playerRigRoot);
-  playerBody = new PlayerCharacter();
+  playerBody = new PlayerCharacter(useUIStore.getState().playerCharacter);
 
   // Initialize the single active post-processing pipeline.
   const canvasSize = renderer.getCanvasSize();
@@ -699,6 +708,11 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
 
   // Input system (pointer lock + mouse look)
   inputSystem = new InputSystem(canvas, camera);
+  inputSystem.onCharacterSwitchRequested(() => {
+    const ui = useUIStore.getState();
+    if (!gameplayReady || diagnosticMode || !ui.inGame || ui.paused) return;
+    setPlayerCharacter(getNextPlayerCharacter(ui.playerCharacter));
+  });
   // A native file picker can produce a delayed pointerlockchange event after
   // the input system is constructed. Only a lock that was active once
   // gameplay was ready should be interpreted as an Esc/manual pause; an
@@ -901,7 +915,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   }
   
   // Sound effects
-  sfx = new SoundEffects(world, inputSystem, playerController);
+  sfx = new SoundEffects(world, inputSystem, playerController, camera);
   
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', () => {
@@ -1209,6 +1223,12 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
   });
 }
 
+function setPlayerCharacter(character: unknown): void {
+  const nextCharacter = normalizePlayerCharacter(character);
+  useUIStore.getState().setPlayerCharacter(nextCharacter);
+  playerBody?.setCharacter(nextCharacter);
+}
+
 // Expose to global scope for UI communication
 (window as Window & {
   updateGraphicsSettings?: (settings: GraphicsSettings) => void;
@@ -1217,6 +1237,9 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
 (window as Window & {
   getGraphicsSettings?: () => GraphicsSettings;
 }).getGraphicsSettings = getGraphicsSettings;
+(window as Window & {
+  __setPlayerCharacter?: (character: PlayerCharacterId) => void;
+}).__setPlayerCharacter = setPlayerCharacter;
 
 // Expose save function for UI
 (window as Window & { __saveWorld?: () => void }).__saveWorld = () => { void saveWorldToFile(); };
@@ -1263,7 +1286,10 @@ function updateGraphicsSettings(settings: GraphicsSettings) {
 };
 
 // Expose SFX helpers to UI
-(window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__setSfxVolume = (v: number) => { sfx?.setVolume(v); };
+(window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__setSfxVolume = (v: number) => {
+  sfx?.setVolume(v);
+  playerBody?.setSwitchVfxVolume(v);
+};
 (window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__getSfxVolume = () => sfx?.getVolume() ?? 0.7;
 (window as Window & { __setSfxVolume?: (v: number) => void; __getSfxVolume?: () => number; __primeSfx?: () => void }).__primeSfx = () => { sfx?.tryUnlockOnUserGesture(); };
 

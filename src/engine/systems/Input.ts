@@ -14,6 +14,7 @@ export class InputSystem {
   private isPointerLocked: boolean = false;
   private readonly mouseSensitivity: number = 0.0022;
   private onPointerLockChangedCallback: ((locked: boolean) => void) | null = null;
+  private onCharacterSwitchRequestedCallback: (() => void) | null = null;
 
   // Yaw (rotate around Y axis) and Pitch (rotate around X axis) in radians
   private yawRadians: number = PLAYER.initialYaw;
@@ -106,6 +107,7 @@ export class InputSystem {
     window.removeEventListener('keyup', this.onKeyUpRef);
     window.removeEventListener('mousedown', this.onMouseDownRef);
     window.removeEventListener('mouseup', this.onMouseUpRef);
+    this.onCharacterSwitchRequestedCallback = null;
   }
 
   private onPointerLockChange(): void {
@@ -130,6 +132,11 @@ export class InputSystem {
   /** External: set callback for pointer lock changes */
   onPointerLockChanged(cb: (locked: boolean) => void): void {
     this.onPointerLockChangedCallback = cb;
+  }
+
+  /** External: handle the character-cycle key in the original key gesture. */
+  onCharacterSwitchRequested(cb: () => void): void {
+    this.onCharacterSwitchRequestedCallback = cb;
   }
 
   /**
@@ -206,6 +213,15 @@ export class InputSystem {
         // View changes are edge-triggered so key repeat cannot bounce between
         // first- and third-person while the key is held.
         if (!e.repeat) this.viewToggleQueued = true;
+        break;
+      case 'KeyR':
+        // Invoke this directly from keydown so the switch sound can request
+        // AudioContext.resume() while the browser still considers the event a
+        // trusted user gesture. Ignore key-repeat to keep one switch per press.
+        if (!e.repeat) {
+          e.preventDefault();
+          this.onCharacterSwitchRequestedCallback?.();
+        }
         break;
       default:
         break;

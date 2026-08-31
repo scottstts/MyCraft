@@ -12,6 +12,17 @@ import type { InputSystem } from '../systems/Input';
 import type { PlayerController, PlayerMovementState } from '../systems/PlayerController';
 import { constrainCameraToSolidVoxels } from '../utils/cameraCollision';
 import type { CharacterShadowBox } from './lighting/CharacterShadowBox';
+import {
+  DEFAULT_PLAYER_CHARACTER,
+  normalizePlayerCharacter,
+  type PlayerCharacterId,
+} from '../../shared/playerCharacters';
+import {
+  createPlayerCharacterRig,
+  type PlayerCharacterRig,
+  type PlayerCharacterRigBuildContext,
+} from './playerCharacterRigs';
+import { CharacterSwitchVFX } from './CharacterSwitchVFX';
 
 import swingSfxUrl from '../../assets/sounds/sound_effects/swing.mp3';
 
@@ -21,151 +32,7 @@ const LEG_LENGTH = 0.75;
 const LEG_PIVOT_Y = 0.65;
 const HEAD_PIVOT_Y = 1.4;
 
-/** Deterministic equivalent of the reference's pixel-texture generator. */
-const TextureGen = {
-  state: 0x4d594352,
-
-  nextRandom(): number {
-    // Mulberry32 keeps the authored pixel noise stable across reloads.
-    this.state = (this.state + 0x6d2b79f5) | 0;
-    let t = this.state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  },
-
-  createCanvas(width: number, height: number): HTMLCanvasElement {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    return canvas;
-  },
-
-  createPixelTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.magFilter = THREE.NearestFilter;
-    texture.minFilter = THREE.NearestFilter;
-    texture.generateMipmaps = false;
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    return texture;
-  },
-
-  addNoise(ctx: CanvasRenderingContext2D, width: number, height: number, factor = 0.08): void {
-    const image = ctx.getImageData(0, 0, width, height);
-    const data = image.data;
-    for (let i = 0; i < data.length; i += 4) {
-      const noise = (this.nextRandom() - 0.5) * factor * 255;
-      data[i] = Math.min(255, Math.max(0, data[i] + noise));
-      data[i + 1] = Math.min(255, Math.max(0, data[i + 1] + noise));
-      data[i + 2] = Math.min(255, Math.max(0, data[i + 2] + noise));
-    }
-    ctx.putImageData(image, 0, 0);
-  },
-
-  context(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Player character textures require a 2D canvas context');
-    return context;
-  },
-
-  createFaceTexture(): THREE.CanvasTexture {
-    const canvas = this.createCanvas(16, 16);
-    const ctx = this.context(canvas);
-    ctx.fillStyle = '#d49b74';
-    ctx.fillRect(0, 0, 16, 16);
-    // Hair
-    ctx.fillStyle = '#2b1d16';
-    ctx.fillRect(0, 0, 16, 4);
-    ctx.fillRect(0, 4, 2, 4);
-    ctx.fillRect(14, 4, 2, 4);
-    // Left eye
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(3, 6, 3, 2);
-    ctx.fillStyle = '#3e2723';
-    ctx.fillRect(4, 6, 2, 2);
-    // Glowing cyber lens
-    ctx.fillStyle = '#00f0ff';
-    ctx.fillRect(10, 5, 4, 4);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(11, 6, 2, 2);
-    // Nose and beard
-    ctx.fillStyle = '#b57954';
-    ctx.fillRect(7, 8, 2, 2);
-    ctx.fillStyle = '#533624';
-    ctx.fillRect(5, 11, 6, 1);
-    ctx.fillRect(6, 12, 4, 2);
-    this.addNoise(ctx, 16, 16, 0.04);
-    return this.createPixelTexture(canvas);
-  },
-
-  createHairTexture(): THREE.CanvasTexture {
-    const canvas = this.createCanvas(16, 16);
-    const ctx = this.context(canvas);
-    ctx.fillStyle = '#2b1d16';
-    ctx.fillRect(0, 0, 16, 16);
-    ctx.fillStyle = '#3a271e';
-    ctx.fillRect(2, 2, 6, 6);
-    ctx.fillRect(9, 8, 5, 5);
-    this.addNoise(ctx, 16, 16, 0.06);
-    return this.createPixelTexture(canvas);
-  },
-
-  createTorsoTexture(): THREE.CanvasTexture {
-    const canvas = this.createCanvas(16, 24);
-    const ctx = this.context(canvas);
-    // Navy gambeson
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(0, 0, 16, 24);
-    // Leather harness
-    ctx.fillStyle = '#5c3a21';
-    ctx.fillRect(0, 0, 16, 4);
-    ctx.fillRect(2, 4, 3, 16);
-    ctx.fillRect(11, 4, 3, 16);
-    ctx.fillRect(0, 16, 16, 4);
-    // Glowing medallion
-    ctx.fillStyle = '#00f0ff';
-    ctx.fillRect(6, 8, 4, 4);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(7, 9, 2, 2);
-    this.addNoise(ctx, 16, 24, 0.05);
-    return this.createPixelTexture(canvas);
-  },
-
-  createArmTexture(): THREE.CanvasTexture {
-    const canvas = this.createCanvas(8, 24);
-    const ctx = this.context(canvas);
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(0, 0, 8, 6);
-    ctx.fillStyle = '#d49b74';
-    ctx.fillRect(0, 6, 8, 6);
-    ctx.fillStyle = '#475569';
-    ctx.fillRect(0, 12, 8, 8);
-    ctx.fillStyle = '#1e1b18';
-    ctx.fillRect(0, 20, 8, 4);
-    this.addNoise(ctx, 8, 24, 0.05);
-    return this.createPixelTexture(canvas);
-  },
-
-  createPantsTexture(): THREE.CanvasTexture {
-    const canvas = this.createCanvas(8, 24);
-    const ctx = this.context(canvas);
-    ctx.fillStyle = '#334155';
-    ctx.fillRect(0, 0, 8, 14);
-    ctx.fillStyle = '#475569';
-    ctx.fillRect(1, 6, 6, 4);
-    ctx.fillStyle = '#3e2723';
-    ctx.fillRect(0, 14, 8, 10);
-    this.addNoise(ctx, 8, 24, 0.06);
-    return this.createPixelTexture(canvas);
-  },
-};
-
 const CFG = {
-  torso: { width: 0.5, depth: 0.25, height: 0.75 },
-  arm: { width: 0.25, depth: 0.25, length: 0.75 },
-  leg: { width: 0.25, depth: 0.25, length: LEG_LENGTH, pivotY: LEG_PIVOT_Y },
   // A leg box is centered half its length below the hip pivot, so its static
   // bottom is pivotY - length. Lift the visual root by the derived amount so
   // the actual foot bottom coincides with the controller's collision AABB
@@ -193,6 +60,16 @@ interface PlayerMaterialRecord {
   baseEmissiveIntensity: number;
 }
 
+interface PlayerRigPose {
+  bodyPosition: THREE.Vector3;
+  bodyRotation: THREE.Euler;
+  headRotation: THREE.Euler;
+  leftArmRotation: THREE.Euler;
+  rightArmRotation: THREE.Euler;
+  leftLegRotation: THREE.Euler;
+  rightLegRotation: THREE.Euler;
+}
+
 export class PlayerCharacter {
   private playerRoot: THREE.Object3D | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
@@ -201,20 +78,17 @@ export class PlayerCharacter {
 
   // Reference rig nodes.
   private readonly character = new THREE.Group();
-  private readonly body = new THREE.Group();
-  private readonly headPivot = new THREE.Group();
-  private readonly eyeAnchor = new THREE.Object3D();
-  private readonly torsoMesh: THREE.Mesh;
-  private readonly hairBand: THREE.Mesh;
-  private readonly headMesh: THREE.Mesh;
-  private readonly backpack: THREE.Mesh;
-  private readonly leftArm: THREE.Group;
-  private readonly leftArmMesh: THREE.Mesh;
-  private readonly rightArm: THREE.Group;
-  private readonly rightArmMesh: THREE.Mesh;
-  private readonly leftLeg: THREE.Group;
-  private readonly rightLeg: THREE.Group;
-  private readonly pickaxe: THREE.Group;
+  private readonly switchVfx = new CharacterSwitchVFX();
+  private rig!: PlayerCharacterRig;
+  private body!: THREE.Group;
+  private headPivot!: THREE.Group;
+  private eyeAnchor!: THREE.Object3D;
+  private hairBand!: THREE.Object3D;
+  private headMesh!: THREE.Mesh;
+  private leftArm!: THREE.Group;
+  private rightArm!: THREE.Group;
+  private leftLeg!: THREE.Group;
+  private rightLeg!: THREE.Group;
 
   private readonly ownedTextures: THREE.Texture[] = [];
   private readonly ownedMaterials: THREE.Material[] = [];
@@ -232,6 +106,7 @@ export class PlayerCharacter {
   private swingActive = false;
   private swingTime = 0;
   private swingAudio: HTMLAudioElement | null = null;
+  private currentCharacter: PlayerCharacterId;
 
   private readonly scratchPosition = new THREE.Vector3();
   private readonly scratchDirection = new THREE.Vector3();
@@ -244,137 +119,39 @@ export class PlayerCharacter {
   private readonly scratchStarContribution = new THREE.Color();
   private readonly scratchStarAmbient = new THREE.Color(0.02, 0.025, 0.04);
 
-  constructor() {
-    const hairMat = this.createTexturedMaterial(TextureGen.createHairTexture());
-    const faceMat = this.createTexturedMaterial(TextureGen.createFaceTexture());
-    const torsoMat = this.createTexturedMaterial(TextureGen.createTorsoTexture());
-    const armMat = this.createTexturedMaterial(TextureGen.createArmTexture());
-    const pantsMat = this.createTexturedMaterial(TextureGen.createPantsTexture());
-    const leatherMat = this.createMaterial({ color: 0x3e2723, roughness: 0.8 });
-    const armorMat = this.createMaterial({ color: 0x475569, metalness: 0.6, roughness: 0.4 });
-    // The pauldron intentionally wraps the arm, but its outer shell must own
-    // the overlapping depth samples or the arm/armor boundary will shimmer.
-    armorMat.polygonOffset = true;
-    armorMat.polygonOffsetFactor = -1;
-    armorMat.polygonOffsetUnits = -1;
-
+  constructor(characterId: PlayerCharacterId = DEFAULT_PLAYER_CHARACTER) {
     this.character.name = 'PlayerCharacter.Root';
-    this.body.name = 'PlayerCharacter.Body';
-    this.body.rotation.y = Math.PI;
+    this.currentCharacter = normalizePlayerCharacter(characterId);
+    this.buildRig(this.currentCharacter);
+    this.attachSwitchVfxToBody();
+    this.setFirstPerson(false);
+    this.character.updateMatrixWorld(true);
+    this.switchVfx.setTarget(this.body);
+  }
 
-    this.headMesh = this.createMesh(
-      new THREE.BoxGeometry(0.5, 0.5, 0.5),
-      [hairMat, hairMat, hairMat, hairMat, faceMat, hairMat],
-      'HeadMesh',
-    );
-    this.headMesh.position.y = 0.25;
-    this.headPivot.name = 'HeadPivot';
-    this.headPivot.position.set(0, HEAD_PIVOT_Y, 0);
-    this.headPivot.add(this.headMesh);
-
-    this.hairBand = this.createMesh(
-      new THREE.BoxGeometry(0.53, 0.15, 0.53),
-      leatherMat,
-      'HairBand',
-    );
-    this.hairBand.position.y = 0.35;
-    this.headPivot.add(this.hairBand);
-
-    // The eye is exactly the physical reference anchor: just beyond the
-    // authored +Z face, which becomes gameplay -Z after the body correction.
-    this.eyeAnchor.name = 'EyeAnchor';
-    // The visual root is lifted to align the leg bottoms with the physics
-    // base. Counter-offset the eye anchor so first-person camera height stays
-    // exactly at the controller's physical eye position.
-    this.eyeAnchor.position.set(
-      0,
-      PLAYER.eyeHeight - CFG.visualFeetLift - HEAD_PIVOT_Y,
-      0.26,
-    );
-    this.headPivot.add(this.eyeAnchor);
-
-    this.torsoMesh = this.createMesh(
-      new THREE.BoxGeometry(CFG.torso.width, CFG.torso.height, CFG.torso.depth),
-      torsoMat,
-      'TorsoMesh',
-    );
-    this.torsoMesh.position.set(0, 1.025, 0);
-
-    this.backpack = this.createMesh(
-      new THREE.BoxGeometry(0.38, 0.45, 0.15),
-      leatherMat,
-      'Backpack',
-    );
-    this.backpack.position.set(0, 1.05, -0.19);
-
-    this.leftArmMesh = this.createMesh(
-      new THREE.BoxGeometry(CFG.arm.width, CFG.arm.length, CFG.arm.depth),
-      armMat,
-      'LeftArmMesh',
-    );
-    this.leftArmMesh.position.y = -0.275;
-    const leftPauldron = this.createMesh(
-      new THREE.BoxGeometry(0.29, 0.2, 0.29),
-      armorMat,
-      'LeftPauldron',
-    );
-    leftPauldron.position.set(-0.02, 0.02, 0);
-    this.leftArmMesh.add(leftPauldron);
-    this.leftArm = new THREE.Group();
-    this.leftArm.name = 'LeftArmPivot';
-    // These lateral positions intentionally match ref/character.html; the
-    // body's single 180° correction preserves anatomical left/right sides.
-    this.leftArm.position.set(0.375, 1.35, 0);
-    this.leftArm.add(this.leftArmMesh);
-
-    this.rightArmMesh = this.createMesh(
-      new THREE.BoxGeometry(CFG.arm.width, CFG.arm.length, CFG.arm.depth),
-      armMat,
-      'RightArmMesh',
-    );
-    this.rightArmMesh.position.y = -0.275;
-    this.pickaxe = this.createPickaxe();
-    this.pickaxe.position.set(0, -0.28, 0.1);
-    this.pickaxe.rotation.x = THREE.MathUtils.degToRad(30);
-    this.rightArmMesh.add(this.pickaxe);
-    this.rightArm = new THREE.Group();
-    this.rightArm.name = 'RightArmPivot';
-    this.rightArm.position.set(-0.375, 1.35, 0);
-    this.rightArm.add(this.rightArmMesh);
-
-    this.leftLeg = new THREE.Group();
-    this.leftLeg.name = 'LeftLegPivot';
-    this.leftLeg.position.set(0.13, CFG.leg.pivotY, 0);
-    this.leftLeg.add(this.createMesh(
-      new THREE.BoxGeometry(CFG.leg.width, CFG.leg.length, CFG.leg.depth),
-      pantsMat,
-      'LeftLegMesh',
-    ));
-    const leftLegMesh = this.leftLeg.children[0] as THREE.Mesh;
-    leftLegMesh.position.y = -CFG.leg.length / 2;
-
-    this.rightLeg = new THREE.Group();
-    this.rightLeg.name = 'RightLegPivot';
-    this.rightLeg.position.set(-0.13, CFG.leg.pivotY, 0);
-    this.rightLeg.add(this.createMesh(
-      new THREE.BoxGeometry(CFG.leg.width, CFG.leg.length, CFG.leg.depth),
-      pantsMat,
-      'RightLegMesh',
-    ));
-    const rightLegMesh = this.rightLeg.children[0] as THREE.Mesh;
-    rightLegMesh.position.y = -CFG.leg.length / 2;
-
-    this.body.add(
-      this.headPivot,
-      this.torsoMesh,
-      this.backpack,
-      this.leftArm,
-      this.rightArm,
-      this.leftLeg,
-      this.rightLeg,
-    );
+  private buildRig(characterId: PlayerCharacterId): void {
+    const context: PlayerCharacterRigBuildContext = {
+      eyeAnchorY: PLAYER.eyeHeight - CFG.visualFeetLift - HEAD_PIVOT_Y,
+      createTexturedMaterial: (texture, options) => this.createTexturedMaterial(texture, options),
+      createMaterial: (options) => this.createMaterial(options),
+      createMesh: (geometry, material, name) => this.createMesh(geometry, material, name),
+      createPickaxe: () => this.createPickaxe(),
+    };
+    this.rig = createPlayerCharacterRig(characterId, context);
+    this.body = this.rig.body;
+    this.headPivot = this.rig.headPivot;
+    this.eyeAnchor = this.rig.eyeAnchor;
+    this.headMesh = this.rig.headMesh;
+    this.hairBand = this.rig.hairBand;
+    this.leftArm = this.rig.leftArm;
+    this.rightArm = this.rig.rightArm;
+    this.leftLeg = this.rig.leftLeg;
+    this.rightLeg = this.rig.rightLeg;
     this.character.add(this.body);
+    this.registerShadowMeshes();
+  }
 
+  private registerShadowMeshes(): void {
     this.character.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       object.geometry.computeBoundingBox();
@@ -387,8 +164,6 @@ export class PlayerCharacter {
         halfSize: bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5),
       });
     });
-
-    this.setFirstPerson(false);
   }
 
   init(playerRoot: THREE.Object3D, camera: THREE.PerspectiveCamera, input: InputSystem): void {
@@ -401,6 +176,51 @@ export class PlayerCharacter {
 
   setController(controller: PlayerController): void {
     this.controller = controller;
+  }
+
+  /** Replace only the authored appearance while retaining the live pose. */
+  setCharacter(characterId: PlayerCharacterId): void {
+    const nextCharacter = normalizePlayerCharacter(characterId);
+    if (nextCharacter === this.currentCharacter) return;
+
+    const pose: PlayerRigPose = {
+      bodyPosition: this.body.position.clone(),
+      bodyRotation: this.body.rotation.clone(),
+      headRotation: this.headPivot.rotation.clone(),
+      leftArmRotation: this.leftArm.rotation.clone(),
+      rightArmRotation: this.rightArm.rotation.clone(),
+      leftLegRotation: this.leftLeg.rotation.clone(),
+      rightLegRotation: this.rightLeg.rotation.clone(),
+    };
+
+    this.disposeRig();
+    this.currentCharacter = nextCharacter;
+    this.buildRig(nextCharacter);
+    this.body.position.copy(pose.bodyPosition);
+    this.body.rotation.copy(pose.bodyRotation);
+    this.headPivot.rotation.copy(pose.headRotation);
+    this.leftArm.rotation.copy(pose.leftArmRotation);
+    this.rightArm.rotation.copy(pose.rightArmRotation);
+    this.leftLeg.rotation.copy(pose.leftLegRotation);
+    this.rightLeg.rotation.copy(pose.rightLegRotation);
+    this.setFirstPerson(this.isFirstPerson);
+    this.attachSwitchVfxToBody();
+    this.character.updateMatrixWorld(true);
+    this.switchVfx.setTarget(this.body);
+    this.switchVfx.trigger();
+  }
+
+  getCharacter(): PlayerCharacterId {
+    return this.currentCharacter;
+  }
+
+  setSwitchVfxVolume(volume: number): void {
+    this.switchVfx.setVolume(volume);
+  }
+
+  /** Advance the character-local switch effect independently of pause state. */
+  updateSwitchVfx(deltaSeconds: number): void {
+    this.switchVfx.update(deltaSeconds);
   }
 
   setFirstPerson(value: boolean): void {
@@ -501,15 +321,30 @@ export class PlayerCharacter {
     try { this.swingAudio?.pause(); } catch { /* ignore */ }
     this.swingAudio = null;
     this.playerRoot?.remove(this.character);
+    this.disposeRig();
+    this.switchVfx.dispose();
+  }
+
+  private disposeRig(): void {
+    this.switchVfx.object.removeFromParent();
+    this.character.remove(this.body);
     const geometries = new Set<THREE.BufferGeometry>();
-    this.character.traverse((object) => {
+    this.body.traverse((object) => {
       if (object instanceof THREE.Mesh) geometries.add(object.geometry);
     });
     for (const geometry of geometries) geometry.dispose();
     for (const material of this.ownedMaterials) material.dispose();
     for (const texture of this.ownedTextures) texture.dispose();
+    this.ownedMaterials.length = 0;
+    this.ownedTextures.length = 0;
+    this.materialRecords.length = 0;
     this.shadowMeshes.length = 0;
     this.shadowBoxes.length = 0;
+  }
+
+  private attachSwitchVfxToBody(): void {
+    this.switchVfx.object.removeFromParent();
+    this.body.add(this.switchVfx.object);
   }
 
   private updateFacing(dt: number, state: PlayerMovementState): void {
@@ -721,9 +556,12 @@ export class PlayerCharacter {
     camera.updateMatrixWorld(true);
   }
 
-  private createTexturedMaterial(texture: THREE.Texture): THREE.MeshStandardMaterial {
+  private createTexturedMaterial(
+    texture: THREE.Texture,
+    options: THREE.MeshStandardMaterialParameters = {},
+  ): THREE.MeshStandardMaterial {
     this.ownedTextures.push(texture);
-    const material = this.createMaterial({ map: texture, roughness: 0.8 });
+    const material = this.createMaterial({ roughness: 0.8, ...options, map: texture });
     // Reuse the authored albedo as an emissive map for the atmosphere floor;
     // the map is only an indirect-light fallback, not a second visible layer.
     material.emissiveMap = texture;

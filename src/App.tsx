@@ -1,5 +1,5 @@
 import CanvasHost from './app/CanvasHost'
-import { Hotbar, Crosshair, TopRightWidget, PauseMenu } from './app/Hotbar'
+import { Hotbar, CharacterSwitchHint, Crosshair, TopRightWidget, PauseMenu } from './app/Hotbar'
 import AudioPanel from './app/AudioPanel'
 import { DebugPanel } from './app/DebugPanel'
 import { StartPanel } from './app/StartPanel'
@@ -19,6 +19,7 @@ export default function App() {
       <CanvasHost />
       <StartPanel />
       <Hotbar />
+      <CharacterSwitchHint />
       <Crosshair />
       <TopRightWidget />
       <PauseMenu />

@@ -5,6 +5,7 @@ import PlayerCharacter from '../src/engine/render/PlayerCharacter';
 import type { InputSystem } from '../src/engine/systems/Input';
 import type { PlayerController, PlayerMovementState } from '../src/engine/systems/PlayerController';
 import type { World } from '../src/engine/world/World';
+import { PLAYER_CHARACTER_IDS } from '../src/shared/playerCharacters';
 
 function installCanvasStub(): void {
   vi.stubGlobal('document', {
@@ -13,6 +14,9 @@ function installCanvasStub(): void {
       const context = {
         fillStyle: '',
         fillRect: () => undefined,
+        createRadialGradient: () => ({
+          addColorStop: () => undefined,
+        }),
         getImageData: (_x: number, _y: number, width: number, height: number) => ({
           data: new Uint8ClampedArray(width * height * 4),
         }),
@@ -143,6 +147,47 @@ describe('player character feet alignment', () => {
     // wall's top face. The eye-height pivot must keep the sphere fully above
     // that face while the orbit path is clipped.
     expect(camera.position.y - 0.2).toBeGreaterThan(22);
+
+    player.dispose();
+  });
+
+  it('switches between every authored appearance without changing the shared rig contract', () => {
+    installCanvasStub();
+
+    const player = new PlayerCharacter();
+    const playerRoot = new THREE.Group();
+    const camera = new THREE.PerspectiveCamera();
+    const input = {
+      getOrientation: () => ({ yaw: 0, pitch: 0 }),
+    } as unknown as InputSystem;
+    const controller = {
+      getFeetPosition: (target = new THREE.Vector3()) => target.set(0, 3, 0),
+      getMovementState: () => createIdleState(),
+    } as unknown as PlayerController;
+
+    player.init(playerRoot, camera, input);
+    player.setController(controller);
+
+    const expectedAccessory: Record<typeof PLAYER_CHARACTER_IDS[number], string> = {
+      Otherys: 'HairBand',
+      Solvaris: 'CrestGem',
+      Vespera: 'PonytailLower',
+      Kaelith: 'CrownStar',
+    };
+
+    for (const character of PLAYER_CHARACTER_IDS) {
+      player.setCharacter(character);
+      player.update(0, false);
+      expect(player.getCharacter()).toBe(character);
+      const visualRoot = (player as unknown as { character: THREE.Group }).character;
+      expect(visualRoot.getObjectByName('HeadMesh')).toBeTruthy();
+      expect(visualRoot.getObjectByName(expectedAccessory[character])).toBeTruthy();
+      visualRoot.updateMatrixWorld(true);
+      const legBounds = new THREE.Box3().setFromObject(visualRoot.getObjectByName('LeftLegMesh') as THREE.Mesh, true);
+      expect(legBounds.min.y).toBeCloseTo(3, 6);
+      const eyeAnchor = visualRoot.getObjectByName('EyeAnchor');
+      expect(eyeAnchor?.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(4.7, 6);
+    }
 
     player.dispose();
   });

@@ -12,6 +12,7 @@ This directory documents the implemented runtime boundaries and the contracts be
 - [World and chunks](world-and-chunks.md) — voxel storage, terrain generation, worker orchestration, meshing, and mesh publication.
 - [World sizing](world-sizing.md) — named world footprints, the direct start-screen picker, and the fixed large chunk contract.
 - [Player and interaction](player-and-interaction.md) — pointer lock, movement, collision, selection, mining, placing, and inventory handoff.
+- [Player characters](player-characters.md) — reference-matched appearances, shared rig contract, swapping, and selection ownership.
 - [Audio and persistence](audio-and-persistence.md) — music, spatially driven sound effects, save files, and load validation.
 - [UI and state](ui-and-state.md) — the React shell, Zustand state, HUD ownership, pause semantics, and entry controls.
 - [Diagnostics and validation](diagnostics-and-validation.md) — local-only camera routes, read-only diagnostics, and the checks that protect the runtime contracts.

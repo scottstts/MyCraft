@@ -4,7 +4,7 @@
 
 `InputSystem` owns browser keyboard/mouse listeners, pointer lock, yaw/pitch, movement state, queued actions, pause, hotbar selection, and view toggles. It is created after the camera exists and destroyed with the engine. Pointer-lock changes are reported to the engine, which maps loss of lock to pause only after gameplay has actually become ready.
 
-The camera uses the `YXZ` FPS rotation order. `createPlayerCamera()` is the canonical projection factory for gameplay and diagnostics. In third-person mode, the visual character can move the camera independently of physics, but selection still derives from the exact center ray of the active camera.
+The camera uses the `YXZ` FPS rotation order. `createPlayerCamera()` is the canonical projection factory for gameplay and diagnostics. In third-person mode, the visual character can move the camera independently of physics, but selection still derives from the exact center ray of the active camera. The selectable reference appearances all use the same camera and animation path; only the authored appearance subtree changes.
 
 ## Movement and collision
 

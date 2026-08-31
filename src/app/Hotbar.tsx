@@ -58,6 +58,69 @@ export function Hotbar() {
   )
 }
 
+export function CharacterSwitchHint() {
+  const inGame = useUIStore(s => s.inGame)
+  const loading = useUIStore(s => s.loading)
+  const paused = useUIStore(s => s.paused)
+
+  if (!inGame || loading || paused) return null
+
+  return (
+    <div
+      aria-label="Press R to switch character"
+      style={{
+        position: 'absolute',
+        left: '50%',
+        bottom: 84,
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '5px 9px',
+        background: 'rgba(8, 13, 18, 0.72)',
+        border: '1px solid rgba(148,163,184,0.16)',
+        borderRadius: 7,
+        color: 'rgba(248,250,252,0.78)',
+        fontSize: 11,
+        lineHeight: '16px',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        letterSpacing: 0.2,
+        pointerEvents: 'none',
+        backdropFilter: 'blur(8px)',
+        boxShadow: '0 6px 16px rgba(0,0,0,0.22)',
+        zIndex: 1001,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span>Press</span>
+      <kbd
+        style={{
+          minWidth: 18,
+          height: 18,
+          padding: '0 5px',
+          boxSizing: 'border-box',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          border: '1px solid rgba(226,232,240,0.34)',
+          borderBottomWidth: 2,
+          borderRadius: 4,
+          background: 'rgba(15,23,32,0.92)',
+          color: '#f8fafc',
+          fontSize: 10,
+          lineHeight: '14px',
+          fontFamily: 'inherit',
+          fontWeight: 800,
+          letterSpacing: 0.5,
+        }}
+      >
+        R
+      </kbd>
+      <span>to switch character</span>
+    </div>
+  )
+}
+
 export function Crosshair() {
   const inGame = useUIStore(s => s.inGame)
   const loading = useUIStore(s => s.loading)

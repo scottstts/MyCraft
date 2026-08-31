@@ -7,10 +7,15 @@ import { useUIStore } from '../state/ui';
 import type { GraphicsSettings } from '../engine/render/settings/GraphicsSettings';
 import { RENDER_STYLE } from '../engine/render/settings/RenderStyle';
 import SaveWorldButton from './SaveWorldButton';
+import {
+  PLAYER_CHARACTER_OPTIONS,
+  type PlayerCharacterId,
+} from '../shared/playerCharacters';
 
 interface WindowWithGameControls extends Window {
   updateGraphicsSettings?: (settings: GraphicsSettings) => void;
   getGraphicsSettings?: () => GraphicsSettings;
+  __setPlayerCharacter?: (character: PlayerCharacterId) => void;
   __getSfxVolume?: () => number;
   __setSfxVolume?: (value: number) => void;
 }
@@ -58,6 +63,8 @@ const CONTROL_STYLE: React.CSSProperties = {
 
 export const DebugPanel: React.FC = () => {
   const { debugVisible, setDebugVisible, setAudioVisible } = useUIStore();
+  const playerCharacter = useUIStore(s => s.playerCharacter);
+  const setPlayerCharacter = useUIStore(s => s.setPlayerCharacter);
   const gameStarted = useUIStore(s => s.gameStarted);
   const loading = useUIStore(s => s.loading);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -125,12 +132,63 @@ export const DebugPanel: React.FC = () => {
     });
   };
 
+  const selectPlayerCharacter = (character: PlayerCharacterId) => {
+    const applyPlayerCharacter = (window as WindowWithGameControls).__setPlayerCharacter;
+    if (applyPlayerCharacter) applyPlayerCharacter(character);
+    else setPlayerCharacter(character);
+  };
+
   return (
     <div ref={panelRef} style={PANEL_STYLE}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.06)', position: 'sticky', top: 0, background: 'rgba(15, 23, 32, 0.98)', zIndex: 1 }}>
         <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#f8fafc' }}>Settings</h3>
         <button onClick={() => setDebugVisible(false)} aria-label="Close settings" style={{ background: 'rgba(148,163,184,0.10)', border: '1px solid rgba(148,163,184,0.16)', color: '#f8f9fa', cursor: 'pointer', padding: '8px 10px', borderRadius: '8px', fontSize: '14px', fontWeight: 600 }}>✕</button>
       </div>
+
+      <section style={SECTION_STYLE}>
+        <h4 style={HEADING_STYLE}>Player</h4>
+        <div
+          role="radiogroup"
+          aria-label="Player character"
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}
+        >
+          {PLAYER_CHARACTER_OPTIONS.map(option => {
+            const selected = option.id === playerCharacter;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                aria-label={`${option.name}${selected ? ' selected' : ''}`}
+                onClick={() => selectPlayerCharacter(option.id)}
+                style={{
+                  minHeight: '64px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  justifyContent: 'center',
+                  gap: '5px',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  border: selected ? `2px solid ${option.accent}` : '1px solid rgba(148,163,184,0.18)',
+                  background: selected ? `linear-gradient(135deg, ${option.accent}24, rgba(255,255,255,0.06))` : 'rgba(255,255,255,0.035)',
+                  color: '#f8fafc',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  font: 'inherit',
+                  boxShadow: selected ? `0 0 18px ${option.accent}1c` : 'none',
+                }}
+              >
+                <span style={{ fontSize: '13px', lineHeight: '16px', fontWeight: 700 }}>{option.name}</span>
+                <span style={{ color: selected ? option.accent : '#64748b', fontSize: '10px', lineHeight: '12px', fontWeight: 700, letterSpacing: 0.45, textTransform: 'uppercase' }}>
+                  {selected ? 'Selected' : 'Choose'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       <section style={SECTION_STYLE}>
         <h4 style={HEADING_STYLE}>Sound Effects</h4>

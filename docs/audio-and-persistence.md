@@ -15,6 +15,8 @@
 - ocean ambience whose volume is sampled from nearby surface water and smoothed over time;
 - break, place, and landing one-shots.
 
+Underwater ambience is gated by the active gameplay camera, not the player's physics head or swim state. A 0.4-block camera audio envelope uses a 50% submersion threshold, so first- and third-person views switch at the same waterline; the ocean loop uses the same camera result for its underwater dimming. Character switching plays the supplied `src/assets/sounds/sound_effects/switch_sound.mp3` one-shot at the shared SFX volume.
+
 Audio playback failures are treated as optional browser capability failures. The game continues when autoplay is blocked and retries on a later user gesture.
 
 ## Save format
