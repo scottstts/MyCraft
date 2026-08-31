@@ -1,15 +1,12 @@
 import * as THREE from 'three'
 import {
   OCEAN_CAUSTIC_WAVES,
-  OCEAN_WAVES,
   oceanCausticWaveDeclarations,
-  oceanWaveDeclarations,
+  oceanPhysicalDeclarations,
 } from './OceanWaveField'
-import { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH, WATER_IOR } from './WaterOptics'
-export { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH } from './WaterOptics'
+import { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH, CAUSTIC_TILE_SIZE, WATER_IOR } from './WaterOptics'
+export { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH, CAUSTIC_TILE_SIZE } from './WaterOptics'
 
-/** Small world-anchored tile used for stable, repeatable caustic filaments. */
-export const CAUSTIC_TILE_SIZE = 17.0
 
 export interface WaterCausticsOptions {
   resolution?: number
@@ -36,57 +33,118 @@ export class WaterCaustics {
   private readonly resolution: number
   private readonly extent: number
   private readonly patchExtent: number
+  private readonly sourceHalfPeriods: number
+  private readonly sourcePeriods: number
+  private readonly segmentsPerPeriod: number
+  private readonly sourceSegments: number
   private readonly referenceDepth: number
   private readonly origin = new THREE.Vector2()
+  private readonly neutralClearColor = new THREE.Color(
+    1 / CAUSTIC_FIELD_SCALE,
+    1 / CAUSTIC_FIELD_SCALE,
+    1 / CAUSTIC_FIELD_SCALE,
+  )
   private disposed = false
   private warned = false
 
   constructor(renderer: THREE.WebGLRenderer, options: WaterCausticsOptions = {}) {
     this.renderer = renderer
     this.resolution = Math.max(128, Math.min(512, Math.floor(options.resolution ?? 256)))
-    // The submerged example uses a short tile (17 m) and wraps it. Keeping
-    // this footprint small gives the 256² projection enough texels to resolve
-    // thin caustic lines instead of averaging them into broad patches.
+    // One broad, chunk-incommensurate periodic domain carries several optical
+    // wavelength bands. The old 17 m realization repeated its one quiet
+    // interference region often enough to resemble square projector gaps.
+    // At 53 m, 256² still resolves the shortest retained 1.5 m wave while the
+    // complete realization spans several former patches.
     this.extent = Math.max(8, options.extent ?? CAUSTIC_TILE_SIZE)
-    this.patchExtent = Math.max(this.extent * 1.2, options.patchExtent ?? this.extent * 1.35)
+    // A periodic analytic field alone is insufficient: if one wave period
+    // spans a fractional number of source cells, opposite target edges are
+    // evaluated by different triangle phases and RepeatWrapping exposes a
+    // broad horizontal/vertical seam. Quantize the guarded patch to half-
+    // period increments, then use a multiple-of-four cell count per period.
+    // This keeps the one-period receiver in the guarded interior and places
+    // both +/- half-period receiver edges on matching source-mesh columns.
+    const requestedPatchExtent = Math.max(
+      this.extent * 1.5,
+      options.patchExtent ?? this.extent * 1.5,
+    )
+    this.sourceHalfPeriods = Math.max(
+      3,
+      Math.ceil(requestedPatchExtent / this.extent * 2),
+    )
+    this.sourcePeriods = this.sourceHalfPeriods * 0.5
+    this.patchExtent = this.extent * this.sourcePeriods
+    const shortestWavelength = Math.min(...OCEAN_CAUSTIC_WAVES.map((wave) => wave.wavelength))
+      * this.extent / CAUSTIC_TILE_SIZE
+    const guardBandSegmentsPerPeriod = Math.ceil(this.resolution / 1.35)
+    const spectralSegmentsPerPeriod = Math.ceil(this.extent / shortestWavelength * 6)
+    const desiredSegmentsPerPeriod = Math.max(
+      guardBandSegmentsPerPeriod,
+      spectralSegmentsPerPeriod,
+    )
+    const maximumSegmentsPerPeriod = Math.max(
+      4,
+      Math.floor(512 / this.sourcePeriods / 4) * 4,
+    )
+    // A multiple of four remains exact for both whole- and half-period source
+    // extents and makes the centered receiver boundaries integer columns.
+    this.segmentsPerPeriod = Math.min(
+      maximumSegmentsPerPeriod,
+      Math.ceil(desiredSegmentsPerPeriod / 4) * 4,
+    )
+    this.sourceSegments = this.segmentsPerPeriod * this.sourceHalfPeriods / 2
     this.referenceDepth = Math.max(2, options.projectDepth ?? CAUSTIC_REFERENCE_DEPTH)
     const supportsHalfFloat = renderer.capabilities.isWebGL2 && renderer.extensions.has('EXT_color_buffer_float')
-    const waveDeclarations = `${oceanWaveDeclarations()}\n${oceanCausticWaveDeclarations()}`
+    const waveDeclarations = `${oceanPhysicalDeclarations()}\n${oceanCausticWaveDeclarations()}`
 
     this.target = new THREE.WebGLRenderTarget(this.resolution, this.resolution, {
       format: THREE.RGBAFormat,
       type: supportsHalfFloat ? THREE.HalfFloatType : THREE.UnsignedByteType,
-      minFilter: THREE.LinearFilter,
+      minFilter: THREE.LinearMipmapLinearFilter,
       magFilter: THREE.LinearFilter,
       depthBuffer: false,
       stencilBuffer: false,
     })
     this.target.texture.wrapS = THREE.RepeatWrapping
     this.target.texture.wrapT = THREE.RepeatWrapping
-    this.target.texture.generateMipmaps = false
+    // Receiver pixels often cover more than one projected texel, especially
+    // on a seabed seen at a grazing angle. The mip chain integrates the
+    // differential-area field over that footprint instead of abruptly
+    // replacing it with a uniform value in the receiver shader.
+    this.target.texture.generateMipmaps = true
+    this.target.texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy?.() ?? 1)
     this.target.texture.colorSpace = THREE.NoColorSpace
 
-    const displacementTerms = [
-      ...Array.from({ length: OCEAN_WAVES.length }, (_, index) => ({ prefix: 'OCEAN_WAVE', index, lod: true })),
-      ...Array.from({ length: OCEAN_CAUSTIC_WAVES.length }, (_, index) => ({ prefix: 'CAUSTIC_WAVE', index, lod: false })),
-    ]
-    const displacement = displacementTerms.map(({ prefix, index, lod }) => `
+    // A texture can repeat without a seam only when its source field is
+    // periodic over the same world interval. The visible macro spectrum has
+    // deliberately incommensurate wavelengths, so it cannot be baked into a
+    // bounded repeating target. The unresolved optical spectrum uses integer tile
+    // cycles and remains a physical slope/Snell projection without exposing a
+    // discontinuity every time the texture wraps.
+    const displacementTerms = Array.from(
+      { length: OCEAN_CAUSTIC_WAVES.length },
+      (_, index) => ({ prefix: 'CAUSTIC_WAVE', index }),
+    )
+    const displacement = displacementTerms.map(({ prefix, index }) => `
       {
-        float k = 6.28318530718 / ${prefix}_LENGTH_${index};
+        float wavelength = ${prefix}_LENGTH_${index}
+          * uExtent / ${CAUSTIC_TILE_SIZE.toFixed(1)};
+        float k = 6.28318530718 / wavelength;
         float omega = oceanOmega(k, ${prefix}_SPEED_${index}) * uWaveSpeed;
         float phase = k * dot(${prefix}_DIRECTION_${index}, xz) - omega * time + ${prefix}_PHASE_${index};
-        float amplitude = ${prefix}_AMPLITUDE_${index}${lod ? ' * min(uWaveAmp, 1.0) * oceanWaveLod(0.0, ' + prefix + '_LENGTH_' + index + ')' : ''};
+        float amplitude = ${prefix}_AMPLITUDE_${index};
         float c = cos(phase);
         displaced.xz += ${prefix}_DIRECTION_${index} * ${prefix}_STEEPNESS_${index} * amplitude * uWaveChop * c;
         displaced.y += amplitude * sin(phase);
       }
     `).join('\n')
-    const normal = displacementTerms.map(({ prefix, index, lod }) => `
+    const normal = displacementTerms.map(({ prefix, index }) => `
       {
-        float k = 6.28318530718 / ${prefix}_LENGTH_${index};
+        float wavelength = ${prefix}_LENGTH_${index}
+          * uExtent / ${CAUSTIC_TILE_SIZE.toFixed(1)};
+        float k = 6.28318530718 / wavelength;
         float omega = oceanOmega(k, ${prefix}_SPEED_${index}) * uWaveSpeed;
         float phase = k * dot(${prefix}_DIRECTION_${index}, xz) - omega * time + ${prefix}_PHASE_${index};
-        float amplitude = ${prefix}_AMPLITUDE_${index}${lod ? ' * min(uWaveAmp, 1.0) * oceanWaveLod(0.0, ' + prefix + '_LENGTH_' + index + ')' : ''};
+        float amplitude = ${prefix}_AMPLITUDE_${index};
         float q = ${prefix}_STEEPNESS_${index};
         float s = sin(phase);
         float c = cos(phase);
@@ -99,7 +157,7 @@ export class WaterCaustics {
       }
     `).join('\n')
 
-    this.geometry = new THREE.PlaneGeometry(2, 2, this.resolution, this.resolution)
+    this.geometry = new THREE.PlaneGeometry(2, 2, this.sourceSegments, this.sourceSegments)
     this.material = new THREE.ShaderMaterial({
       name: 'MyCraftWaterCaustics',
       uniforms: {
@@ -110,10 +168,6 @@ export class WaterCaustics {
         uProjectDepth: { value: this.referenceDepth },
         uEta: { value: 1.0 / WATER_IOR },
         uFieldScale: { value: CAUSTIC_FIELD_SCALE },
-        // oceanWaveDeclarations also emits the shared displacement helper.
-        // Keep its controls declared here even though this projection uses
-        // the fixed full-spectrum caustic path below.
-        uWaveAmp: { value: 1.0 },
         uWaveChop: { value: 1.0 },
         uWaveSpeed: { value: 1.0 },
         uSunDirection: { value: new THREE.Vector3(0.35, 0.9, 0.2).normalize() },
@@ -126,7 +180,6 @@ export class WaterCaustics {
         uniform float uTime;
         uniform float uProjectDepth;
         uniform float uEta;
-        uniform float uWaveAmp;
         uniform float uWaveChop;
         uniform float uWaveSpeed;
         uniform vec3 uSunDirection;
@@ -250,7 +303,11 @@ export class WaterCaustics {
       this.renderer.setScissor(0, 0, this.resolution, this.resolution)
       this.renderer.setScissorTest(false)
       this.renderer.autoClear = false
-      this.renderer.setClearColor(0x000000, 0)
+      // A forward-projected bundle can leave a texel untouched only at its
+      // conservative outer guard band. Neutral transmitted irradiance is the
+      // physically safe fallback there; black would manufacture a large
+      // zero-light island and make a valid receiver look unbound.
+      this.renderer.setClearColor(this.neutralClearColor, 1)
       this.renderer.clear(true, false, false)
       this.renderer.render(this.scene, this.camera)
     } catch (error) {
@@ -283,6 +340,10 @@ export class WaterCaustics {
       resolution: this.resolution,
       extent: this.extent,
       patchExtent: this.patchExtent,
+      sourceHalfPeriods: this.sourceHalfPeriods,
+      sourcePeriods: this.sourcePeriods,
+      segmentsPerPeriod: this.segmentsPerPeriod,
+      sourceSegments: this.sourceSegments,
       referenceDepth: this.referenceDepth,
       fieldScale: CAUSTIC_FIELD_SCALE,
       origin: this.origin.toArray(),

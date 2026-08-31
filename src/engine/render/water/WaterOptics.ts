@@ -7,6 +7,15 @@ export const CAUSTIC_REFERENCE_DEPTH = 24.0
 /** Linear encoding scale used for both float and byte caustic targets. */
 export const CAUSTIC_FIELD_SCALE = 4.0
 
+/**
+ * World period of the seamless bounded caustic transport field.
+ *
+ * Keep this deliberately incommensurate with the 64-block terrain chunks.
+ * A short, nearly patch-sized period made the concentrated part of one
+ * optical realization read as square projector islands on the seabed.
+ */
+export const CAUSTIC_TILE_SIZE = 53.0
+
 /** Absorption coefficients in inverse world metres (red, green, blue). */
 export const WATER_ABSORPTION = [0.075, 0.018, 0.005] as const
 

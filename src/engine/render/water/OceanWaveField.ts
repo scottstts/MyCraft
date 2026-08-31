@@ -1,3 +1,5 @@
+import { CAUSTIC_TILE_SIZE } from './WaterOptics'
+
 /**
  * Shared deterministic directional spectrum for the WebGL ocean.
  *
@@ -16,6 +18,12 @@ export interface OceanWave {
   speed: number;
   /** Deterministic phase offset prevents every band cresting at the origin. */
   phase: number;
+}
+
+export interface CausticOceanWave extends OceanWave {
+  /** Integer tile cycles keep the bounded optical field C1-periodic. */
+  tileCyclesX: number;
+  tileCyclesZ: number;
 }
 
 export const OCEAN_WAVES: readonly OceanWave[] = [
@@ -82,13 +90,47 @@ export const OCEAN_WAVES: readonly OceanWave[] = [
  * wave family gives the optical pass a finite, inspectable source of slope
  * energy instead of a decorative screen-space line mask.
  */
-export const OCEAN_CAUSTIC_WAVES: readonly OceanWave[] = [
-  { directionX: 0.819152, directionZ: 0.573576, amplitude: 0.022, wavelength: 6.8, steepness: 0.18, speed: 0.94, phase: 0.73 },
-  { directionX: -0.241922, directionZ: 0.970296, amplitude: 0.016, wavelength: 4.9, steepness: 0.16, speed: 1.02, phase: 3.18 },
-  { directionX: 0.939693, directionZ: -0.342020, amplitude: 0.011, wavelength: 3.55, steepness: 0.14, speed: 1.08, phase: 5.27 },
-  { directionX: 0.422618, directionZ: 0.906308, amplitude: 0.007, wavelength: 2.55, steepness: 0.12, speed: 0.88, phase: 1.42 },
-  { directionX: -0.766044, directionZ: 0.642788, amplitude: 0.004, wavelength: 1.82, steepness: 0.10, speed: 1.12, phase: 4.44 },
-  { directionX: 0.173648, directionZ: -0.984808, amplitude: 0.002, wavelength: 1.26, steepness: 0.08, speed: 0.96, phase: 2.05 },
+function periodicCausticWave(
+  tileCyclesX: number,
+  tileCyclesZ: number,
+  amplitude: number,
+  steepness: number,
+  speed: number,
+  phase: number,
+): CausticOceanWave {
+  const cycleLength = Math.hypot(tileCyclesX, tileCyclesZ)
+  return {
+    directionX: tileCyclesX / cycleLength,
+    directionZ: tileCyclesZ / cycleLength,
+    amplitude,
+    wavelength: CAUSTIC_TILE_SIZE / cycleLength,
+    steepness,
+    speed,
+    phase,
+    tileCyclesX,
+    tileCyclesZ,
+  }
+}
+
+export const OCEAN_CAUSTIC_WAVES: readonly CausticOceanWave[] = [
+  // A broad, deterministic optical spectrum. Integer wave vectors preserve a
+  // seamless C1 field over the 53 m domain, while the co-prime directions and
+  // distributed phases prevent one high-energy interference packet from
+  // occupying only a small square part of that domain. These are still real
+  // surface slopes consumed by Snell projection and the area Jacobian below;
+  // no receiver-side line mask is introduced.
+  periodicCausticWave(3, 1, 0.0350, 0.20, 0.94, 0.73),
+  periodicCausticWave(-3, 4, 0.0280, 0.19, 1.02, 3.18),
+  periodicCausticWave(5, -3, 0.0220, 0.18, 1.08, 5.27),
+  periodicCausticWave(4, 7, 0.0160, 0.16, 0.88, 1.42),
+  periodicCausticWave(-8, 5, 0.0120, 0.15, 1.12, 4.44),
+  periodicCausticWave(7, -10, 0.0090, 0.14, 0.96, 2.05),
+  periodicCausticWave(-12, 9, 0.0065, 0.12, 1.05, 6.01),
+  periodicCausticWave(13, 14, 0.0045, 0.11, 0.91, 3.89),
+  periodicCausticWave(-18, 11, 0.0032, 0.10, 1.09, 0.24),
+  periodicCausticWave(21, -16, 0.0022, 0.09, 0.98, 4.91),
+  periodicCausticWave(-24, -13, 0.0016, 0.08, 1.14, 2.77),
+  periodicCausticWave(27, 23, 0.0010, 0.07, 1.01, 5.68),
 ];
 
 const GRAVITY = 9.81;
@@ -144,7 +186,16 @@ export function getOceanMaxAmplitude(): number {
   return OCEAN_WAVE_HALF_RANGE;
 }
 
-/** GLSL declarations shared by the water vertex and fragment programs. */
+/** Physical GLSL constants shared by visible and optical wave programs. */
+export function oceanPhysicalDeclarations(): string {
+  return `
+    const float OCEAN_WATER_DEPTH = ${OCEAN_WATER_DEPTH.toFixed(6)};
+    const float OCEAN_SURFACE_TENSION_OVER_DENSITY = ${OCEAN_SURFACE_TENSION_OVER_DENSITY.toFixed(9)};
+    const float OCEAN_WAVE_HALF_RANGE = ${OCEAN_WAVE_HALF_RANGE.toFixed(6)};
+  `
+}
+
+/** GLSL declarations shared by the visible water vertex and fragment programs. */
 export function oceanWaveDeclarations(): string {
   return `${OCEAN_WAVES.map((wave, index) => `
     const vec2 OCEAN_WAVE_DIRECTION_${index} = vec2(${wave.directionX.toFixed(6)}, ${wave.directionZ.toFixed(6)});
@@ -154,9 +205,7 @@ export function oceanWaveDeclarations(): string {
     const float OCEAN_WAVE_SPEED_${index} = ${wave.speed.toFixed(6)};
     const float OCEAN_WAVE_PHASE_${index} = ${wave.phase.toFixed(6)};
   `).join('\n')}
-    const float OCEAN_WATER_DEPTH = ${OCEAN_WATER_DEPTH.toFixed(6)};
-    const float OCEAN_SURFACE_TENSION_OVER_DENSITY = ${OCEAN_SURFACE_TENSION_OVER_DENSITY.toFixed(9)};
-    const float OCEAN_WAVE_HALF_RANGE = ${OCEAN_WAVE_HALF_RANGE.toFixed(6)};
+    ${oceanPhysicalDeclarations()}
 
     // The resolved grid and the unresolved slope field use the same smooth
     // spectral cutoff. The lower floor transfers a fading band into the

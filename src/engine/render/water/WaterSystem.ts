@@ -11,7 +11,13 @@ import sandTextureUrl from '../../../assets/textures/sand.png'
 const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
 const SEABED_FLOOR_Y = 0
 const SEABED_FAR_CELL_SIZE = 16
-const OCEAN_OUTER_CELL_SIZE = 10
+// The player camera is 70 degrees vertical and commonly runs at widescreen
+// aspects. Far-plane corner rays can travel a little over twice the axial far
+// distance, so an ocean sized only to `far` exposes its square boundary near
+// the left/right horizon. Keep that outer-only lattice conservative and coarse;
+// the inner patch still owns near-field tessellation.
+const OCEAN_FRUSTUM_COVERAGE_SCALE = 2.10
+const OCEAN_OUTER_CELL_SIZE = 16
 // The lowest bounded wave trough is at WATER_LEVEL. Keep the render-only
 // receiver one complete voxel below it so no generated "seabed" top can
 // cross the optical interface and enter the water-free scene capture.
@@ -143,7 +149,7 @@ export class WaterSystem {
         caustics = new WaterCaustics(options.renderer, {
           resolution: 256,
           extent: CAUSTIC_TILE_SIZE,
-          patchExtent: CAUSTIC_TILE_SIZE * 1.35,
+          patchExtent: CAUSTIC_TILE_SIZE * 1.5,
           projectDepth: 24,
         })
       } catch (error) {
@@ -156,7 +162,7 @@ export class WaterSystem {
     const innerSize = Math.min(512, Math.max(256, far * 0.42))
     const innerSegments = innerSize <= 320 ? 128 : 160
     const innerHalf = innerSize * 0.5
-    const outerHalf = far * 2.05 * 0.5
+    const outerHalf = far * OCEAN_FRUSTUM_COVERAGE_SCALE
     const innerCellSize = innerSize / innerSegments
     // Keep the horizon strips sampled often enough that long swells do not
     // collapse into broad, parallel quads. Their shader still filters the

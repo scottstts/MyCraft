@@ -327,6 +327,9 @@ describe('WaterSurfaceMaterial', () => {
     };
     const innerZ = uniqueValues(innerPosition, 'z');
     const innerX = uniqueValues(innerPosition, 'x');
+    const north = ocean.getObjectByName('OceanSurfaceNorth') as THREE.Mesh;
+    const northX = uniqueValues(north.geometry.getAttribute('position'), 'x');
+    expect(Math.max(...northX.map(Math.abs))).toBeGreaterThanOrEqual(128 * 2.0);
     const valuesAtBoundary = (
       attribute: THREE.BufferAttribute,
       boundaryAxis: 'x' | 'z',

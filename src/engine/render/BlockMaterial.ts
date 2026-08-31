@@ -337,19 +337,25 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           float referenceTravel = (waterCausticReferenceDepth - depth) / vertical;
           vec2 projected = worldPosition.xz + refractedSun.xz * referenceTravel;
           vec2 causticCoord = (projected - waterCausticOrigin) / max(waterCausticExtent, 1.0) + 0.5;
-          vec2 uv = fract(causticCoord);
-          vec2 texel = 1.0 / max(waterCausticResolution, vec2(1.0));
-          float center = texture2D(waterCausticMap, uv).r;
-          float neighbours = (
-            texture2D(waterCausticMap, fract(uv + vec2(texel.x, 0.0))).r
-            + texture2D(waterCausticMap, fract(uv - vec2(texel.x, 0.0))).r
-            + texture2D(waterCausticMap, fract(uv + vec2(0.0, texel.y))).r
-            + texture2D(waterCausticMap, fract(uv - vec2(0.0, texel.y))).r
+          // Sample the unwrapped coordinate so derivatives remain continuous
+          // across the RepeatWrapping seam. The render target owns a physical
+          // mip chain; implicit LOD therefore integrates the concentration
+          // over this receiver footprint instead of erasing all variation at
+          // an arbitrary four-texel threshold.
+          vec2 footprintX = dFdx(causticCoord);
+          vec2 footprintY = dFdy(causticCoord);
+          float center = texture2D(waterCausticMap, causticCoord).r;
+          vec2 diagonalA = (footprintX + footprintY) * 0.35;
+          vec2 diagonalB = (footprintX - footprintY) * 0.35;
+          float footprintAverage = (
+            texture2D(waterCausticMap, causticCoord + diagonalA).r
+            + texture2D(waterCausticMap, causticCoord - diagonalA).r
+            + texture2D(waterCausticMap, causticCoord + diagonalB).r
+            + texture2D(waterCausticMap, causticCoord - diagonalB).r
           ) * 0.25;
           float footprint = max(length(dFdx(causticCoord)), length(dFdy(causticCoord)))
             * max(waterCausticResolution.x, waterCausticResolution.y);
-          float filtered = mix(center, neighbours, smoothstep(0.75, 2.5, footprint));
-          filtered = mix(filtered, 0.25, smoothstep(4.0, 10.0, footprint));
+          float filtered = mix(center, footprintAverage, smoothstep(0.75, 3.0, footprint));
           return clamp(filtered * waterCausticFieldScale, 0.0, 8.0);
       }
 

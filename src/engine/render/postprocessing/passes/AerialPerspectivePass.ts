@@ -136,6 +136,16 @@ export class AerialPerspectivePass extends ShaderPass {
           float waterMask = 1.0 - step(0.001, source.a);
           vec3 cameraPosition = cameraMatrixWorld[3].xyz;
           float cameraAboveWater = step(waterLevel, cameraPosition.y);
+          float cameraBelowWater = 1.0 - cameraAboveWater;
+          // The underside surface shader has already evaluated the analytic
+          // sky through its Fresnel/Snell window. There is no camera-side air
+          // segment before this interface; UnderwaterPass will integrate the
+          // camera-to-surface water path next. Reprocessing the water marker as
+          // a far-sky receiver drew a false atmospheric strip at the horizon.
+          if (waterMask > 0.5 && cameraBelowWater > 0.5) {
+            gl_FragColor = source;
+            return;
+          }
           float surfaceRayDistance = -1.0;
           if (abs(ray.y) > 0.001) {
             surfaceRayDistance = (waterLevel - cameraPosition.y) / ray.y;
@@ -156,7 +166,6 @@ export class AerialPerspectivePass extends ShaderPass {
           // second time before UnderwaterPass integrated the water medium.
           // Compare view-depth values so the reconstruction stays compatible
           // with the pass's axial depth convention.
-          float cameraBelowWater = step(0.001, waterLevel - cameraPosition.y);
           float crossingAhead = max(
             step(0.001, surfaceRayDistance),
             step(abs(surfaceRayDistance), 0.001) * step(0.0, -ray.y)
@@ -164,6 +173,7 @@ export class AerialPerspectivePass extends ShaderPass {
           float receiverAfterCrossing = step(0.001, receiverViewDepth - surfaceViewDepth);
           float crossedBeforeReceiver = crossingAhead * receiverAfterCrossing;
           float airViewDepth = receiverViewDepth;
+          float airEndViewDepth = receiverViewDepth;
           if (cameraBelowWater > 0.5) {
             airViewDepth = crossedBeforeReceiver > 0.5
               ? max(receiverViewDepth - surfaceViewDepth, 0.0)
@@ -172,6 +182,7 @@ export class AerialPerspectivePass extends ShaderPass {
             airViewDepth = crossedBeforeReceiver > 0.5
               ? min(receiverViewDepth, max(surfaceViewDepth, 0.0))
               : receiverViewDepth;
+            airEndViewDepth = airViewDepth;
           }
 
           float up = max(ray.y, 0.0);
@@ -192,13 +203,29 @@ export class AerialPerspectivePass extends ShaderPass {
           float horizonBand = exp(-pow(abs(ray.y) / max(horizonHazeWidth, 1e-3), 2.0));
           vec3 horizonAirlight = mix(seaMist, skyHorizon, 0.25) * skyRadianceScale;
           float horizonMix = clamp(horizonBand * horizonHazeStrength, 0.0, 1.0);
+          // Airlight must accumulate over an actual air segment. In particular,
+          // a below-water ray that stays below the interface can still end at
+          // the far depth sentinel; treating that sentinel as sky used to draw
+          // a bright atmospheric band through the underwater horizon.
+          float airPathCoverage = clamp(
+            1.0 - exp(-max(airViewDepth, 0.0) / 24.0),
+            0.0,
+            1.0
+          );
           if (receiverViewDepth >= cameraFar * 0.999) {
-            gl_FragColor = vec4(mix(source.rgb, horizonAirlight, horizonMix), source.a);
+            gl_FragColor = vec4(
+              mix(source.rgb, horizonAirlight, horizonMix * airPathCoverage),
+              source.a
+            );
             return;
           }
 
           float d = min(airViewDepth, maxDistance);
-          vec3 position = worldPosition(airViewDepth);
+          // airViewDepth is a segment length. For a camera that starts below
+          // water, the segment begins at the interface rather than the camera;
+          // evaluate atmospheric altitude at the segment end, not at a false
+          // camera-relative distance with the same numeric length.
+          vec3 position = worldPosition(airEndViewDepth);
           float altitude = max(position.y - waterLevel, 0.0);
           float density = mix(1.0, 0.35, 1.0 - exp(-altitude / max(0.25, mieScaleHeight * 4.0)));
           float horizonPath = 1.0 + 3.2 * pow(1.0 - abs(ray.y), 2.0);
@@ -226,7 +253,8 @@ export class AerialPerspectivePass extends ShaderPass {
           // small amount of the shared airlight. Without this floor the sky
           // branch and a water/terrain depth branch can still meet as a hard
           // line when the surface is inside the normal haze start distance.
-          float horizonSurfaceMix = horizonMix * mix(horizonHazeNearSurfaceFloor, 1.0, distanceHaze);
+          float horizonSurfaceMix = horizonMix * airPathCoverage
+            * mix(horizonHazeNearSurfaceFloor, 1.0, distanceHaze);
           composed = mix(composed, horizonAirlight, horizonSurfaceMix);
           gl_FragColor = vec4(composed, source.a);
         }

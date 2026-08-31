@@ -147,15 +147,22 @@ export class UnderwaterPass extends ShaderPass {
         // sediment/algae enough coherent variation to read as a medium. The
         // y terms make the field change through the column, while the time
         // offsets provide slow current advection.
-        float particleDensity(vec3 worldPosition) {
+        float particleDensity(vec3 worldPosition, float worldFilterWidth) {
           vec2 broadUv = worldPosition.xz * 0.045
             + vec2(worldPosition.y * 0.019, -worldPosition.y * 0.014)
             + vec2(mediumTime * 0.012, -mediumTime * 0.009);
           vec2 fineUv = worldPosition.xz * 0.19
             + vec2(worldPosition.y * 0.061, -worldPosition.y * 0.047)
             + vec2(-mediumTime * 0.027, mediumTime * 0.021);
-          float broad = valueNoise(broadUv);
-          float fine = valueNoise(fineUv);
+          // A march sample represents both a finite ray segment and a finite
+          // screen footprint. Frequencies smaller than either footprint must
+          // converge to their mean instead of becoming spoke-like ray slices.
+          float broadCoverage = 1.0 - smoothstep(0.35, 1.25, worldFilterWidth * 0.052);
+          float fineCoverage = 1.0 - smoothstep(0.25, 1.00, worldFilterWidth * 0.205);
+          float broad = 0.5;
+          float fine = 0.5;
+          if (broadCoverage > 0.001) broad = mix(0.5, valueNoise(broadUv), broadCoverage);
+          if (fineCoverage > 0.001) fine = mix(0.5, valueNoise(fineUv), fineCoverage);
           return clamp(0.78 + (broad - 0.5) * 0.36 + (fine - 0.5) * 0.14, 0.32, 1.18);
         }
 
@@ -179,7 +186,7 @@ export class UnderwaterPass extends ShaderPass {
           return clamp(1.0 - 0.5 * (rs * rs + rp * rp), 0.0, 1.0);
         }
 
-        float sampleCausticField(vec3 worldPosition) {
+        float sampleCausticField(vec3 worldPosition, float worldFilterWidth) {
           if (!causticMapEnabled) return 1.0;
           vec3 sun = normalize(uSunDirection);
           vec3 refractedSun = refract(-sun, vec3(0.0, 1.0, 0.0), 1.0 / WATER_IOR);
@@ -189,11 +196,33 @@ export class UnderwaterPass extends ShaderPass {
           vec2 projected = worldPosition.xz + refractedSun.xz * referenceTravel;
           vec2 causticCoord = (projected - causticOrigin) / max(causticExtent, 1.0) + 0.5;
           vec2 uv = fract(causticCoord);
+          vec2 texel = 1.0 / max(causticResolution, vec2(1.0));
+          float footprint = worldFilterWidth / max(causticExtent, 1.0)
+            * max(causticResolution.x, causticResolution.y);
+          // Most long volume segments cover many caustic texels and therefore
+          // integrate to neutral energy. Avoid five texture reads for that
+          // already-converged case; retain the full filter only near the
+          // interface where the optical web is actually resolvable.
+          if (footprint >= 10.0) return 1.0;
           float center = texture2D(causticMap, uv).r;
-          // The caustic target uses linear filtering. The volume contribution
-          // is intentionally low-frequency; receiver-side terrain sampling
-          // owns derivative-aware footprint rejection.
-          return clamp(center * causticFieldScale, 0.0, 8.0);
+          if (footprint <= 0.75) {
+            return clamp(center * causticFieldScale, 0.0, 8.0);
+          }
+          float neighbours = (
+            texture2D(causticMap, fract(uv + vec2(texel.x, 0.0))).r
+            + texture2D(causticMap, fract(uv - vec2(texel.x, 0.0))).r
+            + texture2D(causticMap, fract(uv + vec2(0.0, texel.y))).r
+            + texture2D(causticMap, fract(uv - vec2(0.0, texel.y))).r
+          ) * 0.25;
+          float filtered = mix(center, neighbours, smoothstep(0.75, 2.5, footprint));
+          // The encoded neutral concentration is 1 / fieldScale. A wide ray
+          // tube sees average irradiance, not an aliased periodic filament.
+          filtered = mix(
+            filtered,
+            1.0 / max(causticFieldScale, 1.0),
+            smoothstep(4.0, 10.0, footprint)
+          );
+          return clamp(filtered * causticFieldScale, 0.0, 8.0);
         }
 
         void main() {
@@ -215,8 +244,20 @@ export class UnderwaterPass extends ShaderPass {
 
           vec3 viewRay;
           vec3 ray = worldRay(viewRay);
-          float sceneViewDepth = readViewDepth(texture2D(tDepth, vUv).r);
+          float rawSceneDepth = texture2D(tDepth, vUv).r;
+          float finiteReceiver = 1.0 - step(0.999999, rawSceneDepth);
+          float sceneViewDepth = readViewDepth(rawSceneDepth);
           float sceneDistance = sceneViewDepth / max(-viewRay.z, 0.02);
+
+          // The visible ocean interface owns every above-water sky ray. If a
+          // far-sky pixel lacks that marker (for example at the finite ocean
+          // mesh's clipped grazing boundary), there is no valid submerged
+          // receiver for this pass to integrate toward. Treating the far-depth
+          // sentinel as one produced the cyan line above the ocean horizon.
+          if (cameraAboveWater > 0.5 && finiteReceiver < 0.5) {
+            gl_FragColor = source;
+            return;
+          }
 
           // Solve the water interval in ray distance. The same equations work
           // from either side of the interface and retain only crossings that
@@ -229,15 +270,26 @@ export class UnderwaterPass extends ShaderPass {
             step(0.001, surfaceDistance),
             step(abs(surfaceDistance), 0.001) * step(0.0, -ray.y)
           );
-          float cameraBelow = step(0.001, waterLevel - uCameraPosition.y);
+          float cameraBelow = 1.0 - cameraAboveWater;
+          float crossingBeforeReceiver = crossingAhead
+            * step(surfaceDistance, sceneDistance + 0.001);
           float crossedDistance = clamp(surfaceDistance, 0.0, sceneDistance);
           float waterDistance = cameraBelow > 0.5
-            ? (crossingAhead > 0.5 ? crossedDistance : sceneDistance)
-            : (crossingAhead > 0.5 ? max(sceneDistance - crossedDistance, 0.0) : 0.0);
+            ? (crossingBeforeReceiver > 0.5 ? crossedDistance : sceneDistance)
+            : (crossingBeforeReceiver > 0.5 ? max(sceneDistance - crossedDistance, 0.0) : 0.0);
           waterDistance = min(max(waterDistance, 0.0), cameraFar);
-          float waterStart = cameraBelow < 0.5 && crossingAhead > 0.5
+          float waterStart = cameraBelow < 0.5 && crossingBeforeReceiver > 0.5
             ? crossedDistance
             : 0.0;
+
+          // Angular ray spread plus interval discontinuities bound the world
+          // footprint represented by one pixel. This is evaluated outside the
+          // march so derivative instructions remain in uniform control flow.
+          float rayPixelSpread = max(length(dFdx(ray)), length(dFdy(ray)));
+          float intervalPixelSpread = max(
+            abs(dFdx(waterStart)) + abs(dFdx(waterDistance)),
+            abs(dFdy(waterStart)) + abs(dFdy(waterDistance))
+          );
 
           // Keep the authored soft camera transition for the below-surface
           // view. Above the interface, non-marker receivers get their actual
@@ -268,9 +320,15 @@ export class UnderwaterPass extends ShaderPass {
             debugSunPhase = phase * sunVisibility;
 
             for (int sampleIndex = 0; sampleIndex < MEDIUM_SAMPLES; sampleIndex++) {
-              float sampleDistance = segmentLength * (float(sampleIndex) + 0.5);
-              vec3 samplePosition = uCameraPosition + ray * (waterStart + sampleDistance);
-              float density = particleDensity(samplePosition) * densityScale;
+              float sampleFraction = (float(sampleIndex) + 0.5) / float(MEDIUM_SAMPLES);
+              float sampleDistance = waterDistance * sampleFraction;
+              float sampleTravel = waterStart + sampleDistance;
+              vec3 samplePosition = uCameraPosition + ray * sampleTravel;
+              float worldFilterWidth = max(
+                segmentLength * 0.5,
+                sampleTravel * rayPixelSpread + intervalPixelSpread * sampleFraction
+              );
+              float density = particleDensity(samplePosition, worldFilterWidth) * densityScale;
               vec3 sigmaS = scattering * density;
               vec3 sigmaT = sigmaBase * density;
               vec3 stepTransmittance = exp(-sigmaT * segmentLength);
@@ -279,7 +337,9 @@ export class UnderwaterPass extends ShaderPass {
               float sampleDepth = max(waterLevel - samplePosition.y, 0.0);
               float lightDistance = sampleDepth / lightVertical;
               vec3 lightTransmittance = exp(-sigmaBase * lightDistance * densityScale * 0.90);
-              float caustic = sampleCausticField(samplePosition);
+              float caustic = sunVisibility > 0.001
+                ? sampleCausticField(samplePosition, worldFilterWidth)
+                : 1.0;
               float causticTransport = mix(1.0, caustic, 0.42);
               vec3 ambientSource = mix(skyAmbient, fogColor, 0.35)
                 * (0.82 + 0.18 * max(ray.y, 0.0));
