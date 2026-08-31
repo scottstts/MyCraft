@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Astral Champion - Fantasy Minecraft Character</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+        body {
+            overflow: hidden;
+            background-color: #050811;
+            font-family: 'Consolas', monospace;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 16px;
+            height: 16px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.85);
+            box-shadow: 0 0 2px #000;
+        }
+        #crosshair::before { top: 7px; left: 0; width: 16px; height: 2px; }
+        #crosshair::after { top: 0; left: 7px; width: 2px; height: 16px; }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            text-shadow: 2px 2px 0px #000;
+            font-size: 13px;
+            line-height: 1.7;
+            pointer-events: none;
+            background: rgba(10, 16, 26, 0.8);
+            padding: 14px 18px;
+            border-radius: 6px;
+            border: 2px solid #29394f;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #e2e8f0;
+            text-shadow: 1px 1px 2px #000;
+            font-size: 13px;
+            background: rgba(10, 16, 26, 0.85);
+            padding: 10px 22px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            pointer-events: none;
+            text-align: center;
+        }
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: rgba(5, 8, 17, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            cursor: pointer;
+            z-index: 10;
+        }
+        #blocker h1 {
+            font-size: 32px;
+            margin-bottom: 8px;
+            text-shadow: 2px 2px 0 #00e5ff;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="blocker">
+        <h1>CLICK TO START</h1>
+        <p style="color: #94a3b8;">Controls: WASD | Shift to Sprint | Left Click to Strike | V for View</p>
+    </div>
+    <div id="crosshair"></div>
+    <div id="ui">
+        <div><b>CAMERA:</b> <span id="cam-mode" style="color:#fcd34d;">3rd Person [V]</span></div>
+        <div><b>ACTION:</b> <span id="anim-state">IDLE</span></div>
+        <div><b>TERRAIN:</b> <span id="water-state">Dry Land</span></div>
+    </div>
+    <div id="instructions">
+        [W,A,S,D] Move | [SPACE] Jump/Float | [SHIFT] Sprint | [L-CLICK] Swing Pickaxe | [V] Camera View
+    </div>
+    <div id="canvas-container"></div>
+
+    <script>
+        /* -------------------------------------------------------------
+           PROCEDURAL TEXTURES - ASTRAL RUNIC FANTASY CHAMPION
+        ------------------------------------------------------------- */
+        const TextureGen = {
+            createCanvas(w, h) {
+                const cv = document.createElement('canvas');
+                cv.width = w; cv.height = h;
+                return cv;
+            },
+            createPixelTexture(cv) {
+                const tex = new THREE.CanvasTexture(cv);
+                tex.magFilter = THREE.NearestFilter;
+                tex.minFilter = THREE.NearestFilter;
+                return tex;
+            },
+            addNoise(ctx, w, h, factor = 0.08) {
+                const img = ctx.getImageData(0, 0, w, h);
+                const d = img.data;
+                for (let i = 0; i < d.length; i += 4) {
+                    const n = (Math.random() - 0.5) * factor * 255;
+                    d[i] = Math.min(255, Math.max(0, d[i] + n));
+                    d[i+1] = Math.min(255, Math.max(0, d[i+1] + n));
+                    d[i+2] = Math.min(255, Math.max(0, d[i+2] + n));
+                }
+                ctx.putImageData(img, 0, 0);
+            },
+            createFaceTexture() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                
+                // Pale Dusky Skin Tone
+                ctx.fillStyle = '#dcd3cb';
+                ctx.fillRect(0, 0, 16, 16);
+
+                // Ashen Silver Spiky Front Hair
+                ctx.fillStyle = '#cbd5e1';
+                ctx.fillRect(0, 0, 16, 4);
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillRect(0, 3, 2, 3);
+                ctx.fillRect(14, 3, 2, 3);
+                ctx.fillRect(4, 3, 2, 2);
+                ctx.fillRect(10, 3, 2, 2);
+
+                // Right Eye: Solar Gold Iris with Ember Core
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(3, 6, 3, 2);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(4, 6, 2, 2);
+                ctx.fillStyle = '#fffbeb';
+                ctx.fillRect(4, 6, 1, 1);
+
+                // Left Eye: Ethereal Astral Cyan Iris + Glowing Arcane Mark
+                ctx.fillStyle = '#06b6d4';
+                ctx.fillRect(10, 5, 4, 4);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(11, 6, 2, 2);
+
+                // Astral Runic Tattoo trailing down left cheek
+                ctx.fillStyle = '#818cf8';
+                ctx.fillRect(12, 9, 2, 4);
+                ctx.fillRect(10, 11, 2, 2);
+
+                // Nose shadow & stoic mouth
+                ctx.fillStyle = '#b7a89b';
+                ctx.fillRect(7, 8, 2, 2);
+                ctx.fillStyle = '#475569';
+                ctx.fillRect(6, 12, 4, 1);
+
+                this.addNoise(ctx, 16, 16, 0.04);
+                return this.createPixelTexture(cv);
+            },
+            createHairTexture() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                
+                // Tiered Silver / Platinum Astral Hair
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillRect(0, 0, 16, 16);
+                ctx.fillStyle = '#e2e8f0';
+                ctx.fillRect(2, 2, 12, 12);
+                ctx.fillStyle = '#f8fafc';
+                ctx.fillRect(4, 4, 6, 6);
+                ctx.fillStyle = '#64748b';
+                ctx.fillRect(0, 12, 16, 4);
+
+                this.addNoise(ctx, 16, 16, 0.05);
+                return this.createPixelTexture(cv);
+            },
+            createTorsoTexture() {
+                const cv = this.createCanvas(16, 24);
+                const ctx = cv.getContext('2d');
+
+                // Midnight Obsidian Cuirass
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, 16, 24);
+
+                // Celestial Gold Filigree Inlay & Trim
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(0, 0, 16, 2);
+                ctx.fillRect(1, 2, 2, 18);
+                ctx.fillRect(13, 2, 2, 18);
+                ctx.fillRect(0, 16, 16, 2);
+
+                // Under-armor Astral Violet Gambeson Accents
+                ctx.fillStyle = '#312e81';
+                ctx.fillRect(3, 4, 10, 12);
+
+                // Glowing Starlight Eclipse Core (Center Rune)
+                ctx.fillStyle = '#8b5cf6';
+                ctx.fillRect(6, 7, 4, 5);
+                ctx.fillStyle = '#00f0ff';
+                ctx.fillRect(7, 8, 2, 3);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(7, 9, 2, 1);
+
+                // Armored Plated Waist / Tassets
+                ctx.fillStyle = '#1e293b';
+                ctx.fillRect(2, 18, 12, 6);
+                ctx.fillStyle = '#fbbf24';
+                ctx.fillRect(7, 18, 2, 6);
+
+                this.addNoise(ctx, 16, 24, 0.05);
+                return this.createPixelTexture(cv);
+            },
+            createArmTexture() {
+                const cv = this.createCanvas(8, 24);
+                const ctx = cv.getContext('2d');
+
+                // Shoulder & Arm Underlayer
+                ctx.fillStyle = '#1e1b4b';
+                ctx.fillRect(0, 0, 8, 6);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(0, 5, 8, 1);
+
+                // Bare Runic Forearm
+                ctx.fillStyle = '#dcd3cb';
+                ctx.fillRect(0, 6, 8, 6);
+                // Glowing Arm Rune Tattoo
+                ctx.fillStyle = '#00f0ff';
+                ctx.fillRect(3, 7, 2, 4);
+
+                // Obsidian & Gold Vambraces
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 12, 8, 8);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(1, 14, 6, 2);
+
+                // Fingerless Dark Leather Combat Wraps
+                ctx.fillStyle = '#18181b';
+                ctx.fillRect(0, 20, 8, 4);
+
+                this.addNoise(ctx, 8, 24, 0.05);
+                return this.createPixelTexture(cv);
+            },
+            createPantsTexture() {
+                const cv = this.createCanvas(8, 24);
+                const ctx = cv.getContext('2d');
+
+                // Dark Armored Breeches
+                ctx.fillStyle = '#1e293b';
+                ctx.fillRect(0, 0, 8, 12);
+                ctx.fillStyle = '#312e81';
+                ctx.fillRect(2, 2, 4, 8);
+
+                // Celestial Runic Knee Guard
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(0, 11, 8, 3);
+                ctx.fillStyle = '#00f0ff';
+                ctx.fillRect(3, 12, 2, 1);
+
+                // Heavy Obsidian Greaves & Sabatons
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 14, 8, 10);
+                ctx.fillStyle = '#475569';
+                ctx.fillRect(1, 15, 6, 6);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(0, 22, 8, 2);
+
+                this.addNoise(ctx, 8, 24, 0.05);
+                return this.createPixelTexture(cv);
+            },
+            createGrassTop() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                ctx.fillStyle = '#4d7c0f';
+                ctx.fillRect(0, 0, 16, 16);
+                this.addNoise(ctx, 16, 16, 0.12);
+                return this.createPixelTexture(cv);
+            },
+            createGrassSide() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                ctx.fillStyle = '#5c4033';
+                ctx.fillRect(0, 0, 16, 16);
+                ctx.fillStyle = '#4d7c0f';
+                ctx.fillRect(0, 0, 16, 5);
+                for (let i = 0; i < 16; i += 2) ctx.fillRect(i, 5, 1, 1 + (i % 3));
+                this.addNoise(ctx, 16, 16, 0.1);
+                return this.createPixelTexture(cv);
+            },
+            createDirt() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                ctx.fillStyle = '#5c4033';
+                ctx.fillRect(0, 0, 16, 16);
+                this.addNoise(ctx, 16, 16, 0.12);
+                return this.createPixelTexture(cv);
+            }
+        };
+
+        /* -------------------------------------------------------------
+           SCENE & LIGHTING
+        ------------------------------------------------------------- */
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#78a6ff');
+        scene.fog = new THREE.FogExp2('#78a6ff', 0.015);
+
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 500);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        container.appendChild(renderer.domElement);
+
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x475569, 0.45);
+        scene.add(hemiLight);
+
+        const sunLight = new THREE.DirectionalLight(0xfffbeb, 0.85);
+        sunLight.position.set(40, 60, 30);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.set(2048, 2048);
+        sunLight.shadow.bias = -0.0005;
+        scene.add(sunLight);
+
+        // Ground
+        const grassMat = [
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassSide(), roughness: 0.9 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassSide(), roughness: 0.9 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassTop(), roughness: 0.8 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createDirt(), roughness: 0.9 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassSide(), roughness: 0.9 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassSide(), roughness: 0.9 })
+        ];
+        const ground = new THREE.Mesh(new THREE.BoxGeometry(80, 2, 80), grassMat);
+        ground.position.y = -1;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Water Lake
+        const water = new THREE.Mesh(
+            new THREE.BoxGeometry(20, 1.8, 20),
+            new THREE.MeshStandardMaterial({ color: 0x0284c7, transparent: true, opacity: 0.7, roughness: 0.1 })
+        );
+        water.position.set(0, -0.9, 16);
+        scene.add(water);
+
+        /* -------------------------------------------------------------
+           3D VOXEL PICKAXE (SOLID VOXEL ARCH)
+        ------------------------------------------------------------- */
+        function createSolidVoxelPickaxe() {
+            const pickaxe = new THREE.Group();
+
+            const woodMat = new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.9 });
+            const goldMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.7, roughness: 0.3 });
+            const diamondMat = new THREE.MeshStandardMaterial({
+                color: 0x00f0ff,
+                emissive: 0x0099bb,
+                emissiveIntensity: 0.5,
+                roughness: 0.2
+            });
+
+            // Handle Shaft
+            const handle = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.9, 0.045), woodMat);
+            handle.position.y = 0.22;
+            handle.castShadow = true;
+            pickaxe.add(handle);
+
+            // Grip Collar
+            const grip = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.2, 0.055), goldMat);
+            grip.position.y = 0.05;
+            pickaxe.add(grip);
+
+            // Top Collar Mount
+            const headMount = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.08, 0.065), goldMat);
+            headMount.position.y = 0.62;
+            pickaxe.add(headMount);
+
+            // Stepped Voxel Pick Head Arch
+            const centerHead = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.065, 0.12), diamondMat);
+            centerHead.position.set(0, 0.64, 0);
+            pickaxe.add(centerHead);
+
+            const frontStep1 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.06, 0.1), diamondMat);
+            frontStep1.position.set(0, 0.60, 0.1);
+            pickaxe.add(frontStep1);
+
+            const frontTip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.055, 0.1), diamondMat);
+            frontTip.position.set(0, 0.53, 0.18);
+            frontTip.castShadow = true;
+            pickaxe.add(frontTip);
+
+            const backStep1 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.06, 0.1), diamondMat);
+            backStep1.position.set(0, 0.60, -0.1);
+            pickaxe.add(backStep1);
+
+            const backTip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.055, 0.1), diamondMat);
+            backTip.position.set(0, 0.53, -0.18);
+            backTip.castShadow = true;
+            pickaxe.add(backTip);
+
+            return pickaxe;
+        }
+
+        /* -------------------------------------------------------------
+           CHARACTER RIGGING - ASTRAL RUNIC CHAMPION
+        ------------------------------------------------------------- */
+        function createCharacterRig() {
+            const character = new THREE.Group();
+
+            const hairMat = new THREE.MeshStandardMaterial({ map: TextureGen.createHairTexture(), roughness: 0.6 });
+            const faceMat = new THREE.MeshStandardMaterial({ map: TextureGen.createFaceTexture(), roughness: 0.7 });
+            const torsoMat = new THREE.MeshStandardMaterial({ map: TextureGen.createTorsoTexture(), roughness: 0.4, metalness: 0.3 });
+            const armMat = new THREE.MeshStandardMaterial({ map: TextureGen.createArmTexture(), roughness: 0.4, metalness: 0.3 });
+            const pantsMat = new THREE.MeshStandardMaterial({ map: TextureGen.createPantsTexture(), roughness: 0.5, metalness: 0.3 });
+            
+            // Ornate Fantasy Materials
+            const goldRuneMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.85, roughness: 0.25 });
+            const obsidianPlateMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.7, roughness: 0.3 });
+            const astralCrystalMat = new THREE.MeshStandardMaterial({
+                color: 0x00f0ff,
+                emissive: 0x0088cc,
+                emissiveIntensity: 0.7,
+                roughness: 0.1,
+                metalness: 0.1
+            });
+            const violetGlowMat = new THREE.MeshStandardMaterial({
+                color: 0xa855f7,
+                emissive: 0x6b21a8,
+                emissiveIntensity: 0.6,
+                roughness: 0.2
+            });
+
+            // 1. Head
+            const headMaterials = [hairMat, hairMat, hairMat, hairMat, faceMat, hairMat];
+            const headMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), headMaterials);
+            headMesh.position.y = 0.25;
+            headMesh.castShadow = true;
+
+            // 3D Astral Diadem / Horned Crest Assembly
+            const hairBand = new THREE.Group();
+            
+            // Gold Circlet Brow
+            const crownBand = new THREE.Mesh(new THREE.BoxGeometry(0.53, 0.1, 0.53), goldRuneMat);
+            crownBand.position.y = 0.38;
+            hairBand.add(crownBand);
+
+            // Center Astral Crest Gem
+            const crestGem = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.08), astralCrystalMat);
+            crestGem.position.set(0, 0.44, 0.26);
+            hairBand.add(crestGem);
+
+            // Left & Right Swept-back Celestial Horns / Spikes
+            const leftHorn = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.16), obsidianPlateMat);
+            leftHorn.position.set(0.25, 0.48, -0.05);
+            leftHorn.rotation.set(-0.3, 0, 0.3);
+            hairBand.add(leftHorn);
+
+            const rightHorn = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.16), obsidianPlateMat);
+            rightHorn.position.set(-0.25, 0.48, -0.05);
+            rightHorn.rotation.set(-0.3, 0, -0.3);
+            hairBand.add(rightHorn);
+
+            const headPivot = new THREE.Group();
+            headPivot.position.set(0, 1.4, 0);
+            headPivot.add(headMesh);
+            headPivot.add(hairBand);
+
+            // First-person eye anchor
+            const eyeAnchor = new THREE.Object3D();
+            eyeAnchor.position.set(0, 0.30, 0.26);
+            headPivot.add(eyeAnchor);
+
+            // 2. Torso & Astral Relic Conduit (Back Assembly)
+            const torsoMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.75, 0.25), torsoMat);
+            torsoMesh.position.set(0, 1.025, 0);
+            torsoMesh.castShadow = true;
+
+            // 3D Back Astral Relic Conduit (Replaces Plain Backpack)
+            const backpack = new THREE.Group();
+            const relicHousing = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.42, 0.12), obsidianPlateMat);
+            relicHousing.position.set(0, 1.05, -0.18);
+            relicHousing.castShadow = true;
+            backpack.add(relicHousing);
+
+            const relicGoldStruts = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.18, 0.14), goldRuneMat);
+            relicGoldStruts.position.set(0, 1.05, -0.18);
+            backpack.add(relicGoldStruts);
+
+            const relicCoreCrystal = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.22, 0.08), astralCrystalMat);
+            relicCoreCrystal.position.set(0, 1.05, -0.23);
+            backpack.add(relicCoreCrystal);
+
+            // 3. Left Arm (Tiered Celestial Dread-Pauldron)
+            const leftArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), armMat);
+            leftArmMesh.position.y = -0.275;
+            leftArmMesh.castShadow = true;
+
+            // Tier 1 Heavy Spiked Shoulder Armor
+            const pauldron = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.34), obsidianPlateMat);
+            pauldron.position.set(0.04, 0.05, 0);
+            leftArmMesh.add(pauldron);
+
+            // Gold Runic Trim Accent on Pauldron
+            const pauldronGoldTrim = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.08, 0.36), goldRuneMat);
+            pauldronGoldTrim.position.set(0.04, 0.08, 0);
+            leftArmMesh.add(pauldronGoldTrim);
+
+            // Floating Astral Shoulder Crystal Shard
+            const pauldronCrystal = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 0.1), violetGlowMat);
+            pauldronCrystal.position.set(0.08, 0.20, 0);
+            leftArmMesh.add(pauldronCrystal);
+
+            const leftArmPivot = new THREE.Group();
+            leftArmPivot.position.set(0.375, 1.35, 0);
+            leftArmPivot.add(leftArmMesh);
+
+            // 4. Right Arm + Pickaxe (With Duelist Vambrace Plating)
+            const rightArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), armMat);
+            rightArmMesh.position.y = -0.275;
+            rightArmMesh.castShadow = true;
+
+            const duelistPauldron = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.28), goldRuneMat);
+            duelistPauldron.position.set(-0.01, 0.04, 0);
+            rightArmMesh.add(duelistPauldron);
+
+            const pickaxe = createSolidVoxelPickaxe();
+            pickaxe.position.set(0, -0.28, 0.1);
+            pickaxe.rotation.x = THREE.MathUtils.degToRad(30);
+            rightArmMesh.add(pickaxe);
+
+            const rightArmPivot = new THREE.Group();
+            rightArmPivot.position.set(-0.375, 1.35, 0);
+            rightArmPivot.add(rightArmMesh);
+
+            // 5. Legs with Armored Runic Greaves
+            const leftLegMesh = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), pantsMat);
+            leftLegMesh.position.y = -0.375;
+            leftLegMesh.castShadow = true;
+
+            const leftKneePlate = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.14, 0.08), goldRuneMat);
+            leftKneePlate.position.set(0, -0.25, 0.11);
+            leftLegMesh.add(leftKneePlate);
+
+            const leftLegPivot = new THREE.Group();
+            leftLegPivot.position.set(0.13, 0.65, 0);
+            leftLegPivot.add(leftLegMesh);
+
+            const rightLegMesh = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), pantsMat);
+            rightLegMesh.position.y = -0.375;
+            rightLegMesh.castShadow = true;
+
+            const rightKneePlate = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.14, 0.08), goldRuneMat);
+            rightKneePlate.position.set(0, -0.25, 0.11);
+            rightLegMesh.add(rightKneePlate);
+
+            const rightLegPivot = new THREE.Group();
+            rightLegPivot.position.set(-0.13, 0.65, 0);
+            rightLegPivot.add(rightLegMesh);
+
+            // Hierarchy Assembly
+            const bodyGroup = new THREE.Group();
+            bodyGroup.add(headPivot);
+            bodyGroup.add(torsoMesh);
+            bodyGroup.add(backpack);
+            bodyGroup.add(leftArmPivot);
+            bodyGroup.add(rightArmPivot);
+            bodyGroup.add(leftLegPivot);
+            bodyGroup.add(rightLegPivot);
+
+            bodyGroup.rotation.y = Math.PI;
+            character.add(bodyGroup);
+
+            return {
+                root: character,
+                body: bodyGroup,
+                headPivot: headPivot,
+                eyeAnchor: eyeAnchor,
+                headMesh: headMesh,
+                hairBand: hairBand,
+                torsoMesh: torsoMesh,
+                backpack: backpack,
+                leftArm: leftArmPivot,
+                leftArmMesh: leftArmMesh,
+                rightArm: rightArmPivot,
+                rightArmMesh: rightArmMesh,
+                leftLeg: leftLegPivot,
+                rightLeg: rightLegPivot,
+                pickaxe: pickaxe
+            };
+        }
+
+        const player = createCharacterRig();
+        scene.add(player.root);
+
+        /* -------------------------------------------------------------
+           CONTROLS & INPUT
+        ------------------------------------------------------------- */
+        const keys = {};
+        let isFirstPerson = false;
+        let isPointerLocked = false;
+        let isSwinging = false;
+        let swingTimer = 0;
+        const SWING_DURATION = 0.22;
+
+        let cameraPitch = 0;
+        let cameraYaw = 0;
+        let bodyYaw = 0;
+        const MAX_HEAD_TURN = THREE.MathUtils.degToRad(65);
+
+        const blocker = document.getElementById('blocker');
+        blocker.addEventListener('click', () => document.body.requestPointerLock());
+
+        document.addEventListener('pointerlockchange', () => {
+            isPointerLocked = (document.pointerLockElement === document.body);
+            blocker.style.display = isPointerLocked ? 'none' : 'flex';
+        });
+
+        window.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+            if (e.code === 'KeyV') {
+                isFirstPerson = !isFirstPerson;
+                document.getElementById('cam-mode').innerText = isFirstPerson ? "1st Person [V]" : "3rd Person [V]";
+                setFirstPersonMeshVisibility(isFirstPerson);
+            }
+        });
+
+        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+        window.addEventListener('mousedown', (e) => {
+            if (e.button === 0 && isPointerLocked && !isSwinging) {
+                isSwinging = true;
+                swingTimer = 0;
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isPointerLocked) return;
+            const sens = 0.0022;
+            cameraYaw -= e.movementX * sens;
+            cameraPitch -= e.movementY * sens;
+            cameraPitch = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, cameraPitch));
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function setFirstPersonMeshVisibility(fp) {
+            player.headMesh.visible = !fp;
+            player.hairBand.visible = !fp;
+
+            player.torsoMesh.visible = true;
+            player.backpack.visible = true;
+            player.leftArmMesh.visible = true;
+            player.rightArmMesh.visible = true;
+            player.leftLeg.visible = true;
+            player.rightLeg.visible = true;
+        }
+
+        /* -------------------------------------------------------------
+           ANIMATION & KINEMATICS
+        ------------------------------------------------------------- */
+        const clock = new THREE.Clock();
+        let walkTimer = 0;
+        let swimTimer = 0;
+        let verticalVelocity = 0;
+        let isGrounded = true;
+
+        function updateGame(delta) {
+            const pos = player.root.position;
+            const inWater = (pos.x > -10 && pos.x < 10 && pos.z > 6 && pos.z < 26);
+            document.getElementById('water-state').innerText = inWater ? "Swimming Pool" : "Lush Land";
+            document.getElementById('water-state').style.color = inWater ? "#38bdf8" : "#86efac";
+
+            /* --- WASD VECTOR CALCULATION --- */
+            const camForwardX = -Math.sin(cameraYaw);
+            const camForwardZ = -Math.cos(cameraYaw);
+            const camRightX = Math.cos(cameraYaw);
+            const camRightZ = -Math.sin(cameraYaw);
+
+            let moveX = 0;
+            let moveZ = 0;
+
+            if (keys['KeyW'] || keys['ArrowUp']) {
+                moveX += camForwardX;
+                moveZ += camForwardZ;
+            }
+            if (keys['KeyS'] || keys['ArrowDown']) {
+                moveX -= camForwardX;
+                moveZ -= camForwardZ;
+            }
+            if (keys['KeyD'] || keys['ArrowRight']) {
+                moveX += camRightX;
+                moveZ += camRightZ;
+            }
+            if (keys['KeyA'] || keys['ArrowLeft']) {
+                moveX -= camRightX;
+                moveZ -= camRightZ;
+            }
+
+            const inputLengthSq = moveX * moveX + moveZ * moveZ;
+            const isMoving = inputLengthSq > 0.0001;
+
+            if (isMoving) {
+                const len = Math.sqrt(inputLengthSq);
+                moveX /= len;
+                moveZ /= len;
+            }
+
+            const isSprinting = keys['ShiftLeft'] || keys['ShiftRight'];
+            const speed = inWater ? 3.2 : (isSprinting ? 6.8 : 4.0);
+
+            if (isMoving) {
+                pos.x += moveX * speed * delta;
+                pos.z += moveZ * speed * delta;
+            }
+
+            /* --- HEAD DECOUPLING & BODY ORIENTATION --- */
+            if (isFirstPerson) {
+                let lookDiff = cameraYaw - bodyYaw;
+                lookDiff = Math.atan2(Math.sin(lookDiff), Math.cos(lookDiff));
+
+                if (Math.abs(lookDiff) > MAX_HEAD_TURN) {
+                    const excess = lookDiff > 0
+                        ? lookDiff - MAX_HEAD_TURN
+                        : lookDiff + MAX_HEAD_TURN;
+                    bodyYaw += excess * Math.min(1.0, delta * 10.0);
+
+                    lookDiff = cameraYaw - bodyYaw;
+                    lookDiff = Math.atan2(Math.sin(lookDiff), Math.cos(lookDiff));
+                }
+
+                player.headPivot.rotation.y = THREE.MathUtils.clamp(
+                    lookDiff,
+                    -MAX_HEAD_TURN,
+                    MAX_HEAD_TURN
+                );
+                player.headPivot.rotation.x = -cameraPitch;
+            } else {
+                if (isMoving) {
+                    const targetMoveAngle = Math.atan2(-moveX, -moveZ);
+                    let angleDiff = targetMoveAngle - bodyYaw;
+                    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
+                    bodyYaw += angleDiff * Math.min(1.0, delta * 12.0);
+                }
+
+                player.headPivot.rotation.y = THREE.MathUtils.lerp(
+                    player.headPivot.rotation.y,
+                    0,
+                    Math.min(1.0, delta * 12.0)
+                );
+                player.headPivot.rotation.x = THREE.MathUtils.lerp(
+                    player.headPivot.rotation.x,
+                    0,
+                    Math.min(1.0, delta * 12.0)
+                );
+            }
+
+            player.root.rotation.y = bodyYaw;
+
+            /* --- VERTICAL PHYSICS / SWIMMING --- */
+            if (inWater) {
+                isGrounded = false;
+                if (keys['Space']) {
+                    pos.y += 2.8 * delta;
+                    if (pos.y > -0.2) pos.y = -0.2;
+                } else if (keys['ShiftLeft']) {
+                    pos.y -= 2.8 * delta;
+                    if (pos.y < -1.4) pos.y = -1.4;
+                } else {
+                    pos.y = THREE.MathUtils.lerp(pos.y, -0.45 + Math.sin(clock.getElapsedTime() * 2.5) * 0.04, delta * 3);
+                }
+            } else {
+                if (keys['Space'] && isGrounded) {
+                    verticalVelocity = 8.5;
+                    isGrounded = false;
+                }
+                verticalVelocity += -24 * delta;
+                pos.y += verticalVelocity * delta;
+                if (pos.y <= 0) {
+                    pos.y = 0;
+                    verticalVelocity = 0;
+                    isGrounded = true;
+                }
+            }
+
+            pos.x = Math.max(-36, Math.min(36, pos.x));
+            pos.z = Math.max(-36, Math.min(36, pos.z));
+
+            /* --- ANIMATION CONTROLLER --- */
+            let stateLabel = "IDLE";
+            if (inWater) {
+                stateLabel = isMoving ? "SWIMMING" : "TREADING WATER";
+                swimTimer += delta * (isMoving ? 8.0 : 3.0);
+
+                const swimPitch = isMoving ? -Math.PI / 2.05 : 0.2;
+                player.body.rotation.x = THREE.MathUtils.lerp(
+                    player.body.rotation.x,
+                    swimPitch,
+                    Math.min(1.0, delta * 8)
+                );
+
+                player.leftArm.rotation.x = -Math.PI / 3 + Math.sin(swimTimer) * 0.9;
+                player.leftArm.rotation.z = -0.3;
+                if (!isSwinging) {
+                    player.rightArm.rotation.x = -Math.PI / 3 + Math.sin(swimTimer + Math.PI) * 0.9;
+                    player.rightArm.rotation.z = 0.3;
+                }
+                player.leftLeg.rotation.x = Math.sin(swimTimer * 1.6) * 0.4;
+                player.rightLeg.rotation.x = -Math.sin(swimTimer * 1.6) * 0.4;
+
+            } else {
+                player.body.rotation.x = THREE.MathUtils.lerp(player.body.rotation.x, 0, delta * 10);
+
+                if (isMoving && isGrounded) {
+                    stateLabel = isSprinting ? "SPRINTING" : "WALKING";
+                    const freq = isSprinting ? 14 : 9;
+                    walkTimer += delta * freq;
+
+                    const legAngle = Math.sin(walkTimer) * (isSprinting ? 0.9 : 0.65);
+                    player.leftLeg.rotation.x = legAngle;
+                    player.rightLeg.rotation.x = -legAngle;
+
+                    player.leftArm.rotation.x = -legAngle * 0.8;
+                    player.leftArm.rotation.z = 0.05;
+                    if (!isSwinging) {
+                        player.rightArm.rotation.x = legAngle * 0.8;
+                        player.rightArm.rotation.z = -0.05;
+                    }
+                    player.body.position.y = Math.abs(Math.sin(walkTimer)) * 0.08;
+
+                } else if (!isGrounded) {
+                    stateLabel = "AIRBORNE";
+                    player.leftLeg.rotation.x = -0.4;
+                    player.rightLeg.rotation.x = 0.2;
+                    player.leftArm.rotation.x = -0.5;
+                    if (!isSwinging) player.rightArm.rotation.x = -0.5;
+                } else {
+                    stateLabel = "IDLE";
+                    const idleTime = clock.getElapsedTime() * 2.2;
+                    player.leftLeg.rotation.x = THREE.MathUtils.lerp(player.leftLeg.rotation.x, 0, delta * 8);
+                    player.rightLeg.rotation.x = THREE.MathUtils.lerp(player.rightLeg.rotation.x, 0, delta * 8);
+                    player.leftArm.rotation.x = THREE.MathUtils.lerp(player.leftArm.rotation.x, 0, delta * 8);
+                    player.leftArm.rotation.z = 0.08 + Math.sin(idleTime) * 0.03;
+
+                    if (!isSwinging) {
+                        player.rightArm.rotation.x = THREE.MathUtils.lerp(player.rightArm.rotation.x, 0, delta * 8);
+                        player.rightArm.rotation.z = -0.08 - Math.sin(idleTime) * 0.03;
+                    }
+                    player.body.position.y = Math.sin(idleTime) * 0.015;
+                }
+            }
+
+            /* --- STRIKE / SWING ANIMATION --- */
+            if (isSwinging) {
+                swingTimer += delta;
+                const progress = swingTimer / SWING_DURATION;
+                if (progress <= 1.0) {
+                    stateLabel += " + MINING";
+                    const strike = Math.sin(progress * Math.PI);
+                    player.rightArm.rotation.x = -Math.PI / 2.8 - strike * 1.5;
+                    player.rightArm.rotation.y = -strike * 0.35;
+                    player.rightArm.rotation.z = -strike * 0.2;
+                } else {
+                    isSwinging = false;
+                    swingTimer = 0;
+                    player.rightArm.rotation.y = 0;
+                }
+            }
+
+            document.getElementById('anim-state').innerText = stateLabel;
+        }
+
+        /* -------------------------------------------------------------
+           CAMERA SYSTEM
+        ------------------------------------------------------------- */
+        function updateCamera() {
+            const headWorldPos = new THREE.Vector3();
+            const eyeWorldPos = new THREE.Vector3();
+            player.headPivot.getWorldPosition(headWorldPos);
+            player.eyeAnchor.getWorldPosition(eyeWorldPos);
+
+            if (isFirstPerson) {
+                camera.position.copy(eyeWorldPos);
+
+                const lookDir = new THREE.Vector3(
+                    -Math.sin(cameraYaw) * Math.cos(cameraPitch),
+                    Math.sin(cameraPitch),
+                    -Math.cos(cameraYaw) * Math.cos(cameraPitch)
+                ).normalize();
+
+                camera.lookAt(camera.position.clone().add(lookDir));
+
+            } else {
+                const camDistance = 3.8;
+                const targetPoint = headWorldPos.clone().add(new THREE.Vector3(0, 0.30, 0));
+
+                const cx = Math.sin(cameraYaw) * Math.cos(cameraPitch) * camDistance;
+                const cy = -Math.sin(cameraPitch) * camDistance;
+                const cz = Math.cos(cameraYaw) * Math.cos(cameraPitch) * camDistance;
+
+                const desiredCamPos = new THREE.Vector3(
+                    targetPoint.x + cx,
+                    Math.max(0.1, targetPoint.y + cy),
+                    targetPoint.z + cz
+                );
+
+                camera.position.lerp(desiredCamPos, 0.4);
+                camera.lookAt(targetPoint);
+            }
+        }
+
+        /* -------------------------------------------------------------
+           RENDER LOOP
+        ------------------------------------------------------------- */
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = Math.min(clock.getDelta(), 0.1);
+            updateGame(delta);
+            updateCamera();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

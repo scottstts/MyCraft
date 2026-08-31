@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kaelith - Astral Void-Dragon Archon</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+        body {
+            overflow: hidden;
+            background-color: #030712;
+            font-family: 'Consolas', monospace;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 16px;
+            height: 16px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.85);
+            box-shadow: 0 0 2px #000;
+        }
+        #crosshair::before { top: 7px; left: 0; width: 16px; height: 2px; }
+        #crosshair::after { top: 0; left: 7px; width: 2px; height: 16px; }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            text-shadow: 2px 2px 0px #000;
+            font-size: 13px;
+            line-height: 1.7;
+            pointer-events: none;
+            background: rgba(6, 18, 30, 0.85);
+            padding: 14px 18px;
+            border-radius: 6px;
+            border: 2px solid #0284c7;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #e0f2fe;
+            text-shadow: 1px 1px 2px #000;
+            font-size: 13px;
+            background: rgba(6, 18, 30, 0.88);
+            padding: 10px 22px;
+            border-radius: 6px;
+            border: 1px solid #0369a1;
+            pointer-events: none;
+            text-align: center;
+        }
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: rgba(3, 7, 18, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            cursor: pointer;
+            z-index: 10;
+        }
+        #blocker h1 {
+            font-size: 32px;
+            margin-bottom: 8px;
+            color: #38bdf8;
+            text-shadow: 0 0 14px #0284c7, 2px 2px 0 #082f49;
+            letter-spacing: 2px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="blocker">
+        <h1>CLICK TO START</h1>
+        <p style="color: #bae6fd;">Controls: WASD | Shift to Sprint | Left Click to Strike | V for View</p>
+    </div>
+    <div id="crosshair"></div>
+    <div id="ui">
+        <div><b>CAMERA:</b> <span id="cam-mode" style="color:#38bdf8;">3rd Person [V]</span></div>
+        <div><b>ACTION:</b> <span id="anim-state">IDLE</span></div>
+        <div><b>TERRAIN:</b> <span id="water-state">Dry Land</span></div>
+    </div>
+    <div id="instructions">
+        [W,A,S,D] Move | [SPACE] Jump/Float | [SHIFT] Sprint | [L-CLICK] Swing Pickaxe | [V] Camera View
+    </div>
+    <div id="canvas-container"></div>
+
+    <script>
+        /* -------------------------------------------------------------
+           PROCEDURAL TEXTURES - ASTRAL VOID-DRAGON ARCHON (KAELITH)
+        ------------------------------------------------------------- */
+        const TextureGen = {
+            createCanvas(w, h) {
+                const cv = document.createElement('canvas');
+                cv.width = w; cv.height = h;
+                return cv;
+            },
+            createPixelTexture(cv) {
+                const tex = new THREE.CanvasTexture(cv);
+                tex.magFilter = THREE.NearestFilter;
+                tex.minFilter = THREE.NearestFilter;
+                return tex;
+            },
+            addNoise(ctx, w, h, factor = 0.08) {
+                const img = ctx.getImageData(0, 0, w, h);
+                const d = img.data;
+                for (let i = 0; i < d.length; i += 4) {
+                    const n = (Math.random() - 0.5) * factor * 255;
+                    d[i] = Math.min(255, Math.max(0, d[i] + n));
+                    d[i+1] = Math.min(255, Math.max(0, d[i+1] + n));
+                    d[i+2] = Math.min(255, Math.max(0, d[i+2] + n));
+                }
+                ctx.putImageData(img, 0, 0);
+            },
+            createFaceTexture() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                
+                // Pale Moonlit Porcelain Skin
+                ctx.fillStyle = '#eef2f6';
+                ctx.fillRect(0, 0, 16, 16);
+
+                // Ashen Silver Front Fringe with Celestial Cyan Streaks
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, 16, 2);
+                ctx.fillStyle = '#cbd5e1';
+                ctx.fillRect(0, 1, 16, 2);
+                ctx.fillStyle = '#06b6d4';
+                ctx.fillRect(1, 2, 3, 2);
+                ctx.fillRect(12, 2, 3, 2);
+                ctx.fillRect(4, 2, 2, 2);
+                ctx.fillRect(10, 2, 2, 2);
+                ctx.fillStyle = '#f8fafc';
+                ctx.fillRect(2, 0, 4, 2);
+                ctx.fillRect(10, 0, 4, 2);
+
+                // Astral Void Eyelashes
+                ctx.fillStyle = '#0b1329';
+                ctx.fillRect(2, 5, 4, 1);
+                ctx.fillRect(10, 5, 4, 1);
+
+                // Right Eye: Radiant Solar Amber Iris + Star Gleam (Heterochromia)
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(2, 6, 4, 3);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(3, 6, 2, 2);
+                ctx.fillStyle = '#fde047';
+                ctx.fillRect(4, 6, 1, 1);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(3, 6, 1, 1);
+
+                // Left Eye: Glowing Astral Cyan/Teal Iris + Diamond Gleam
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(10, 6, 4, 3);
+                ctx.fillStyle = '#06b6d4';
+                ctx.fillRect(11, 6, 2, 2);
+                ctx.fillStyle = '#67e8f9';
+                ctx.fillRect(12, 6, 1, 1);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(11, 6, 1, 1);
+
+                // Void Dragon Scale Markings / Arcane Circuit below right eye
+                ctx.fillStyle = '#0284c7';
+                ctx.fillRect(2, 9, 2, 3);
+                ctx.fillRect(4, 10, 2, 1);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(3, 11, 2, 2);
+
+                // Cheek Glow
+                ctx.fillStyle = '#c7d2fe';
+                ctx.fillRect(12, 9, 2, 1);
+
+                // Dark Plum/Slate Lips with Astral Sparkle
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(6, 12, 4, 1);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(7, 12, 2, 1);
+
+                this.addNoise(ctx, 16, 16, 0.03);
+                return this.createPixelTexture(cv);
+            },
+            createHairTexture() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                
+                // Deep Midnight Void Base
+                ctx.fillStyle = '#090d16';
+                ctx.fillRect(0, 0, 16, 16);
+                
+                // Ashen Silver / Platinum Shimmer
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(2, 2, 12, 12);
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillRect(3, 3, 10, 10);
+                ctx.fillStyle = '#e2e8f0';
+                ctx.fillRect(5, 4, 6, 8);
+                
+                // Glowing Cyan Mana Strands
+                ctx.fillStyle = '#06b6d4';
+                ctx.fillRect(1, 5, 2, 9);
+                ctx.fillRect(13, 5, 2, 9);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(2, 7, 1, 7);
+
+                this.addNoise(ctx, 16, 16, 0.05);
+                return this.createPixelTexture(cv);
+            },
+            createTorsoTexture() {
+                const cv = this.createCanvas(16, 24);
+                const ctx = cv.getContext('2d');
+
+                // Obsidian Dragon Carapace Base
+                ctx.fillStyle = '#090d16';
+                ctx.fillRect(0, 0, 16, 24);
+
+                // Moonlit Decolletage
+                ctx.fillStyle = '#eef2f6';
+                ctx.fillRect(5, 0, 6, 3);
+
+                // Gilded Solar Gold Armor Borders
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(2, 3, 12, 2);
+                ctx.fillRect(1, 5, 3, 12);
+                ctx.fillRect(12, 5, 3, 12);
+                ctx.fillStyle = '#fbbf24';
+                ctx.fillRect(3, 4, 10, 1);
+
+                // Deep Abyssal Teal Cuirass Inlay
+                ctx.fillStyle = '#042f2e';
+                ctx.fillRect(4, 5, 8, 12);
+
+                // Pulsing Astral Void Core (Chest Reactor Gem)
+                ctx.fillStyle = '#0891b2';
+                ctx.fillRect(6, 6, 4, 5);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(7, 7, 2, 3);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(7, 7, 1, 1);
+
+                // Segmented Dragon Scale Tassets & Solar Belt
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(0, 17, 16, 2);
+                ctx.fillStyle = '#0e7490';
+                ctx.fillRect(3, 19, 10, 5);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(7, 18, 2, 6);
+
+                this.addNoise(ctx, 16, 24, 0.04);
+                return this.createPixelTexture(cv);
+            },
+            createArmTexture() {
+                const cv = this.createCanvas(8, 24);
+                const ctx = cv.getContext('2d');
+
+                // Moonlit Bare Upper Arm
+                ctx.fillStyle = '#eef2f6';
+                ctx.fillRect(0, 0, 8, 7);
+
+                // Glowing Void-Runic Bracer Band
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(0, 4, 8, 1);
+                ctx.fillStyle = '#06b6d4';
+                ctx.fillRect(2, 5, 2, 3);
+                ctx.fillRect(4, 6, 2, 2);
+
+                // Obsidian Dragonscale Gauntlet
+                ctx.fillStyle = '#090d16';
+                ctx.fillRect(0, 8, 8, 12);
+                ctx.fillStyle = '#0891b2';
+                ctx.fillRect(1, 10, 6, 2);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(0, 14, 8, 1);
+
+                // Claw-Tipped Vambrace & Knuckle Gems
+                ctx.fillStyle = '#1e293b';
+                ctx.fillRect(0, 20, 8, 4);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(2, 21, 4, 1);
+
+                this.addNoise(ctx, 8, 24, 0.04);
+                return this.createPixelTexture(cv);
+            },
+            createPantsTexture() {
+                const cv = this.createCanvas(8, 24);
+                const ctx = cv.getContext('2d');
+
+                // Midnight Dragonweave Breeches
+                ctx.fillStyle = '#090d16';
+                ctx.fillRect(0, 0, 8, 6);
+                ctx.fillStyle = '#134e4a';
+                ctx.fillRect(2, 1, 4, 5);
+
+                // Thigh Skin Gap with Arcane Garter
+                ctx.fillStyle = '#eef2f6';
+                ctx.fillRect(0, 6, 8, 3);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(0, 8, 8, 1);
+
+                // Armored Dragon Talon Knee Guards
+                ctx.fillStyle = '#0891b2';
+                ctx.fillRect(0, 9, 8, 4);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(3, 10, 2, 2);
+
+                // Obsidian & Gilded Solar Sabatons
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 13, 8, 11);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillRect(1, 14, 6, 8);
+                ctx.fillStyle = '#042f2e';
+                ctx.fillRect(2, 15, 4, 6);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(0, 22, 8, 2);
+
+                this.addNoise(ctx, 8, 24, 0.04);
+                return this.createPixelTexture(cv);
+            },
+            createGrassTop() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                ctx.fillStyle = '#4d7c0f';
+                ctx.fillRect(0, 0, 16, 16);
+                this.addNoise(ctx, 16, 16, 0.12);
+                return this.createPixelTexture(cv);
+            },
+            createGrassSide() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                ctx.fillStyle = '#5c4033';
+                ctx.fillRect(0, 0, 16, 16);
+                ctx.fillStyle = '#4d7c0f';
+                ctx.fillRect(0, 0, 16, 5);
+                for (let i = 0; i < 16; i += 2) ctx.fillRect(i, 5, 1, 1 + (i % 3));
+                this.addNoise(ctx, 16, 16, 0.1);
+                return this.createPixelTexture(cv);
+            },
+            createDirt() {
+                const cv = this.createCanvas(16, 16);
+                const ctx = cv.getContext('2d');
+                ctx.fillStyle = '#5c4033';
+                ctx.fillRect(0, 0, 16, 16);
+                this.addNoise(ctx, 16, 16, 0.12);
+                return this.createPixelTexture(cv);
+            }
+        };
+
+        /* -------------------------------------------------------------
+           SCENE & LIGHTING
+        ------------------------------------------------------------- */
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#78a6ff');
+        scene.fog = new THREE.FogExp2('#78a6ff', 0.015);
+
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 500);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        container.appendChild(renderer.domElement);
+
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x475569, 0.45);
+        scene.add(hemiLight);
+
+        const sunLight = new THREE.DirectionalLight(0xfffbeb, 0.85);
+        sunLight.position.set(40, 60, 30);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.set(2048, 2048);
+        sunLight.shadow.bias = -0.0005;
+        scene.add(sunLight);
+
+        // Ground
+        const grassMat = [
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassSide(), roughness: 0.9 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassSide(), roughness: 0.9 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassTop(), roughness: 0.8 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createDirt(), roughness: 0.9 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassSide(), roughness: 0.9 }),
+            new THREE.MeshStandardMaterial({ map: TextureGen.createGrassSide(), roughness: 0.9 })
+        ];
+        const ground = new THREE.Mesh(new THREE.BoxGeometry(80, 2, 80), grassMat);
+        ground.position.y = -1;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Water Lake
+        const water = new THREE.Mesh(
+            new THREE.BoxGeometry(20, 1.8, 20),
+            new THREE.MeshStandardMaterial({ color: 0x0284c7, transparent: true, opacity: 0.7, roughness: 0.1 })
+        );
+        water.position.set(0, -0.9, 16);
+        scene.add(water);
+
+        /* -------------------------------------------------------------
+           3D VOXEL PICKAXE (SOLID VOXEL ARCH)
+        ------------------------------------------------------------- */
+        function createSolidVoxelPickaxe() {
+            const pickaxe = new THREE.Group();
+
+            const woodMat = new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.9 });
+            const goldMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.7, roughness: 0.3 });
+            const diamondMat = new THREE.MeshStandardMaterial({
+                color: 0x00f0ff,
+                emissive: 0x0099bb,
+                emissiveIntensity: 0.5,
+                roughness: 0.2
+            });
+
+            // Handle Shaft
+            const handle = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.9, 0.045), woodMat);
+            handle.position.y = 0.22;
+            handle.castShadow = true;
+            pickaxe.add(handle);
+
+            // Grip Collar
+            const grip = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.2, 0.055), goldMat);
+            grip.position.y = 0.05;
+            pickaxe.add(grip);
+
+            // Top Collar Mount
+            const headMount = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.08, 0.065), goldMat);
+            headMount.position.y = 0.62;
+            pickaxe.add(headMount);
+
+            // Stepped Voxel Pick Head Arch
+            const centerHead = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.065, 0.12), diamondMat);
+            centerHead.position.set(0, 0.64, 0);
+            pickaxe.add(centerHead);
+
+            const frontStep1 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.06, 0.1), diamondMat);
+            frontStep1.position.set(0, 0.60, 0.1);
+            pickaxe.add(frontStep1);
+
+            const frontTip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.055, 0.1), diamondMat);
+            frontTip.position.set(0, 0.53, 0.18);
+            frontTip.castShadow = true;
+            pickaxe.add(frontTip);
+
+            const backStep1 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.06, 0.1), diamondMat);
+            backStep1.position.set(0, 0.60, -0.1);
+            pickaxe.add(backStep1);
+
+            const backTip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.055, 0.1), diamondMat);
+            backTip.position.set(0, 0.53, -0.18);
+            backTip.castShadow = true;
+            pickaxe.add(backTip);
+
+            return pickaxe;
+        }
+
+        /* -------------------------------------------------------------
+           CHARACTER RIGGING - KAELITH (ASTRAL VOID-DRAGON ARCHON)
+        ------------------------------------------------------------- */
+        function createCharacterRig() {
+            const character = new THREE.Group();
+
+            const hairMat = new THREE.MeshStandardMaterial({ map: TextureGen.createHairTexture(), roughness: 0.5 });
+            const faceMat = new THREE.MeshStandardMaterial({ map: TextureGen.createFaceTexture(), roughness: 0.7 });
+            const torsoMat = new THREE.MeshStandardMaterial({ map: TextureGen.createTorsoTexture(), roughness: 0.35, metalness: 0.4 });
+            const armMat = new THREE.MeshStandardMaterial({ map: TextureGen.createArmTexture(), roughness: 0.4, metalness: 0.4 });
+            const pantsMat = new THREE.MeshStandardMaterial({ map: TextureGen.createPantsTexture(), roughness: 0.4, metalness: 0.4 });
+            
+            // Unique Dragon Archon Fantasy Materials
+            const obsidianMat = new THREE.MeshStandardMaterial({ color: 0x090d16, metalness: 0.85, roughness: 0.2 });
+            const solarGoldMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.2 });
+            const astralCyanGlow = new THREE.MeshStandardMaterial({
+                color: 0x38bdf8,
+                emissive: 0x0284c7,
+                emissiveIntensity: 0.95,
+                roughness: 0.15
+            });
+            const solarAmberGlow = new THREE.MeshStandardMaterial({
+                color: 0xfbbf24,
+                emissive: 0xd97706,
+                emissiveIntensity: 0.85,
+                roughness: 0.15
+            });
+            const silverPlating = new THREE.MeshStandardMaterial({ color: 0xcfd8dc, metalness: 0.75, roughness: 0.3 });
+
+            // 1. Head
+            const headMaterials = [hairMat, hairMat, hairMat, hairMat, faceMat, hairMat];
+            const headMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), headMaterials);
+            headMesh.position.y = 0.25;
+            headMesh.castShadow = true;
+
+            // 3D Dragon Head Assembly (Swept Crystalline Horns, Twin Side-Tresses, Floating Crown)
+            const hairBand = new THREE.Group();
+            
+            // Floating Solar-Void Circlet
+            const crownRing = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.07, 0.54), solarGoldMat);
+            crownRing.position.y = 0.40;
+            hairBand.add(crownRing);
+
+            // Floating Forehead Astral Star-Gem
+            const crownStar = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.14, 0.09), astralCyanGlow);
+            crownStar.position.set(0, 0.46, 0.27);
+            hairBand.add(crownStar);
+
+            // Swept Crystalline Dragon Horns (Left & Right Multi-tier)
+            // Left Dragon Horn
+            const leftHornBase = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.24, 0.14), obsidianMat);
+            leftHornBase.position.set(0.25, 0.52, -0.05);
+            leftHornBase.rotation.set(-0.4, 0, 0.38);
+            hairBand.add(leftHornBase);
+
+            const leftHornTip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.28, 0.08), astralCyanGlow);
+            leftHornTip.position.set(0.32, 0.70, -0.15);
+            leftHornTip.rotation.set(-0.6, 0, 0.42);
+            hairBand.add(leftHornTip);
+
+            // Right Dragon Horn
+            const rightHornBase = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.24, 0.14), obsidianMat);
+            rightHornBase.position.set(-0.25, 0.52, -0.05);
+            rightHornBase.rotation.set(-0.4, 0, -0.38);
+            hairBand.add(rightHornBase);
+
+            const rightHornTip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.28, 0.08), astralCyanGlow);
+            rightHornTip.position.set(-0.32, 0.70, -0.15);
+            rightHornTip.rotation.set(-0.6, 0, -0.42);
+            hairBand.add(rightHornTip);
+
+            // Dragon Fin Ear Blades
+            const leftFin = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.18), silverPlating);
+            leftFin.position.set(0.28, 0.25, 0.04);
+            leftFin.rotation.set(-0.2, 0, 0.45);
+            hairBand.add(leftFin);
+
+            const rightFin = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.18), silverPlating);
+            rightFin.position.set(-0.28, 0.25, 0.04);
+            rightFin.rotation.set(-0.2, 0, -0.45);
+            hairBand.add(rightFin);
+
+            // Flowing Twin Dragon Side-Tresses (Framing front & flowing back)
+            const leftTress = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.65, 0.10), hairMat);
+            leftTress.position.set(0.22, -0.05, 0.18);
+            leftTress.rotation.set(0.1, 0, -0.1);
+            hairBand.add(leftTress);
+
+            const leftTressRing = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.12), solarGoldMat);
+            leftTressRing.position.set(0.22, 0.05, 0.18);
+            hairBand.add(leftTressRing);
+
+            const rightTress = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.65, 0.10), hairMat);
+            rightTress.position.set(-0.22, -0.05, 0.18);
+            rightTress.rotation.set(0.1, 0, 0.1);
+            hairBand.add(rightTress);
+
+            const rightTressRing = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.12), solarGoldMat);
+            rightTressRing.position.set(-0.22, 0.05, 0.18);
+            hairBand.add(rightTressRing);
+
+            // Back Dragon Mane
+            const backMane = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.55, 0.14), hairMat);
+            backMane.position.set(0, 0.05, -0.26);
+            backMane.rotation.x = -0.12;
+            hairBand.add(backMane);
+
+            const headPivot = new THREE.Group();
+            headPivot.position.set(0, 1.4, 0);
+            headPivot.add(headMesh);
+            headPivot.add(hairBand);
+
+            // First-person eye anchor
+            const eyeAnchor = new THREE.Object3D();
+            eyeAnchor.position.set(0, 0.30, 0.26);
+            headPivot.add(eyeAnchor);
+
+            // 2. Torso & Astral Quad-Blade Dragon Wings (Back Apparatus)
+            const torsoMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.75, 0.25), torsoMat);
+            torsoMesh.position.set(0, 1.025, 0);
+            torsoMesh.castShadow = true;
+
+            // 3D Back Astral Dragon Core & Spines
+            const backpack = new THREE.Group();
+            const spineSpikes = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.70, 0.10), obsidianMat);
+            spineSpikes.position.set(0, 1.05, -0.16);
+            spineSpikes.castShadow = true;
+            backpack.add(spineSpikes);
+
+            const voidGenerator = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.16), solarGoldMat);
+            voidGenerator.position.set(0, 1.10, -0.18);
+            backpack.add(voidGenerator);
+
+            const coreEmber = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.08), solarAmberGlow);
+            coreEmber.position.set(0, 1.10, -0.24);
+            backpack.add(coreEmber);
+
+            // Crystalline Astral Quad-Blade Wings (Upper Major Blades, Lower Dagger Blades)
+            // Left Major Upper Wing Blade
+            const leftMajorBlade = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.65, 0.12), astralCyanGlow);
+            leftMajorBlade.position.set(0.30, 1.35, -0.24);
+            leftMajorBlade.rotation.set(0.35, 0.15, -0.65);
+            backpack.add(leftMajorBlade);
+
+            // Left Minor Lower Wing Blade
+            const leftMinorBlade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 0.08), solarAmberGlow);
+            leftMinorBlade.position.set(0.36, 0.95, -0.22);
+            leftMinorBlade.rotation.set(0.15, 0.1, -0.95);
+            backpack.add(leftMinorBlade);
+
+            // Right Major Upper Wing Blade
+            const rightMajorBlade = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.65, 0.12), astralCyanGlow);
+            rightMajorBlade.position.set(-0.30, 1.35, -0.24);
+            rightMajorBlade.rotation.set(0.35, -0.15, 0.65);
+            backpack.add(rightMajorBlade);
+
+            // Right Minor Lower Wing Blade
+            const rightMinorBlade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 0.08), solarAmberGlow);
+            rightMinorBlade.position.set(-0.36, 0.95, -0.22);
+            rightMinorBlade.rotation.set(0.15, -0.1, 0.95);
+            backpack.add(rightMinorBlade);
+
+            // 3. Left Arm (Spiked Dragon Pauldron & Blade Fin)
+            const leftArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), armMat);
+            leftArmMesh.position.y = -0.275;
+            leftArmMesh.castShadow = true;
+
+            // Spiked Dragon Carapace Pauldron
+            const dragonPauldron = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.34), obsidianMat);
+            dragonPauldron.position.set(0.04, 0.05, 0);
+            leftArmMesh.add(dragonPauldron);
+
+            const pauldronCrest = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.18, 0.36), solarGoldMat);
+            pauldronCrest.position.set(0.08, 0.14, 0);
+            leftArmMesh.add(pauldronCrest);
+
+            const pauldronCrystal = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 0.12), astralCyanGlow);
+            pauldronCrystal.position.set(0.12, 0.16, 0);
+            leftArmMesh.add(pauldronCrystal);
+
+            // Forearm Crystalline Blade Fin
+            const armBladeFin = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.30, 0.16), astralCyanGlow);
+            armBladeFin.position.set(0.14, -0.32, -0.05);
+            armBladeFin.rotation.x = 0.25;
+            leftArmMesh.add(armBladeFin);
+
+            const leftArmPivot = new THREE.Group();
+            leftArmPivot.position.set(0.375, 1.35, 0);
+            leftArmPivot.add(leftArmMesh);
+
+            // 4. Right Arm + Pickaxe (Duelist Gold Bracer & Talon)
+            const rightArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), armMat);
+            rightArmMesh.position.y = -0.275;
+            rightArmMesh.castShadow = true;
+
+            const rightGuard = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.14, 0.30), solarGoldMat);
+            rightGuard.position.set(-0.02, 0.04, 0);
+            rightArmMesh.add(rightGuard);
+
+            const pickaxe = createSolidVoxelPickaxe();
+            pickaxe.position.set(0, -0.28, 0.1);
+            pickaxe.rotation.x = THREE.MathUtils.degToRad(30);
+            rightArmMesh.add(pickaxe);
+
+            const rightArmPivot = new THREE.Group();
+            rightArmPivot.position.set(-0.375, 1.35, 0);
+            rightArmPivot.add(rightArmMesh);
+
+            // 5. Legs with Talon Sabatons & Spiked Dragon Knee Greaves
+            const leftLegMesh = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), pantsMat);
+            leftLegMesh.position.y = -0.375;
+            leftLegMesh.castShadow = true;
+
+            const leftKneeArmor = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.10), obsidianMat);
+            leftKneeArmor.position.set(0, -0.25, 0.11);
+            leftLegMesh.add(leftKneeArmor);
+
+            const leftKneeStar = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.10, 0.06), astralCyanGlow);
+            leftKneeStar.position.set(0, -0.25, 0.15);
+            leftLegMesh.add(leftKneeStar);
+
+            const leftLegPivot = new THREE.Group();
+            leftLegPivot.position.set(0.13, 0.65, 0);
+            leftLegPivot.add(leftLegMesh);
+
+            const rightLegMesh = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), pantsMat);
+            rightLegMesh.position.y = -0.375;
+            rightLegMesh.castShadow = true;
+
+            const rightKneeArmor = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.10), obsidianMat);
+            rightKneeArmor.position.set(0, -0.25, 0.11);
+            rightLegMesh.add(rightKneeArmor);
+
+            const rightKneeStar = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.10, 0.06), astralCyanGlow);
+            rightKneeStar.position.set(0, -0.25, 0.15);
+            rightLegMesh.add(rightKneeStar);
+
+            const rightLegPivot = new THREE.Group();
+            rightLegPivot.position.set(-0.13, 0.65, 0);
+            rightLegPivot.add(rightLegMesh);
+
+            // Hierarchy Assembly
+            const bodyGroup = new THREE.Group();
+            bodyGroup.add(headPivot);
+            bodyGroup.add(torsoMesh);
+            bodyGroup.add(backpack);
+            bodyGroup.add(leftArmPivot);
+            bodyGroup.add(rightArmPivot);
+            bodyGroup.add(leftLegPivot);
+            bodyGroup.add(rightLegPivot);
+
+            bodyGroup.rotation.y = Math.PI;
+            character.add(bodyGroup);
+
+            return {
+                root: character,
+                body: bodyGroup,
+                headPivot: headPivot,
+                eyeAnchor: eyeAnchor,
+                headMesh: headMesh,
+                hairBand: hairBand,
+                torsoMesh: torsoMesh,
+                backpack: backpack,
+                leftArm: leftArmPivot,
+                leftArmMesh: leftArmMesh,
+                rightArm: rightArmPivot,
+                rightArmMesh: rightArmMesh,
+                leftLeg: leftLegPivot,
+                rightLeg: rightLegPivot,
+                pickaxe: pickaxe
+            };
+        }
+
+        const player = createCharacterRig();
+        scene.add(player.root);
+
+        /* -------------------------------------------------------------
+           CONTROLS & INPUT
+        ------------------------------------------------------------- */
+        const keys = {};
+        let isFirstPerson = false;
+        let isPointerLocked = false;
+        let isSwinging = false;
+        let swingTimer = 0;
+        const SWING_DURATION = 0.22;
+
+        let cameraPitch = 0;
+        let cameraYaw = 0;
+        let bodyYaw = 0;
+        const MAX_HEAD_TURN = THREE.MathUtils.degToRad(65);
+
+        const blocker = document.getElementById('blocker');
+        blocker.addEventListener('click', () => document.body.requestPointerLock());
+
+        document.addEventListener('pointerlockchange', () => {
+            isPointerLocked = (document.pointerLockElement === document.body);
+            blocker.style.display = isPointerLocked ? 'none' : 'flex';
+        });
+
+        window.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+            if (e.code === 'KeyV') {
+                isFirstPerson = !isFirstPerson;
+                document.getElementById('cam-mode').innerText = isFirstPerson ? "1st Person [V]" : "3rd Person [V]";
+                setFirstPersonMeshVisibility(isFirstPerson);
+            }
+        });
+
+        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+        window.addEventListener('mousedown', (e) => {
+            if (e.button === 0 && isPointerLocked && !isSwinging) {
+                isSwinging = true;
+                swingTimer = 0;
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isPointerLocked) return;
+            const sens = 0.0022;
+            cameraYaw -= e.movementX * sens;
+            cameraPitch -= e.movementY * sens;
+            cameraPitch = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, cameraPitch));
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function setFirstPersonMeshVisibility(fp) {
+            player.headMesh.visible = !fp;
+            player.hairBand.visible = !fp;
+
+            player.torsoMesh.visible = true;
+            player.backpack.visible = true;
+            player.leftArmMesh.visible = true;
+            player.rightArmMesh.visible = true;
+            player.leftLeg.visible = true;
+            player.rightLeg.visible = true;
+        }
+
+        /* -------------------------------------------------------------
+           ANIMATION & KINEMATICS
+        ------------------------------------------------------------- */
+        const clock = new THREE.Clock();
+        let walkTimer = 0;
+        let swimTimer = 0;
+        let verticalVelocity = 0;
+        let isGrounded = true;
+
+        function updateGame(delta) {
+            const pos = player.root.position;
+            const inWater = (pos.x > -10 && pos.x < 10 && pos.z > 6 && pos.z < 26);
+            document.getElementById('water-state').innerText = inWater ? "Swimming Pool" : "Lush Land";
+            document.getElementById('water-state').style.color = inWater ? "#38bdf8" : "#86efac";
+
+            /* --- WASD VECTOR CALCULATION --- */
+            const camForwardX = -Math.sin(cameraYaw);
+            const camForwardZ = -Math.cos(cameraYaw);
+            const camRightX = Math.cos(cameraYaw);
+            const camRightZ = -Math.sin(cameraYaw);
+
+            let moveX = 0;
+            let moveZ = 0;
+
+            if (keys['KeyW'] || keys['ArrowUp']) {
+                moveX += camForwardX;
+                moveZ += camForwardZ;
+            }
+            if (keys['KeyS'] || keys['ArrowDown']) {
+                moveX -= camForwardX;
+                moveZ -= camForwardZ;
+            }
+            if (keys['KeyD'] || keys['ArrowRight']) {
+                moveX += camRightX;
+                moveZ += camRightZ;
+            }
+            if (keys['KeyA'] || keys['ArrowLeft']) {
+                moveX -= camRightX;
+                moveZ -= camRightZ;
+            }
+
+            const inputLengthSq = moveX * moveX + moveZ * moveZ;
+            const isMoving = inputLengthSq > 0.0001;
+
+            if (isMoving) {
+                const len = Math.sqrt(inputLengthSq);
+                moveX /= len;
+                moveZ /= len;
+            }
+
+            const isSprinting = keys['ShiftLeft'] || keys['ShiftRight'];
+            const speed = inWater ? 3.2 : (isSprinting ? 6.8 : 4.0);
+
+            if (isMoving) {
+                pos.x += moveX * speed * delta;
+                pos.z += moveZ * speed * delta;
+            }
+
+            /* --- HEAD DECOUPLING & BODY ORIENTATION --- */
+            if (isFirstPerson) {
+                let lookDiff = cameraYaw - bodyYaw;
+                lookDiff = Math.atan2(Math.sin(lookDiff), Math.cos(lookDiff));
+
+                if (Math.abs(lookDiff) > MAX_HEAD_TURN) {
+                    const excess = lookDiff > 0
+                        ? lookDiff - MAX_HEAD_TURN
+                        : lookDiff + MAX_HEAD_TURN;
+                    bodyYaw += excess * Math.min(1.0, delta * 10.0);
+
+                    lookDiff = cameraYaw - bodyYaw;
+                    lookDiff = Math.atan2(Math.sin(lookDiff), Math.cos(lookDiff));
+                }
+
+                player.headPivot.rotation.y = THREE.MathUtils.clamp(
+                    lookDiff,
+                    -MAX_HEAD_TURN,
+                    MAX_HEAD_TURN
+                );
+                player.headPivot.rotation.x = -cameraPitch;
+            } else {
+                if (isMoving) {
+                    const targetMoveAngle = Math.atan2(-moveX, -moveZ);
+                    let angleDiff = targetMoveAngle - bodyYaw;
+                    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
+                    bodyYaw += angleDiff * Math.min(1.0, delta * 12.0);
+                }
+
+                player.headPivot.rotation.y = THREE.MathUtils.lerp(
+                    player.headPivot.rotation.y,
+                    0,
+                    Math.min(1.0, delta * 12.0)
+                );
+                player.headPivot.rotation.x = THREE.MathUtils.lerp(
+                    player.headPivot.rotation.x,
+                    0,
+                    Math.min(1.0, delta * 12.0)
+                );
+            }
+
+            player.root.rotation.y = bodyYaw;
+
+            /* --- VERTICAL PHYSICS / SWIMMING --- */
+            if (inWater) {
+                isGrounded = false;
+                if (keys['Space']) {
+                    pos.y += 2.8 * delta;
+                    if (pos.y > -0.2) pos.y = -0.2;
+                } else if (keys['ShiftLeft']) {
+                    pos.y -= 2.8 * delta;
+                    if (pos.y < -1.4) pos.y = -1.4;
+                } else {
+                    pos.y = THREE.MathUtils.lerp(pos.y, -0.45 + Math.sin(clock.getElapsedTime() * 2.5) * 0.04, delta * 3);
+                }
+            } else {
+                if (keys['Space'] && isGrounded) {
+                    verticalVelocity = 8.5;
+                    isGrounded = false;
+                }
+                verticalVelocity += -24 * delta;
+                pos.y += verticalVelocity * delta;
+                if (pos.y <= 0) {
+                    pos.y = 0;
+                    verticalVelocity = 0;
+                    isGrounded = true;
+                }
+            }
+
+            pos.x = Math.max(-36, Math.min(36, pos.x));
+            pos.z = Math.max(-36, Math.min(36, pos.z));
+
+            /* --- ANIMATION CONTROLLER --- */
+            let stateLabel = "IDLE";
+            if (inWater) {
+                stateLabel = isMoving ? "SWIMMING" : "TREADING WATER";
+                swimTimer += delta * (isMoving ? 8.0 : 3.0);
+
+                const swimPitch = isMoving ? -Math.PI / 2.05 : 0.2;
+                player.body.rotation.x = THREE.MathUtils.lerp(
+                    player.body.rotation.x,
+                    swimPitch,
+                    Math.min(1.0, delta * 8)
+                );
+
+                player.leftArm.rotation.x = -Math.PI / 3 + Math.sin(swimTimer) * 0.9;
+                player.leftArm.rotation.z = -0.3;
+                if (!isSwinging) {
+                    player.rightArm.rotation.x = -Math.PI / 3 + Math.sin(swimTimer + Math.PI) * 0.9;
+                    player.rightArm.rotation.z = 0.3;
+                }
+                player.leftLeg.rotation.x = Math.sin(swimTimer * 1.6) * 0.4;
+                player.rightLeg.rotation.x = -Math.sin(swimTimer * 1.6) * 0.4;
+
+            } else {
+                player.body.rotation.x = THREE.MathUtils.lerp(player.body.rotation.x, 0, delta * 10);
+
+                if (isMoving && isGrounded) {
+                    stateLabel = isSprinting ? "SPRINTING" : "WALKING";
+                    const freq = isSprinting ? 14 : 9;
+                    walkTimer += delta * freq;
+
+                    const legAngle = Math.sin(walkTimer) * (isSprinting ? 0.9 : 0.65);
+                    player.leftLeg.rotation.x = legAngle;
+                    player.rightLeg.rotation.x = -legAngle;
+
+                    player.leftArm.rotation.x = -legAngle * 0.8;
+                    player.leftArm.rotation.z = 0.05;
+                    if (!isSwinging) {
+                        player.rightArm.rotation.x = legAngle * 0.8;
+                        player.rightArm.rotation.z = -0.05;
+                    }
+                    player.body.position.y = Math.abs(Math.sin(walkTimer)) * 0.08;
+
+                } else if (!isGrounded) {
+                    stateLabel = "AIRBORNE";
+                    player.leftLeg.rotation.x = -0.4;
+                    player.rightLeg.rotation.x = 0.2;
+                    player.leftArm.rotation.x = -0.5;
+                    if (!isSwinging) player.rightArm.rotation.x = -0.5;
+                } else {
+                    stateLabel = "IDLE";
+                    const idleTime = clock.getElapsedTime() * 2.2;
+                    player.leftLeg.rotation.x = THREE.MathUtils.lerp(player.leftLeg.rotation.x, 0, delta * 8);
+                    player.rightLeg.rotation.x = THREE.MathUtils.lerp(player.rightLeg.rotation.x, 0, delta * 8);
+                    player.leftArm.rotation.x = THREE.MathUtils.lerp(player.leftArm.rotation.x, 0, delta * 8);
+                    player.leftArm.rotation.z = 0.08 + Math.sin(idleTime) * 0.03;
+
+                    if (!isSwinging) {
+                        player.rightArm.rotation.x = THREE.MathUtils.lerp(player.rightArm.rotation.x, 0, delta * 8);
+                        player.rightArm.rotation.z = -0.08 - Math.sin(idleTime) * 0.03;
+                    }
+                    player.body.position.y = Math.sin(idleTime) * 0.015;
+                }
+            }
+
+            /* --- STRIKE / SWING ANIMATION --- */
+            if (isSwinging) {
+                swingTimer += delta;
+                const progress = swingTimer / SWING_DURATION;
+                if (progress <= 1.0) {
+                    stateLabel += " + MINING";
+                    const strike = Math.sin(progress * Math.PI);
+                    player.rightArm.rotation.x = -Math.PI / 2.8 - strike * 1.5;
+                    player.rightArm.rotation.y = -strike * 0.35;
+                    player.rightArm.rotation.z = -strike * 0.2;
+                } else {
+                    isSwinging = false;
+                    swingTimer = 0;
+                    player.rightArm.rotation.y = 0;
+                }
+            }
+
+            document.getElementById('anim-state').innerText = stateLabel;
+        }
+
+        /* -------------------------------------------------------------
+           CAMERA SYSTEM
+        ------------------------------------------------------------- */
+        function updateCamera() {
+            const headWorldPos = new THREE.Vector3();
+            const eyeWorldPos = new THREE.Vector3();
+            player.headPivot.getWorldPosition(headWorldPos);
+            player.eyeAnchor.getWorldPosition(eyeWorldPos);
+
+            if (isFirstPerson) {
+                camera.position.copy(eyeWorldPos);
+
+                const lookDir = new THREE.Vector3(
+                    -Math.sin(cameraYaw) * Math.cos(cameraPitch),
+                    Math.sin(cameraPitch),
+                    -Math.cos(cameraYaw) * Math.cos(cameraPitch)
+                ).normalize();
+
+                camera.lookAt(camera.position.clone().add(lookDir));
+
+            } else {
+                const camDistance = 3.8;
+                const targetPoint = headWorldPos.clone().add(new THREE.Vector3(0, 0.30, 0));
+
+                const cx = Math.sin(cameraYaw) * Math.cos(cameraPitch) * camDistance;
+                const cy = -Math.sin(cameraPitch) * camDistance;
+                const cz = Math.cos(cameraYaw) * Math.cos(cameraPitch) * camDistance;
+
+                const desiredCamPos = new THREE.Vector3(
+                    targetPoint.x + cx,
+                    Math.max(0.1, targetPoint.y + cy),
+                    targetPoint.z + cz
+                );
+
+                camera.position.lerp(desiredCamPos, 0.4);
+                camera.lookAt(targetPoint);
+            }
+        }
+
+        /* -------------------------------------------------------------
+           RENDER LOOP
+        ------------------------------------------------------------- */
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = Math.min(clock.getDelta(), 0.1);
+            updateGame(delta);
+            updateCamera();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
