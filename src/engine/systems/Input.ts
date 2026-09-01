@@ -12,6 +12,7 @@ export class InputSystem {
   private canvas: HTMLCanvasElement;
   private camera: THREE.PerspectiveCamera;
   private isPointerLocked: boolean = false;
+  private inputEnabled = false;
   private readonly mouseSensitivity: number = 0.0022;
   private onPointerLockChangedCallback: ((locked: boolean) => void) | null = null;
   private onCharacterSwitchRequestedCallback: (() => void) | null = null;
@@ -98,6 +99,30 @@ export class InputSystem {
   }
 
   /**
+   * Keep browser input inert until the engine has completed its first usable
+   * frame. Pointer lock may be granted during the launch gesture, but that is
+   * not gameplay entry and must not alter the pending camera pose.
+   */
+  setEnabled(enabled: boolean): void {
+    this.inputEnabled = enabled;
+    if (!enabled) {
+      this.moveForward = false;
+      this.moveBackward = false;
+      this.moveLeft = false;
+      this.moveRight = false;
+      this.sprint = false;
+      this.jumpQueued = false;
+      this.jumpHeld = false;
+      this.leftClickQueued = false;
+      this.rightClickQueued = false;
+      this.leftMouseHeld = false;
+      this.numSlotQueued = null;
+      this.pauseToggleQueued = false;
+      this.viewToggleQueued = false;
+    }
+  }
+
+  /**
    * Re-seed the look heading when a view mode owns a new default framing.
    * Pitch is preserved unless a caller explicitly supplies a replacement.
    */
@@ -130,7 +155,7 @@ export class InputSystem {
   }
 
   private onMouseMove(e: MouseEvent): void {
-    if (!this.isPointerLocked) return;
+    if (!this.inputEnabled || !this.isPointerLocked) return;
 
     const deltaX = e.movementX || 0;
     const deltaY = e.movementY || 0;
@@ -177,7 +202,7 @@ export class InputSystem {
   }
 
   private onMouseDown(e: MouseEvent): void {
-    if (!this.isPointerLocked) return;
+    if (!this.inputEnabled || !this.isPointerLocked) return;
     if (e.button === 0) {
       this.leftMouseHeld = true;
       this.leftClickQueued = true;
@@ -194,6 +219,8 @@ export class InputSystem {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    if (!this.inputEnabled) return;
+
     switch (e.code) {
       case 'KeyW':
       case 'ArrowUp':

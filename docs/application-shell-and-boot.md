@@ -23,7 +23,7 @@ The engine is lazy-loaded so the initial React shell can render before the Three
 | `world-loading` | Generate or ingest the expected chunks and produce their meshes | Every expected chunk has data and a mesh; initial meshes are applied |
 | `shader-compilation` | Ask `WebGLRenderer.compileAsync()` to prepare the active scene | Shader compilation settles |
 | `warmup` / `first-render` | Open the first-frame gate and let the RAF loop render | The first successful frame completes |
-| `ready` | Mark gameplay ready and return from `Engine.start()` | `CanvasHost` releases the entry UI |
+| `ready` | Mark gameplay ready, enable the already-constructed input system, and return from `Engine.start()` | `CanvasHost` releases the entry UI |
 
 Generated worlds wait for both `CHUNK_READY` and `CHUNK_MESH` for the expected set. Saved worlds bypass generation by ingesting their verified chunk payloads into the same pipeline. The initial mesh queue is flushed before the player is positioned for entry, which prevents the user from entering a scene that is still visually empty.
 

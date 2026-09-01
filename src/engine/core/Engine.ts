@@ -1059,6 +1059,10 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   if (!running) throw new Error('Renderer stopped before the first frame');
   pointerLockWasActiveInGameplay = document.pointerLockElement === canvas;
   gameplayReady = true;
+  // Pointer lock can be active from the launch gesture, but input must remain
+  // inert until the first usable frame and the gameplay-ready boundary have
+  // both been crossed.
+  inputSystem?.setEnabled(true);
   setBootStage('ready', onBootStage);
   cancelStartupWait = null;
 }
@@ -1116,6 +1120,7 @@ function stop() {
 
   // Clean up input
   if (inputSystem) {
+    inputSystem.setEnabled(false);
     inputSystem.exitPointerLock();
     inputSystem.destroy();
     inputSystem = null;
