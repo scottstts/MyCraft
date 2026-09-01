@@ -41,4 +41,31 @@ describe('VoxelOccupancyVolume', () => {
     expect(volume.getDiagnostics().grassTufts).toBe(1);
     volume.dispose();
   });
+
+  it('keeps render-only seaweed casters outside voxel occupancy', () => {
+    const volume = new VoxelOccupancyVolume({
+      minX: 0,
+      maxX: 32,
+      minY: 0,
+      maxY: 32,
+      minZ: 0,
+      maxZ: 32,
+    });
+    volume.setSeaweedAnchors([{ x: 3.25, z: 4.75, rootY: 8, height: 4 }]);
+
+    const encoded = volume.seaweedTexture.image.data as Uint8Array;
+    const index = (4 * 32 + 3) * 4;
+    expect(encoded[index]).toBe(64)
+    expect(encoded[index + 1]).toBe(191)
+    expect(encoded[index + 2]).toBe(64)
+    expect(encoded[index + 3]).toBe(128)
+    const voxelIndex = 3 + 32 * (8 + 32 * 4)
+    expect((volume.texture.image.data as Uint8Array)[voxelIndex]).toBe(0)
+    expect(volume.getDiagnostics().seaweedAnchors).toBe(1)
+    expect(volume.getDiagnostics().seaweedTextureBytes).toBe(32 * 32 * 4)
+
+    const bricks = volume.brickTexture.image.data as Uint8Array
+    expect(bricks[4]).toBe(255)
+    volume.dispose()
+  });
 });

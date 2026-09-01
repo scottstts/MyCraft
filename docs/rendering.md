@@ -33,9 +33,9 @@ The composer has its own internal render targets, so its atomic resize method up
 
 ## Scene and material ownership
 
-`SceneBuilder` creates the scene, a small ambient floor light, and the canonical first-person perspective camera. `ChunkRenderer` owns the scene meshes produced from worker responses. `BlockMaterial` shades opaque voxel faces, while `WaterSurfaceMaterial` shades water faces. `GrassBillboardSystem` owns decorative instanced grass.
+`SceneBuilder` creates the scene, a small ambient floor light, and the canonical first-person perspective camera. `ChunkRenderer` owns the scene meshes produced from worker responses. `BlockMaterial` shades opaque voxel faces, while `WaterSurfaceMaterial` shades water faces. `GrassBillboardSystem` owns decorative instanced grass, and `SeaweedSystem` owns the render-only ocean vegetation layer.
 
-The native Three.js shadow-map rasterizer is disabled. Direct-sun visibility is supplied by the shared voxel shadow pass described in [Atmosphere, lighting, and shadows](atmosphere-lighting-and-shadows.md), so terrain, grass, and the player do not receive two competing shadow models.
+The native Three.js shadow-map rasterizer is disabled. Direct-sun visibility is supplied by the shared voxel shadow pass described in [Atmosphere, lighting, and shadows](atmosphere-lighting-and-shadows.md), so terrain, grass, seaweed, and the player do not receive two competing shadow models. Seaweed uses a compact separate caster field because it is not gameplay voxel occupancy.
 
 ## Frame and resize order
 

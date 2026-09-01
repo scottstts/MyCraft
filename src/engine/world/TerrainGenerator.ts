@@ -33,6 +33,14 @@ const LAKE_DEPTH = 8;
 // Ocean floor generation parameters (must mirror generator.worker.ts)
 const OCEAN_FLOOR_SCALE = 0.012;        // Ocean floor variation frequency
 
+export interface TerrainSample {
+  height: number;
+  /** True only outside the noisy island mask; inland lake depressions are false. */
+  isOcean: boolean;
+}
+
+export type TerrainSampler = (x: number, z: number) => TerrainSample;
+
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
   return () => {
@@ -61,97 +69,138 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 }
 
 /**
- * Get terrain height at a specific world position using island generation
+ * Create a cached terrain sampler using the same noise streams as generation.
+ * The returned classification distinguishes the exterior ocean from inland
+ * lake depressions that are still part of the island mask.
  */
-export function getHeightAtPosition(x: number, z: number, seed: number, worldRadius?: number): number {
+export function createTerrainSampler(seed: number, worldRadius?: number): TerrainSampler {
   const rngCoastline = mulberry32(seed ^ 0x9e3779b9);
   const rngElevation = mulberry32(seed ^ 0x85ebca6b);
-  const rngHills     = mulberry32(seed ^ 0xc2b2ae35);
-  const rngDetail    = mulberry32(seed ^ 0x27d4eb2f);
-  const rngWarpX     = mulberry32(seed ^ 0xa24baed6);
-  const rngWarpZ     = mulberry32(seed ^ 0x3bd39e10);
-  const rngLakes     = mulberry32(seed ^ 0x1a2b3c4d);
+  const rngHills = mulberry32(seed ^ 0xc2b2ae35);
+  const rngDetail = mulberry32(seed ^ 0x27d4eb2f);
+  const rngWarpX = mulberry32(seed ^ 0xa24baed6);
+  const rngWarpZ = mulberry32(seed ^ 0x3bd39e10);
+  const rngLakes = mulberry32(seed ^ 0x1a2b3c4d);
   const rngOceanFloor = mulberry32(seed ^ 0x5f7a2e1c);
 
   const nCoastline = createNoise2D(rngCoastline);
   const nElevation = createNoise2D(rngElevation);
-  const nHills     = createNoise2D(rngHills);
-  const nDetail    = createNoise2D(rngDetail);
-  const nWarpX     = createNoise2D(rngWarpX);
-  const nWarpZ     = createNoise2D(rngWarpZ);
-  const nLakes     = createNoise2D(rngLakes);
+  const nHills = createNoise2D(rngHills);
+  const nDetail = createNoise2D(rngDetail);
+  const nWarpX = createNoise2D(rngWarpX);
+  const nWarpZ = createNoise2D(rngWarpZ);
+  const nLakes = createNoise2D(rngLakes);
   const nOceanFloor = createNoise2D(rngOceanFloor);
 
   // Use the provided world radius or a medium-footprint fallback with the
   // fixed large chunk dimensions.
   const estimatedRadius = worldRadius || (7 * CHUNK_SIZE.x / 2);
 
-  // Domain warp for natural terrain variation
-  const wx = nWarpX(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;
-  const wz = nWarpZ(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;
-  const sx = x + wx;
-  const sz = z + wz;
+  return (x: number, z: number): TerrainSample => {
+    // Domain warp for natural terrain variation
+    const wx = nWarpX(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;
+    const wz = nWarpZ(x * WARP_SCALE, z * WARP_SCALE) * WARP_AMPLITUDE;
+    const sx = x + wx;
+    const sz = z + wz;
 
-  // Distance from center for island shape
-  const distanceFromCenter = Math.sqrt(x * x + z * z);
-  const normalizedDistance = distanceFromCenter / estimatedRadius;
+    // Distance from center for island shape
+    const distanceFromCenter = Math.sqrt(x * x + z * z);
+    const normalizedDistance = distanceFromCenter / estimatedRadius;
 
-  // Island mask with noisy coastline
-  const coastlineNoise = nCoastline(x * COASTLINE_NOISE_SCALE, z * COASTLINE_NOISE_SCALE);
-  const islandRadius = ISLAND_RADIUS_BASE + coastlineNoise * COASTLINE_NOISE_AMP;
-  const isLand = normalizedDistance < islandRadius;
+    // Island mask with noisy coastline
+    const coastlineNoise = nCoastline(x * COASTLINE_NOISE_SCALE, z * COASTLINE_NOISE_SCALE);
+    const islandRadius = ISLAND_RADIUS_BASE + coastlineNoise * COASTLINE_NOISE_AMP;
+    const isOcean = normalizedDistance >= islandRadius;
 
-  if (!isLand) {
-    // Ocean floor with gradient drop based on distance from island (match generator.worker.ts)
-    const oceanFloorNoise = fbm((a, b) => nOceanFloor(a * OCEAN_FLOOR_SCALE, b * OCEAN_FLOOR_SCALE), x, z, 3, 2.0, 0.5);
+    if (isOcean) {
+      // Ocean floor with gradient drop based on distance from island
+      // (match generator.worker.ts)
+      const oceanFloorNoise = fbm(
+        (a, b) => nOceanFloor(a * OCEAN_FLOOR_SCALE, b * OCEAN_FLOOR_SCALE),
+        x,
+        z,
+        3,
+        2.0,
+        0.5,
+      );
 
-    // Calculate gradient depth based on distance from island edge
-    const islandEdgeDistance = Math.max(0, normalizedDistance - islandRadius);
-    const maxDistanceFromIsland = Math.max(1e-6, 1.0 - islandRadius); // avoid div by zero
-    const normalizedDepthDistance = Math.min(1.0, islandEdgeDistance / maxDistanceFromIsland);
+      // Calculate gradient depth based on distance from island edge
+      const islandEdgeDistance = Math.max(0, normalizedDistance - islandRadius);
+      const maxDistanceFromIsland = Math.max(1e-6, 1.0 - islandRadius); // avoid div by zero
+      const normalizedDepthDistance = Math.min(1.0, islandEdgeDistance / maxDistanceFromIsland);
 
-    // Smooth gradient from shallow near coastline to deep at edges
-    const gradientDepth = smoothstep(0.0, 1.0, normalizedDepthDistance);
+      // Smooth gradient from shallow near coastline to deep at edges
+      const gradientDepth = smoothstep(0.0, 1.0, normalizedDepthDistance);
 
-    // Near coastline: shallow (close to land level), far away: deep
-    const minDepthNearCoast = 2;  // Very shallow near coastline
-    const maxDepthAtEdge = 25;    // Deep at the edge of the world
-    const baseDepth = minDepthNearCoast + (maxDepthAtEdge - minDepthNearCoast) * gradientDepth;
+      // Near coastline: shallow (close to land level), far away: deep
+      const minDepthNearCoast = 2;  // Very shallow near coastline
+      const maxDepthAtEdge = 25;    // Deep at the edge of the world
+      const baseDepth = minDepthNearCoast + (maxDepthAtEdge - minDepthNearCoast) * gradientDepth;
 
-    // Add noise variation but scale it down to preserve the gradient
-    const noiseVariation = oceanFloorNoise * 3.0; // Reduced noise impact
-    const finalDepth = baseDepth + noiseVariation;
+      // Add noise variation but scale it down to preserve the gradient
+      const noiseVariation = oceanFloorNoise * 3.0; // Reduced noise impact
+      const finalDepth = baseDepth + noiseVariation;
 
-    const oceanFloorHeight = WATER_LEVEL - Math.floor(finalDepth);
-    return Math.max(BEDROCK_LEVEL + 1, oceanFloorHeight);
-  }
+      const oceanFloorHeight = WATER_LEVEL - Math.floor(finalDepth);
+      return {
+        height: Math.max(BEDROCK_LEVEL + 1, oceanFloorHeight),
+        isOcean: true,
+      };
+    }
 
-  // Island terrain generation
-  const falloffMask = 1.0 - smoothstep(islandRadius * 0.6, islandRadius * 0.95, normalizedDistance);
-  
-  // Base elevation rising from coast to center
-  const baseElevation = WATER_LEVEL + falloffMask * 20;
-  
-  // Large-scale elevation changes
-  const elevation = fbm((a, b) => nElevation(a * ELEVATION_SCALE, b * ELEVATION_SCALE), sx, sz, 4, 2.0, 0.6);
-  const elevationHeight = elevation * ELEVATION_AMPLITUDE * falloffMask;
-  
-  // Hills and valleys
-  const hills = fbm((a, b) => nHills(a * HILLS_SCALE, b * HILLS_SCALE), sx, sz, 3, 2.0, 0.5);
-  const hillHeight = hills * HILLS_AMPLITUDE * falloffMask;
-  
-  // Fine detail
-  const detail = nDetail(sx * DETAIL_SCALE, sz * DETAIL_SCALE);
-  const detailHeight = detail * DETAIL_AMPLITUDE;
-  
-  // Lake generation (depressions in terrain)
-  const lakeNoise = nLakes(x * 0.01, z * 0.01);
-  const lakeDepression = lakeNoise < LAKE_THRESHOLD ? 
-    (lakeNoise - LAKE_THRESHOLD) * LAKE_DEPTH * falloffMask : 0;
-  
-  const totalHeight = baseElevation + elevationHeight + hillHeight + detailHeight + lakeDepression;
-  
-  return Math.floor(Math.max(BEDROCK_LEVEL + 1, totalHeight));
+    // Island terrain generation
+    const falloffMask = 1.0 - smoothstep(islandRadius * 0.6, islandRadius * 0.95, normalizedDistance);
+
+    // Base elevation rising from coast to center
+    const baseElevation = WATER_LEVEL + falloffMask * 20;
+
+    // Large-scale elevation changes
+    const elevation = fbm(
+      (a, b) => nElevation(a * ELEVATION_SCALE, b * ELEVATION_SCALE),
+      sx,
+      sz,
+      4,
+      2.0,
+      0.6,
+    );
+    const elevationHeight = elevation * ELEVATION_AMPLITUDE * falloffMask;
+
+    // Hills and valleys
+    const hills = fbm((a, b) => nHills(a * HILLS_SCALE, b * HILLS_SCALE), sx, sz, 3, 2.0, 0.5);
+    const hillHeight = hills * HILLS_AMPLITUDE * falloffMask;
+
+    // Fine detail
+    const detail = nDetail(sx * DETAIL_SCALE, sz * DETAIL_SCALE);
+    const detailHeight = detail * DETAIL_AMPLITUDE;
+
+    // Lake generation (depressions in terrain)
+    const lakeNoise = nLakes(x * 0.01, z * 0.01);
+    const lakeDepression = lakeNoise < LAKE_THRESHOLD
+      ? (lakeNoise - LAKE_THRESHOLD) * LAKE_DEPTH * falloffMask
+      : 0;
+
+    const totalHeight = baseElevation + elevationHeight + hillHeight + detailHeight + lakeDepression;
+
+    return {
+      height: Math.floor(Math.max(BEDROCK_LEVEL + 1, totalHeight)),
+      isOcean: false,
+    };
+  };
+}
+
+/** Get a single terrain sample while retaining the old height-only entry point. */
+export function getTerrainSampleAtPosition(x: number, z: number, seed: number, worldRadius?: number): TerrainSample {
+  return createTerrainSampler(seed, worldRadius)(x, z);
+}
+
+/** Get terrain height at a specific world position using island generation. */
+export function getHeightAtPosition(x: number, z: number, seed: number, worldRadius?: number): number {
+  return getTerrainSampleAtPosition(x, z, seed, worldRadius).height;
+}
+
+/** Return the same ocean-only mask used by the terrain generator. */
+export function isOceanAtPosition(x: number, z: number, seed: number, worldRadius?: number): boolean {
+  return getTerrainSampleAtPosition(x, z, seed, worldRadius).isOcean;
 }
 
 /**

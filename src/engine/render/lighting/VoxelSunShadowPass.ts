@@ -11,7 +11,11 @@
  */
 
 import * as THREE from 'three';
-import { VoxelOccupancyVolume, VOXEL_SHADOW_BRICK_SIZE } from './VoxelOccupancyVolume.js';
+import {
+  SEAWEED_SHADOW_HEIGHT_MAX,
+  VoxelOccupancyVolume,
+  VOXEL_SHADOW_BRICK_SIZE,
+} from './VoxelOccupancyVolume.js';
 import type { CharacterShadowBox } from './CharacterShadowBox';
 import { RENDER_STYLE } from '../settings/RenderStyle';
 
@@ -101,6 +105,7 @@ export class VoxelSunShadowPass {
         uVoxelOccupancy: { value: volume.texture },
         uBrickOccupancy: { value: volume.brickTexture },
         uGrassOccupancy: { value: volume.grassTexture },
+        uSeaweedAnchors: { value: volume.seaweedTexture },
         uVolumeOrigin: { value: volume.origin.clone() },
         uVolumeSize: { value: volume.dimensions.clone() },
         uBrickGridSize: { value: volume.brickDimensions.clone() },
@@ -139,6 +144,7 @@ export class VoxelSunShadowPass {
         uniform sampler3D uVoxelOccupancy;
         uniform sampler3D uBrickOccupancy;
         uniform sampler3D uGrassOccupancy;
+        uniform sampler2D uSeaweedAnchors;
         uniform vec3 uVolumeOrigin;
         uniform vec3 uVolumeSize;
         uniform vec3 uBrickGridSize;
@@ -187,6 +193,13 @@ export class VoxelSunShadowPass {
 
         float grassAt(ivec3 cell) {
           return texture(uGrassOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
+        }
+
+        vec4 seaweedAt(ivec3 cell) {
+          return texture(
+            uSeaweedAnchors,
+            (vec2(cell.x, cell.z) + vec2(0.5)) / vec2(uVolumeSize.x, uVolumeSize.z)
+          );
         }
 
         // A grass tuft is rendered as two crossed billboard planes.  For
@@ -249,6 +262,89 @@ export class VoxelSunShadowPass {
                 vec2 uv = vec2((point.z - cellMin.z - base) / extent, (point.y - cellMin.y) / height);
                 if (bladeCoverage(uv) > 0.5) return true;
               }
+            }
+          }
+          return false;
+        }
+
+        float seaweedBladeCoverage(vec2 uv) {
+          if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+          float coverage = 0.0;
+          // The source seaweed PNG is an alpha-cutout card. This compact
+          // silhouette keeps the custom shadow ray cheap while preserving the
+          // characteristic two-branch shape at the scale of a world shadow.
+          float t = clamp(uv.y, 0.0, 1.0);
+          float widthA = mix(0.075, 0.010, t);
+          float centerA = 0.33 - 0.10 * t;
+          coverage = max(coverage, 1.0 - smoothstep(widthA * 0.55, widthA, abs(uv.x - centerA)));
+          float widthB = mix(0.085, 0.012, t);
+          float centerB = 0.57 + 0.13 * t;
+          coverage = max(coverage, 1.0 - smoothstep(widthB * 0.55, widthB, abs(uv.x - centerB)));
+          float widthC = mix(0.065, 0.008, t);
+          float centerC = 0.74 - 0.08 * t;
+          coverage = max(coverage, 1.0 - smoothstep(widthC * 0.55, widthC, abs(uv.x - centerC)));
+          return coverage;
+        }
+
+        bool seaweedBladeHit(vec3 local, vec3 direction, ivec3 cell, float maxTravel) {
+          vec4 encoded = seaweedAt(cell);
+          if (encoded.a <= 0.0) return false;
+
+          vec3 root = vec3(
+            float(cell.x) + encoded.r,
+            encoded.b * uVolumeSize.y,
+            float(cell.z) + encoded.g
+          );
+          float height = max(encoded.a * ${SEAWEED_SHADOW_HEIGHT_MAX.toFixed(1)}, 0.02);
+          // seaweed.png is square and instances use a maximum width scale of
+          // 1.12, so this is a conservative half-width for the shadow proxy.
+          const float halfWidth = 0.56;
+          const float epsilon = 1e-4;
+          const float selfHitEpsilon = 0.01;
+
+          // First crossed plane: z is fixed, x/y carry the seaweed mask.
+          if (abs(direction.z) > epsilon) {
+            float travelZ = (root.z - local.z) / direction.z;
+            if (travelZ > selfHitEpsilon && travelZ <= maxTravel + epsilon) {
+              vec3 point = local + direction * travelZ;
+              if (point.y >= root.y - epsilon && point.y <= root.y + height + epsilon &&
+                  point.x >= root.x - halfWidth - epsilon && point.x <= root.x + halfWidth + epsilon) {
+                vec2 uv = vec2(
+                  (point.x - root.x + halfWidth) / (2.0 * halfWidth),
+                  (point.y - root.y) / height
+                );
+                if (seaweedBladeCoverage(uv) > 0.5) return true;
+              }
+            }
+          }
+
+          // Second crossed plane: x is fixed, z/y carry the same mask.
+          if (abs(direction.x) > epsilon) {
+            float travelX = (root.x - local.x) / direction.x;
+            if (travelX > selfHitEpsilon && travelX <= maxTravel + epsilon) {
+              vec3 point = local + direction * travelX;
+              if (point.y >= root.y - epsilon && point.y <= root.y + height + epsilon &&
+                  point.z >= root.z - halfWidth - epsilon && point.z <= root.z + halfWidth + epsilon) {
+                vec2 uv = vec2(
+                  (point.z - root.z + halfWidth) / (2.0 * halfWidth),
+                  (point.y - root.y) / height
+                );
+                if (seaweedBladeCoverage(uv) > 0.5) return true;
+              }
+            }
+          }
+          return false;
+        }
+
+        bool seaweedNearHit(vec3 local, vec3 direction, ivec3 cell, float maxTravel) {
+          // The crossed card can extend into one neighbouring XZ cell. Read a
+          // compact 3x3 root neighbourhood so its shadow is not lost when a
+          // ray meets the plane just beyond the root cell boundary.
+          for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
+            for (int offsetX = -1; offsetX <= 1; offsetX++) {
+              ivec3 anchorCell = cell + ivec3(offsetX, 0, offsetZ);
+              if (insideVolume(anchorCell) && seaweedAt(anchorCell).a > 0.0 &&
+                  seaweedBladeHit(local, direction, anchorCell, maxTravel)) return true;
             }
           }
           return false;
@@ -385,6 +481,7 @@ export class VoxelSunShadowPass {
             if (travelled > uMaxDistance || travel >= 1e29) return 1.0;
 
             if (grassAt(cell) > 0.5 && grassBladeHit(local, direction, cell, travel)) return 0.0;
+            if (seaweedNearHit(local, direction, cell, travel)) return 0.0;
 
             if (voxelDistance.x <= voxelDistance.y && voxelDistance.x <= voxelDistance.z) {
               cell.x += int(stepAxis.x);

@@ -29,7 +29,7 @@ Underwater validation uses `Composer.setUnderwaterDebugMode()` to reach `Underwa
 The engine exposes two local validation hooks on `window`:
 
 - `__getVoxelShadowDiagnostics()` reports the active voxel shadow resolution and volume/pass state;
-- `__getRenderDiagnostics()` reports the renderer color/tone settings, sky transform, atmosphere state, and sun direction.
+- `__getRenderDiagnostics()` reports the renderer color/tone settings, sky transform, atmosphere state, sun direction, and the active seaweed field diagnostics.
 
 They are observation hooks for local tooling, not player controls.
 
@@ -51,3 +51,4 @@ When changing rendering or startup, also inspect these invariants manually in th
 - dynamic-import, worker, shader, and first-frame errors reach the start UI;
 - resize commits are coalesced and zero-sized transient layouts do not resize GPU targets;
 - diagnostics still use the gameplay camera factory and the normal render path.
+- seaweed diagnostics show a fresh per-load distribution seed, ocean-only accepted anchors, submerged height caps, and the separate caster-field count.

@@ -4,6 +4,7 @@ import type { ChunkKey } from '../../types/index'
 import { CHUNK_SIZE } from '../../config/constants'
 import grassLeavesTexture from '../../assets/textures/grass_leaves.png'
 import { GrassMaterial } from './GrassMaterial'
+import { createXBillboardGeometry } from './BillboardGeometry'
 
 /**
  * GrassBillboardSystem
@@ -36,7 +37,7 @@ export class GrassBillboardSystem {
     fb.minFilter = THREE.NearestFilter
     this.material.setMap(fb)
 
-    this.geometry = this.buildXBillboardGeometry(0.92, 0.90)
+    this.geometry = createXBillboardGeometry(0.92, 0.90)
 
     // Wire listeners
     world.on('CHUNK_ADDED', ({ key, chunk, coords }) => {
@@ -108,48 +109,6 @@ export class GrassBillboardSystem {
     group.position.set(cx * CHUNK_SIZE.x, cy * CHUNK_SIZE.y, cz * CHUNK_SIZE.z)
     this.scene.add(group)
     this.groups.set(key, group)
-  }
-
-  private buildXBillboardGeometry(width: number, height: number): THREE.BufferGeometry {
-    const hw = width / 2
-    const h = height
-    const positions: number[] = []
-    const uvs: number[] = []
-    const indices: number[] = []
-
-    // Plane A (aligned on X, centered at 0.5, spans in X)
-    const aBase = 0
-    positions.push(
-      // bottom row
-      0.5 - hw, 0, 0.5,  // 0
-      0.5 + hw, 0, 0.5,  // 1
-      // top row
-      0.5 + hw, h, 0.5,  // 2
-      0.5 - hw, h, 0.5,  // 3
-    )
-    uvs.push( 0,1, 1,1, 1,0, 0,0 )
-    indices.push(aBase+0, aBase+1, aBase+2, aBase+0, aBase+2, aBase+3)
-
-    // Plane B (aligned on Z, centered at 0.5, spans in Z)
-    const bBase = 4
-    positions.push(
-      0.5, 0, 0.5 - hw, // 4
-      0.5, 0, 0.5 + hw, // 5
-      0.5, h, 0.5 + hw, // 6
-      0.5, h, 0.5 - hw, // 7
-    )
-    uvs.push( 0,1, 1,1, 1,0, 0,0 )
-    indices.push(bBase+0, bBase+1, bBase+2, bBase+0, bBase+2, bBase+3)
-
-    const geom = new THREE.BufferGeometry()
-    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
-    // Provide constant color=1 for BlockMaterial's AO/tint input
-    const colors = new Float32Array(8 * 3); colors.fill(1)
-    geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-    geom.setIndex(indices)
-    geom.computeVertexNormals()
-    return geom
   }
 
   // Lighting sync API (called from Engine)

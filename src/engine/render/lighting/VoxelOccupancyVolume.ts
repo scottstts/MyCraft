@@ -32,11 +32,22 @@ export interface VoxelVolumeDiagnostics {
   loadedChunks: number;
   opaqueVoxels: number;
   grassTufts: number;
+  seaweedAnchors: number;
   textureBytes: number;
   brickTextureBytes: number;
+  seaweedTextureBytes: number;
 }
 
 export const VOXEL_SHADOW_BRICK_SIZE = 8;
+/** Maximum seaweed height representable by the compact shadow field. */
+export const SEAWEED_SHADOW_HEIGHT_MAX = 8;
+
+export interface SeaweedShadowAnchor {
+  x: number;
+  z: number;
+  rootY: number;
+  height: number;
+}
 
 function positiveDimension(min: number, max: number, name: string): number {
   const dimension = Math.round(max - min);
@@ -66,6 +77,8 @@ export class VoxelOccupancyVolume {
   readonly texture: THREE.Data3DTexture;
   readonly brickTexture: THREE.Data3DTexture;
   readonly grassTexture: THREE.Data3DTexture;
+  /** One RGBA texel per world XZ cell containing the seaweed shadow proxy. */
+  readonly seaweedTexture: THREE.DataTexture;
 
   private readonly width: number;
   private readonly height: number;
@@ -76,11 +89,19 @@ export class VoxelOccupancyVolume {
   private readonly occupancy: Uint8Array;
   private readonly brickOccupancy: Uint8Array;
   private readonly grassOccupancy: Uint8Array;
+  private readonly seaweedOccupancy: Uint8Array;
   private readonly opaqueById = new Uint8Array(256);
   private readonly grassTuftId: BlockId;
   private readonly loadedChunkKeys = new Set<ChunkKey>();
   private opaqueVoxelCount = 0;
   private grassTuftCount = 0;
+  private seaweedAnchorCount = 0;
+  private readonly seaweedShadowAnchors: Array<{
+    cellX: number;
+    cellZ: number;
+    rootY: number;
+    height: number;
+  }> = [];
 
   constructor(bounds: VoxelVolumeBounds) {
     this.origin = new THREE.Vector3(bounds.minX, bounds.minY, bounds.minZ);
@@ -97,6 +118,7 @@ export class VoxelOccupancyVolume {
     this.occupancy = new Uint8Array(this.width * this.height * this.depth);
     this.brickOccupancy = new Uint8Array(this.brickWidth * this.brickHeight * this.brickDepth);
     this.grassOccupancy = new Uint8Array(this.width * this.height * this.depth);
+    this.seaweedOccupancy = new Uint8Array(this.width * this.depth * 4);
 
     const registry = getBlockRegistry();
     this.grassTuftId = (registry.getAllBlocks().find((block) => block.name === 'grass_tuft')?.id ?? 9) as BlockId;
@@ -107,6 +129,7 @@ export class VoxelOccupancyVolume {
     this.texture = this.createTexture(this.occupancy, this.width, this.height, this.depth);
     this.brickTexture = this.createTexture(this.brickOccupancy, this.brickWidth, this.brickHeight, this.brickDepth);
     this.grassTexture = this.createTexture(this.grassOccupancy, this.width, this.height, this.depth);
+    this.seaweedTexture = this.createSeaweedTexture();
   }
 
   private createTexture(data: Uint8Array, width: number, height: number, depth: number): THREE.Data3DTexture {
@@ -121,6 +144,25 @@ export class VoxelOccupancyVolume {
     texture.generateMipmaps = false;
     texture.unpackAlignment = 1;
     texture.colorSpace = THREE.NoColorSpace;
+    texture.needsUpdate = true;
+    return texture;
+  }
+
+  private createSeaweedTexture(): THREE.DataTexture {
+    const texture = new THREE.DataTexture(
+      this.seaweedOccupancy,
+      this.width,
+      this.depth,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    );
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.unpackAlignment = 1;
     texture.needsUpdate = true;
     return texture;
   }
@@ -169,12 +211,85 @@ export class VoxelOccupancyVolume {
         }
       }
     }
+
+    // Seaweed is render-only, so it does not occupy a voxel. It still needs
+    // to keep the DDA from skipping its root column as an empty brick. The
+    // compact 2D field stores one proxy per XZ root cell; the shader expands
+    // that proxy vertically using its encoded root height and blade height.
+    for (const anchor of this.seaweedShadowAnchors) {
+      const minY = Math.max(0, Math.floor(anchor.rootY - this.origin.y));
+      const maxY = Math.min(
+        this.height - 1,
+        Math.floor(anchor.rootY - this.origin.y + Math.max(anchor.height, 0) - 1e-4),
+      );
+      if (maxY < minY) continue;
+      for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          const cellX = anchor.cellX + offsetX;
+          const cellZ = anchor.cellZ + offsetZ;
+          const brickX = Math.floor(cellX / VOXEL_SHADOW_BRICK_SIZE);
+          const brickZ = Math.floor(cellZ / VOXEL_SHADOW_BRICK_SIZE);
+          if (brickX < 0 || brickX >= this.brickWidth || brickZ < 0 || brickZ >= this.brickDepth) continue;
+          for (let y = minY; y <= maxY; y += 1) {
+            const brickY = Math.floor(y / VOXEL_SHADOW_BRICK_SIZE);
+            this.brickOccupancy[this.brickIndex(brickX, brickY, brickZ)] = 255;
+          }
+        }
+      }
+    }
   }
 
   private markTexturesDirty(): void {
     this.texture.needsUpdate = true;
     this.brickTexture.needsUpdate = true;
     this.grassTexture.needsUpdate = true;
+    this.seaweedTexture.needsUpdate = true;
+  }
+
+  /**
+   * Replace the render-only seaweed caster field. The field is intentionally
+   * separate from voxel and grass occupancy: seaweed cannot be mined, edited,
+   * collided with, or serialized as a block.
+   *
+   * RGBA encoding per XZ cell:
+   *   R/G = root X/Z fraction inside the cell
+   *   B   = root Y normalized over the volume height
+   *   A   = blade height normalized by SEAWEED_SHADOW_HEIGHT_MAX
+   */
+  setSeaweedAnchors(anchors: ReadonlyArray<SeaweedShadowAnchor>): void {
+    this.seaweedOccupancy.fill(0);
+    this.seaweedShadowAnchors.length = 0;
+    this.seaweedAnchorCount = 0;
+
+    for (const anchor of anchors) {
+      if (!Number.isFinite(anchor.x) || !Number.isFinite(anchor.z) ||
+          !Number.isFinite(anchor.rootY) || !Number.isFinite(anchor.height) || anchor.height <= 0) {
+        continue;
+      }
+      const localX = anchor.x - this.origin.x;
+      const localZ = anchor.z - this.origin.z;
+      const cellX = Math.floor(localX);
+      const cellZ = Math.floor(localZ);
+      if (cellX < 0 || cellX >= this.width || cellZ < 0 || cellZ >= this.depth) continue;
+
+      const index = (cellZ * this.width + cellX) * 4;
+      // The weighted Poisson field guarantees that roots do not share a cell.
+      // Keep the first root if a caller supplies a malformed/overlapping field
+      // so the sparse brick list and encoded texture remain one-to-one.
+      if (this.seaweedOccupancy[index + 3] !== 0) continue;
+
+      const rootY = THREE.MathUtils.clamp(anchor.rootY - this.origin.y, 0, this.height - 1e-4);
+      const height = THREE.MathUtils.clamp(anchor.height, 0, SEAWEED_SHADOW_HEIGHT_MAX);
+      this.seaweedOccupancy[index] = Math.round((localX - cellX) * 255);
+      this.seaweedOccupancy[index + 1] = Math.round((localZ - cellZ) * 255);
+      this.seaweedOccupancy[index + 2] = Math.round((rootY / Math.max(1, this.height)) * 255);
+      this.seaweedOccupancy[index + 3] = Math.max(1, Math.round((height / SEAWEED_SHADOW_HEIGHT_MAX) * 255));
+      this.seaweedShadowAnchors.push({ cellX, cellZ, rootY: anchor.rootY, height });
+      this.seaweedAnchorCount += 1;
+    }
+
+    this.rebuildBricks();
+    this.markTexturesDirty();
   }
 
   /** Replace one full chunk's occupancy from its authoritative voxel array. */
@@ -252,8 +367,10 @@ export class VoxelOccupancyVolume {
       loadedChunks: this.loadedChunkKeys.size,
       opaqueVoxels: this.opaqueVoxelCount,
       grassTufts: this.grassTuftCount,
+      seaweedAnchors: this.seaweedAnchorCount,
       textureBytes: this.occupancy.byteLength,
       brickTextureBytes: this.brickOccupancy.byteLength,
+      seaweedTextureBytes: this.seaweedOccupancy.byteLength,
     };
   }
 
@@ -261,5 +378,6 @@ export class VoxelOccupancyVolume {
     this.texture.dispose();
     this.brickTexture.dispose();
     this.grassTexture.dispose();
+    this.seaweedTexture.dispose();
   }
 }

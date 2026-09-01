@@ -67,6 +67,8 @@ describe('analytic character sun visibility', () => {
     expect(characterCall).toBeGreaterThan(solarFunction);
     expect(nestedCharacterCall).toBe(-1);
     expect(shader).not.toContain('fwidth(');
+    expect(shader).toContain('uSeaweedAnchors');
+    expect(shader).toContain('seaweedBladeHit');
 
     pass.dispose();
     volume.dispose();

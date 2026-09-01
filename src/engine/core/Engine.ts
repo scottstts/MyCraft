@@ -33,6 +33,7 @@ import { PlayerController } from '../systems/PlayerController';
 import { SelectionSystem } from '../systems/SelectionSystem';
 import { InteractionSystem } from '../systems/InteractionSystem';
 import { GrassBillboardSystem } from '../render/GrassBillboardSystem';
+import { SeaweedSystem } from '../render/SeaweedSystem';
 import { getBlockIdByName } from '../world/blocks/BlockRegistry';
 import { chunkKey } from '../utils/coords';
 import { useUIStore } from '../../state/ui';
@@ -89,6 +90,7 @@ let playerController: PlayerController | null = null;
 let selectionSystem: SelectionSystem | null = null;
 let interactionSystem: InteractionSystem | null = null;
 let grassSystem: GrassBillboardSystem | null = null;
+let seaweedSystem: SeaweedSystem | null = null;
 let lastFrameNow: number = 0;
 let fpsCounterFrames: number = 0;
 let fpsLastReportNow: number = 0;
@@ -498,6 +500,18 @@ function update(dtSeconds: number) {
     if (grassSystem) grassSystem.setSunUniforms(sdir, atmosphereState.sunColor);
     if (grassSystem) grassSystem.setDayNight(dayLight, atmosphereState.starVisibility * 0.35);
     if (grassSystem) grassSystem.setSkyAmbient(atmosphereState.skyIrradiance);
+    if (seaweedSystem) seaweedSystem.setSun(sdir, atmosphereState.sunColor);
+    if (seaweedSystem) seaweedSystem.setDayNight(dayLight, atmosphereState.starVisibility * 0.35);
+    if (seaweedSystem) seaweedSystem.setSkyAmbient(atmosphereState.skyIrradiance);
+    if (seaweedSystem) {
+      seaweedSystem.setWaterCaustics(
+        true,
+        VISUAL_WATER_LEVEL,
+        0.80,
+        waterSystem?.getCausticReferenceDepth() ?? CAUSTIC_REFERENCE_DEPTH,
+        atmosphereState.sunIntensity,
+      );
+    }
   }
 
   // Update water materials with ambient lighting to match day/night cycle.
@@ -533,6 +547,14 @@ function update(dtSeconds: number) {
   // blocks, swimming, or interaction state.
   if (waterSystem && camera) {
     waterSystem.update(dtSeconds, camera);
+    seaweedSystem?.update(waterSystem.getTime());
+    seaweedSystem?.setWaterCausticTexture(
+      waterSystem.getCausticTexture(),
+      waterSystem.getCausticOrigin(),
+      waterSystem.getCausticExtent(),
+      waterSystem.getCausticResolution(),
+      waterSystem.getCausticReferenceDepth(),
+    );
     waterMaterial?.setTime(waterSystem.getTime());
     waterMaterial?.setCameraUnderwater(waterSystem.isCameraUnderwater());
     composer?.setWaterCameraState(
@@ -884,6 +906,24 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       camera.far,
     );
     waterSystem.setSunVisibility(voxelSunShadowPass?.getTexture() ?? null);
+    // Seaweed is a render-only ocean layer. Its per-load random seed is not
+    // derived from the saved world seed, so a reload produces a new field
+    // while the field remains stable for this running game.
+    seaweedSystem = new SeaweedSystem(scene, {
+      bounds,
+      terrainSeed: world.getSeed(),
+      worldRadius,
+      waterLevel: WATER_LEVEL,
+    });
+    seaweedSystem.shareVoxelShadowState(blockMaterial);
+    voxelShadowVolume.setSeaweedAnchors(seaweedSystem.getShadowAnchors());
+    seaweedSystem.setWaterCausticTexture(
+      waterSystem.getCausticTexture(),
+      waterSystem.getCausticOrigin(),
+      waterSystem.getCausticExtent(),
+      waterSystem.getCausticResolution(),
+      waterSystem.getCausticReferenceDepth(),
+    );
     composer?.setOpaqueCaptureHooks(
       () => waterSystem?.setOpaqueCaptureMode(true),
       () => waterSystem?.setOpaqueCaptureMode(false),
@@ -960,6 +1000,8 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       // Set world seed from save
       world.setSeed(pendingSave.settings.seed);
       waterSystem?.setSeed(world.getSeed());
+      seaweedSystem?.setTerrainSeed(world.getSeed());
+      voxelShadowVolume?.setSeaweedAnchors(seaweedSystem?.getShadowAnchors() ?? []);
       // Ingest chunks
       for (const ch of pendingSave.chunks) {
         const vox = new Uint8Array(atob(ch.voxelsB64).split('').map((c) => c.charCodeAt(0)));
@@ -1018,6 +1060,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
         const resolution = voxelSunShadowPass.getDiagnostics().resolution;
         blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
         grassSystem?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
+        if (seaweedSystem && blockMaterial) seaweedSystem.shareVoxelShadowState(blockMaterial);
         waterSystem?.setSunVisibility(voxelSunShadowPass.getTexture());
       }
     }
@@ -1130,6 +1173,13 @@ function stop() {
   if (chunkRenderer) {
     chunkRenderer.destroy();
     chunkRenderer = null;
+  }
+
+  // Clean up render-only ocean vegetation before the shared block material
+  // and scene-owned shadow bindings are released.
+  if (seaweedSystem) {
+    seaweedSystem.destroy();
+    seaweedSystem = null;
   }
 
   // Clean up block material
@@ -1300,6 +1350,7 @@ function setPlayerCharacter(character: unknown): void {
       skyAerosolStrength: atmosphere.skyAerosolStrength,
     } : null,
     water: waterSystem?.getDiagnostics() ?? null,
+    seaweed: seaweedSystem?.getDiagnostics() ?? null,
     exposure: composer?.getExposureDiagnostics() ?? null,
   };
 };

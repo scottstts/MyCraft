@@ -22,6 +22,8 @@ The gameplay/extension boundary follows a complementary-face contract. Authorita
 
 The extension extracts the sand tile from the live voxel atlas and uses the same nearest, no-mipmap sampling response and base ambient visibility as authoritative sand. Its lighting, material response, shadows, and caustics remain synchronized with the shared block material. Real water-path extinction can still change sand appearance with depth, but crossing the invisible gameplay boundary alone must not change its base material.
 
+`SeaweedSystem` is layered above this visual seabed and below the transparent ocean surface. It samples the same ocean-only terrain mask, roots only where the seabed is deeper than its configured shelf threshold, and caps each card below the lowest displaced wave. Its material receives the same caustic field and sun-visibility receiver state as the seabed; its render-only caster representation is kept separate from voxel occupancy.
+
 ## Optical inputs and frame behavior
 
 `WaterSystem` receives the composer’s scene-color texture, shared depth texture, current voxel sun-visibility texture, camera matrices, sun direction/color, atmosphere colors, and caustic state. During that scene capture it hides both the render-only ocean and off-level voxel-water material. Sea-level water geometry is already omitted by the chunk mesher because the continuous ocean owns that interface.
