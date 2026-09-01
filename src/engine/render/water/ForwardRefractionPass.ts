@@ -5,6 +5,7 @@ import {
   setForwardRefractionActive,
   setForwardRefractionCamera,
   setForwardRefractionOutputReceiver,
+  setForwardRefractionReceiverTexture,
   setForwardRefractionResolution,
 } from './ForwardRefraction'
 
@@ -73,7 +74,11 @@ export class ForwardRefractionPass {
       Math.max(1, width),
       Math.max(1, height),
       {
-        type: THREE.HalfFloatType,
+        // Receiver coordinates feed a world-space DDA and analytic character
+        // intersection. RGB16F normalized over an 832-block world can move a
+        // surface point by tenths of a block, which changes the starting cell.
+        // Store direct world coordinates in RGB32F instead.
+        type: THREE.FloatType,
         format: THREE.RGBAFormat,
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
@@ -84,6 +89,7 @@ export class ForwardRefractionPass {
     )
     this.receiverTarget.texture.colorSpace = THREE.NoColorSpace
     this.receiverTarget.texture.generateMipmaps = false
+    setForwardRefractionReceiverTexture(this.receiverTarget.texture)
     setForwardRefractionResolution(this.target.width, this.target.height)
   }
 
@@ -159,6 +165,10 @@ export class ForwardRefractionPass {
       this.scene.background = null
       setForwardRefractionActive(true)
       setForwardRefractionOutputReceiver(true)
+      // Do not leave the receiver sampler bound to the texture currently
+      // attached for drawing, even though the receiver branch does not sample
+      // it. WebGL feedback validation is attachment based.
+      setForwardRefractionReceiverTexture(null)
       this.renderer.setRenderTarget(this.receiverTarget)
       this.renderer.setClearColor(0x000000, 0)
       this.renderer.clear(true, true, false)
@@ -169,6 +179,7 @@ export class ForwardRefractionPass {
         this.receiverTarget.depthTexture as THREE.DepthTexture,
       )
 
+      setForwardRefractionReceiverTexture(this.receiverTarget.texture)
       setForwardRefractionOutputReceiver(false)
       this.renderer.setRenderTarget(this.target)
       this.renderer.setClearColor(0x000000, 0)
@@ -177,6 +188,7 @@ export class ForwardRefractionPass {
     } finally {
       setForwardRefractionOutputReceiver(false)
       setForwardRefractionActive(false)
+      setForwardRefractionReceiverTexture(this.receiverTarget.texture)
       this.scene.background = previousBackground
       this.renderer.setRenderTarget(previousTarget)
       this.renderer.setClearColor(this.clearColor, previousAlpha)
@@ -206,12 +218,13 @@ export class ForwardRefractionPass {
       drawingBufferHeight: this.size.y,
       projection: 'forward-fermat-snell',
       coverage: 'target-alpha',
-      receiverSpace: 'source-world-volume-normalized',
+      receiverSpace: 'source-world-rgb32f',
       participatingObjects,
     }
   }
 
   dispose(): void {
+    setForwardRefractionReceiverTexture(null)
     this.target.dispose()
     this.receiverTarget.dispose()
   }

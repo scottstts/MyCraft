@@ -31,7 +31,7 @@ The engine exposes two local validation hooks on `window`:
 - `__getVoxelShadowDiagnostics()` reports the active voxel shadow resolution and volume/pass state;
 - `__getRenderDiagnostics()` reports the renderer color/tone settings, sky transform, atmosphere state, sun direction, and the active seaweed field diagnostics.
 
-The render diagnostics also report the forward-refraction target size, participating object count, `forward-fermat-snell` projection label, and alpha-coverage ownership. The target dimensions must match the drawing buffer after every resize.
+The render diagnostics also report the forward-refraction target size, participating object count, `forward-fermat-snell` projection label, alpha-coverage ownership, and `source-world-rgb32f` receiver space. The target dimensions must match the drawing buffer after every resize. In an above-water orbit, submerged block faces must not develop coordinate-aligned dark bars, and a character shadow must keep a stable subpixel edge on the same receiver surface. Either symptom rejects the receiver representation or its refracted pixel-footprint reconstruction even if the unrefracted view remains clean.
 
 They are observation hooks for local tooling, not player controls.
 

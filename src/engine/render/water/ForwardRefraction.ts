@@ -20,6 +20,16 @@ const forwardVisibilityFallback = new THREE.DataTexture(
 forwardVisibilityFallback.colorSpace = THREE.NoColorSpace
 forwardVisibilityFallback.needsUpdate = true
 
+const forwardReceiverFallback = new THREE.DataTexture(
+  new Float32Array([0, 0, 0, 0]),
+  1,
+  1,
+  THREE.RGBAFormat,
+  THREE.FloatType,
+)
+forwardReceiverFallback.colorSpace = THREE.NoColorSpace
+forwardReceiverFallback.needsUpdate = true
+
 export const forwardRefractionUniforms = {
   uForwardRefractionActive: { value: 0 },
   uForwardWaterLevel: { value: 43.5 },
@@ -32,8 +42,7 @@ export const forwardRefractionUniforms = {
   uForwardCameraUnderwater: { value: false },
   uForwardRefractionOutputReceiver: { value: 0 },
   uForwardSunVisibility: { value: forwardVisibilityFallback as THREE.Texture },
-  uForwardReceiverOrigin: { value: new THREE.Vector3() },
-  uForwardReceiverSize: { value: new THREE.Vector3(1, 1, 1) },
+  uForwardReceiverWorld: { value: forwardReceiverFallback as THREE.Texture },
 }
 
 export const FORWARD_REFRACTION_MATERIAL_FLAG = 'mycraftForwardRefraction'
@@ -83,12 +92,8 @@ export function setForwardRefractionSunVisibility(texture: THREE.Texture | null)
   forwardRefractionUniforms.uForwardSunVisibility.value = texture ?? forwardVisibilityFallback
 }
 
-export function setForwardRefractionReceiverVolume(
-  origin: THREE.Vector3,
-  size: THREE.Vector3,
-): void {
-  forwardRefractionUniforms.uForwardReceiverOrigin.value.copy(origin)
-  forwardRefractionUniforms.uForwardReceiverSize.value.copy(size)
+export function setForwardRefractionReceiverTexture(texture: THREE.Texture | null): void {
+  forwardRefractionUniforms.uForwardReceiverWorld.value = texture ?? forwardReceiverFallback
 }
 
 /** CPU reference for the flat-interface Fermat solve used by contract tests. */
@@ -390,8 +395,7 @@ export function forwardRefractionFragmentDeclarations(): string {
     uniform bool uForwardCameraUnderwater;
     uniform float uForwardRefractionOutputReceiver;
     uniform sampler2D uForwardSunVisibility;
-    uniform vec3 uForwardReceiverOrigin;
-    uniform vec3 uForwardReceiverSize;
+    uniform sampler2D uForwardReceiverWorld;
     varying vec3 vForwardRefractionSourceWorld;
     varying float vForwardRefractionSignedHeight;
 
@@ -406,16 +410,75 @@ export function forwardRefractionFragmentDeclarations(): string {
       }
     }
 
-    float forwardRefractionSunVisibility(vec2 resolution) {
-      return texture2D(
-        uForwardSunVisibility,
-        gl_FragCoord.xy / max(resolution, vec2(1.0))
-      ).r;
+    void forwardRefractionAccumulateVisibility(
+      vec2 uv,
+      vec3 expectedSource,
+      float positionTolerance,
+      inout float weightedVisibility,
+      inout float weightSum
+    ) {
+      vec4 receiver = texture2D(uForwardReceiverWorld, uv);
+      if (receiver.a <= 0.0) return;
+      float sourceError = length(receiver.rgb - expectedSource);
+      float sourceWeight = 1.0 - smoothstep(
+        positionTolerance,
+        positionTolerance * 2.0,
+        sourceError
+      );
+      weightedVisibility += texture2D(uForwardSunVisibility, uv).r * sourceWeight;
+      weightSum += sourceWeight;
     }
 
-    vec3 forwardRefractionEncodeReceiver(vec3 sourceWorld) {
-      return (sourceWorld - uForwardReceiverOrigin) /
-        max(uForwardReceiverSize, vec3(0.001));
+    float forwardRefractionSunVisibility(vec2 resolution, vec3 sourceWorld) {
+      vec2 safeResolution = max(resolution, vec2(1.0));
+      vec2 uv = gl_FragCoord.xy / safeResolution;
+      vec2 texel = 1.0 / safeResolution;
+      float center = texture2D(uForwardSunVisibility, uv).r;
+
+      // The forward optical map changes the receiver-space footprint of one
+      // apparent pixel. Reconstruct irradiance only from neighbours whose
+      // stored source point agrees with that local Jacobian. This integrates
+      // the pixel footprint without crossing a refracted silhouette or block
+      // discontinuity.
+      vec3 sourceDx = dFdx(sourceWorld);
+      vec3 sourceDy = dFdy(sourceWorld);
+      float sourceFootprint = max(length(sourceDx), length(sourceDy));
+      float positionTolerance = max(0.0025, sourceFootprint * 0.35);
+      float weightedVisibility = center * 4.0;
+      float weightSum = 4.0;
+      forwardRefractionAccumulateVisibility(
+        uv + vec2(texel.x, 0.0),
+        sourceWorld + sourceDx,
+        positionTolerance,
+        weightedVisibility,
+        weightSum
+      );
+      forwardRefractionAccumulateVisibility(
+        uv - vec2(texel.x, 0.0),
+        sourceWorld - sourceDx,
+        positionTolerance,
+        weightedVisibility,
+        weightSum
+      );
+      forwardRefractionAccumulateVisibility(
+        uv + vec2(0.0, texel.y),
+        sourceWorld + sourceDy,
+        positionTolerance,
+        weightedVisibility,
+        weightSum
+      );
+      forwardRefractionAccumulateVisibility(
+        uv - vec2(0.0, texel.y),
+        sourceWorld - sourceDy,
+        positionTolerance,
+        weightedVisibility,
+        weightSum
+      );
+      return weightedVisibility / max(weightSum, 1.0);
+    }
+
+    vec3 forwardRefractionStoreReceiver(vec3 sourceWorld) {
+      return sourceWorld;
     }
   `
 }
@@ -458,7 +521,7 @@ export function enableMeshStandardForwardRefraction(
   forwardRefractionDiscardCameraMedium();
   if (uForwardRefractionOutputReceiver > 0.5) {
     gl_FragColor = vec4(
-      forwardRefractionEncodeReceiver(vForwardRefractionSourceWorld),
+      forwardRefractionStoreReceiver(vForwardRefractionSourceWorld),
       1.0
     );
     return;

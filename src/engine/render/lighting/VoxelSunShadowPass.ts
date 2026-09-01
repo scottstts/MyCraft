@@ -20,7 +20,6 @@ import {
 import type { CharacterShadowBox } from './CharacterShadowBox';
 import { RENDER_STYLE } from '../settings/RenderStyle';
 import {
-  setForwardRefractionReceiverVolume,
   setForwardRefractionSunVisibility,
 } from '../water/ForwardRefraction';
 
@@ -110,7 +109,6 @@ export class VoxelSunShadowPass {
       stencilBuffer: false,
     });
     this.forwardTarget.texture.colorSpace = THREE.NoColorSpace;
-    setForwardRefractionReceiverVolume(volume.origin, volume.dimensions);
     setForwardRefractionSunVisibility(this.supported ? this.forwardTarget.texture : null);
 
     this.quadGeometry = new THREE.PlaneGeometry(2, 2);
@@ -560,7 +558,7 @@ export class VoxelSunShadowPass {
             return;
           }
           vec3 receiver = uUseReceiverWorld
-            ? uVolumeOrigin + receiverSample.rgb * uVolumeSize
+            ? receiverSample.rgb
             : reconstructWorldPosition(vUv, viewDepth);
           vec3 sun = normalize(uSunDirection);
           // Project a fixed world-up vector onto the solar-disc tangent plane.
@@ -582,10 +580,19 @@ export class VoxelSunShadowPass {
                 vUv.x >= uCharacterScreenBounds.x && vUv.x <= uCharacterScreenBounds.z &&
                 vUv.y >= uCharacterScreenBounds.y && vUv.y <= uCharacterScreenBounds.w
               ))) {
-            // Use the receiver's camera-space pixel footprint as a stable
-            // geometric edge width. It avoids undefined derivatives inside
-            // the divergent character broadphase branch.
-            float pixelWorldSize = 2.0 * viewDepth * uCameraTanHalfFovY / max(uCameraViewportHeight, 1.0);
+            // Direct receivers use the ordinary perspective footprint. The
+            // forward path instead differentiates its stored source receiver:
+            // Snell projection changes the screen-to-world Jacobian, so camera
+            // depth alone is not the footprint of a refracted pixel.
+            float perspectivePixelWorldSize = 2.0 * viewDepth * uCameraTanHalfFovY /
+              max(uCameraViewportHeight, 1.0);
+            float refractedPixelWorldSize = max(
+              length(dFdx(receiver)),
+              length(dFdy(receiver))
+            );
+            float pixelWorldSize = uUseReceiverWorld
+              ? refractedPixelWorldSize
+              : perspectivePixelWorldSize;
             float edgeWidth = max(0.004, pixelWorldSize * 1.25);
             visibility = min(visibility, traceCharacterVisibility(receiver, sun, edgeWidth));
           }

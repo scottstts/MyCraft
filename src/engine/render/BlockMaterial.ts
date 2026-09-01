@@ -97,7 +97,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       float getVoxelShadowMask() {
         if (!voxelShadowEnabled) return 1.0;
         if (uForwardRefractionActive > 0.5) {
-          return forwardRefractionSunVisibility(voxelShadowResolution);
+          return forwardRefractionSunVisibility(
+            voxelShadowResolution,
+            vForwardRefractionSourceWorld
+          );
         }
         // gl_FragCoord is already at the pixel centre.  The former extra
         // half-pixel offset put nearest samples on texel boundaries.
@@ -417,7 +420,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           forwardRefractionDiscardCameraMedium();
           if (uForwardRefractionOutputReceiver > 0.5) {
             gl_FragColor = vec4(
-              forwardRefractionEncodeReceiver(vForwardRefractionSourceWorld),
+              forwardRefractionStoreReceiver(vForwardRefractionSourceWorld),
               1.0
             );
             return;

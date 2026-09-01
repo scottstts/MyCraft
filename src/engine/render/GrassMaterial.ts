@@ -73,7 +73,10 @@ export class GrassMaterial extends THREE.ShaderMaterial {
       float getVoxelShadowMask() {
         if (!voxelShadowEnabled) return 1.0;
         if (uForwardRefractionActive > 0.5) {
-          return forwardRefractionSunVisibility(voxelShadowResolution);
+          return forwardRefractionSunVisibility(
+            voxelShadowResolution,
+            vForwardRefractionSourceWorld
+          );
         }
         vec2 uv = gl_FragCoord.xy / max(voxelShadowResolution, vec2(1.0));
         float center = sampleVoxelShadow(uv);
@@ -108,7 +111,7 @@ export class GrassMaterial extends THREE.ShaderMaterial {
         if (tex.a < alphaCutoff) discard;
         if (uForwardRefractionOutputReceiver > 0.5) {
           gl_FragColor = vec4(
-            forwardRefractionEncodeReceiver(vForwardRefractionSourceWorld),
+            forwardRefractionStoreReceiver(vForwardRefractionSourceWorld),
             1.0
           );
           return;

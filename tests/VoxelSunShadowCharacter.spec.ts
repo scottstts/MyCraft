@@ -73,7 +73,10 @@ describe('analytic character sun visibility', () => {
     expect(shader).toContain('seaweedBladeHit');
     expect(shader).not.toContain('seaweedNearHit');
     expect(shader).toContain('uUseReceiverWorld');
-    expect(shader).toContain('uVolumeOrigin + receiverSample.rgb * uVolumeSize');
+    expect(shader).toContain('? receiverSample.rgb');
+    expect(shader).not.toContain('uVolumeOrigin + receiverSample.rgb * uVolumeSize');
+    expect(shader).toContain('length(dFdx(receiver))');
+    expect(shader).toContain('? refractedPixelWorldSize');
     expect(shader).toContain('uUseReceiverWorld || (');
 
     pass.dispose();

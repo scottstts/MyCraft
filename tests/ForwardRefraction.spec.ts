@@ -6,9 +6,11 @@ import {
   FORWARD_REFRACTION_MATERIAL_FLAG,
   FORWARD_REFRACTION_SOLVE_STEPS,
   WATER_REFRACTIVE_INDEX,
+  forwardRefractionFragmentDeclarations,
   forwardRefractionVertexDeclarations,
   solveFlatRefractionInterface,
 } from '../src/engine/render/water/ForwardRefraction';
+import { ForwardRefractionPass } from '../src/engine/render/water/ForwardRefractionPass';
 
 function snellResidual(
   camera: THREE.Vector3,
@@ -81,10 +83,39 @@ describe('forward water-interface projection', () => {
     expect(material.userData[FORWARD_REFRACTION_MATERIAL_FLAG]).toBe(true);
     expect(material.vertexShader).toContain('forwardRefractionProject');
     expect(material.fragmentShader).toContain('forwardRefractionDiscardCameraMedium');
-    expect(material.fragmentShader).toContain('forwardRefractionEncodeReceiver');
+    expect(material.fragmentShader).toContain('forwardRefractionStoreReceiver');
     expect(material.fragmentShader).toContain('forwardRefractionSunVisibility');
     expect(material.fragmentShader).not.toContain('forwardRefractionOriginalScreenUv');
 
     material.dispose();
+  });
+
+  it('stores exact source-world receivers and reconstructs visibility only across that surface', () => {
+    const declarations = forwardRefractionFragmentDeclarations();
+
+    expect(declarations).toContain('uniform sampler2D uForwardReceiverWorld');
+    expect(declarations).toContain('return sourceWorld;');
+    expect(declarations).not.toContain('uForwardReceiverOrigin');
+    expect(declarations).not.toContain('uForwardReceiverSize');
+    expect(declarations).toContain('vec3 sourceDx = dFdx(sourceWorld)');
+    expect(declarations).toContain('receiver.rgb - expectedSource');
+  });
+
+  it('keeps radiance in half float but allocates the receiver field as RGB32F', () => {
+    const renderer = {
+      getDrawingBufferSize: (size: THREE.Vector2) => size.set(32, 24),
+    } as unknown as THREE.WebGLRenderer;
+    const pass = new ForwardRefractionPass(
+      renderer,
+      new THREE.Scene(),
+      32,
+      24,
+    );
+
+    expect(pass['target'].texture.type).toBe(THREE.HalfFloatType);
+    expect(pass['receiverTarget'].texture.type).toBe(THREE.FloatType);
+    expect(pass.getDiagnostics().receiverSpace).toBe('source-world-rgb32f');
+
+    pass.dispose();
   });
 });
