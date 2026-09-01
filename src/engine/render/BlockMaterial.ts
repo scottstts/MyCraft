@@ -329,6 +329,24 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       // reference depth along the same flat Snell ray used by the caustic
       // rasterizer; this keeps the field coherent through the full water
       // column instead of pinning it to a single world-height decal.
+      float sampleWaterCausticPhase(
+        vec2 causticCoord,
+        vec2 phaseOffset,
+        vec2 diagonalA,
+        vec2 diagonalB,
+        float footprintMix
+      ) {
+          vec2 uv = causticCoord + phaseOffset;
+          float center = texture2D(waterCausticMap, uv).r;
+          float footprintAverage = (
+            texture2D(waterCausticMap, uv + diagonalA).r
+            + texture2D(waterCausticMap, uv - diagonalA).r
+            + texture2D(waterCausticMap, uv + diagonalB).r
+            + texture2D(waterCausticMap, uv - diagonalB).r
+          ) * 0.25;
+          return clamp(mix(center, footprintAverage, footprintMix) * waterCausticFieldScale, 0.0, 8.0);
+      }
+
       float sampleWaterCaustics(vec3 worldPosition) {
           vec3 sun = normalize(sunDirection);
           vec3 refractedSun = refract(-sun, vec3(0.0, 1.0, 0.0), 1.0 / ${WATER_IOR.toFixed(3)});
@@ -337,26 +355,36 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           float referenceTravel = (waterCausticReferenceDepth - depth) / vertical;
           vec2 projected = worldPosition.xz + refractedSun.xz * referenceTravel;
           vec2 causticCoord = (projected - waterCausticOrigin) / max(waterCausticExtent, 1.0) + 0.5;
-          // Sample the unwrapped coordinate so derivatives remain continuous
-          // across the RepeatWrapping seam. The render target owns a physical
-          // mip chain; implicit LOD therefore integrates the concentration
-          // over this receiver footprint instead of erasing all variation at
-          // an arbitrary four-texel threshold.
+
+          // The generator, shadow path, terrain ownership and mip chain have
+          // each been isolated without removing the square no-caustic lanes.
+          // The remaining shared structure is the one 53 m periodic optical
+          // realization itself. Sample four half-period phases of that exact
+          // field so a quiet strip in one phase is supplied by the same
+          // physical concentration field from another phase instead of being
+          // stamped into the world as a repeated cross-shaped dead zone.
           vec2 footprintX = dFdx(causticCoord);
           vec2 footprintY = dFdy(causticCoord);
-          float center = texture2D(waterCausticMap, causticCoord).r;
           vec2 diagonalA = (footprintX + footprintY) * 0.35;
           vec2 diagonalB = (footprintX - footprintY) * 0.35;
-          float footprintAverage = (
-            texture2D(waterCausticMap, causticCoord + diagonalA).r
-            + texture2D(waterCausticMap, causticCoord - diagonalA).r
-            + texture2D(waterCausticMap, causticCoord + diagonalB).r
-            + texture2D(waterCausticMap, causticCoord - diagonalB).r
-          ) * 0.25;
-          float footprint = max(length(dFdx(causticCoord)), length(dFdy(causticCoord)))
+          float footprint = max(length(footprintX), length(footprintY))
             * max(waterCausticResolution.x, waterCausticResolution.y);
-          float filtered = mix(center, footprintAverage, smoothstep(0.75, 3.0, footprint));
-          return clamp(filtered * waterCausticFieldScale, 0.0, 8.0);
+          float footprintMix = smoothstep(0.75, 3.0, footprint);
+
+          float f00 = sampleWaterCausticPhase(causticCoord, vec2(0.0, 0.0), diagonalA, diagonalB, footprintMix);
+          float f10 = sampleWaterCausticPhase(causticCoord, vec2(0.5, 0.0), diagonalA, diagonalB, footprintMix);
+          float f01 = sampleWaterCausticPhase(causticCoord, vec2(0.0, 0.5), diagonalA, diagonalB, footprintMix);
+          float f11 = sampleWaterCausticPhase(causticCoord, vec2(0.5, 0.5), diagonalA, diagonalB, footprintMix);
+
+          // Interleave only focused energy. Keeping 1.0 as the floor avoids
+          // manufacturing four overlapping dark defocus fields. Use full
+          // focused-energy gain so the visible brightness matches the original
+          // single-phase caustic intensity much more closely.
+          float focusedExcess = max(f00 - 1.0, 0.0)
+            + max(f10 - 1.0, 0.0)
+            + max(f01 - 1.0, 0.0)
+            + max(f11 - 1.0, 0.0);
+          return clamp(1.0 + focusedExcess * 1.0, 0.0, 8.0);
       }
 
       float waterSunTransmission(float cosIncident) {
