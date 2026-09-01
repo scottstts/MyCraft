@@ -535,10 +535,14 @@ function update(dtSeconds: number) {
     waterSystem.update(dtSeconds, camera);
     waterMaterial?.setTime(waterSystem.getTime());
     waterMaterial?.setCameraUnderwater(waterSystem.isCameraUnderwater());
-    // Keep the medium pass active on both sides of the interface. It now
-    // resolves the below-water segment per view ray and fades the camera-side
-    // contribution over the waterline, so toggling it at the camera threshold
-    // would reintroduce the full-screen underwater kick.
+    composer?.setWaterCameraState(
+      waterSystem.isCameraUnderwater(),
+      waterSystem.getCameraSurfaceY(),
+    );
+    // Keep the medium pass active on both sides of the interface. It resolves
+    // the actual below-water interval per view ray; the displaced surface's
+    // camera-medium state only determines which end of that interval contains
+    // the camera.
     composer?.setUnderwater(true);
     if (composer) {
       composer.setUnderwaterCaustics(

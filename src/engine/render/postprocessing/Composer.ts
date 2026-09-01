@@ -201,6 +201,14 @@ export class Composer {
 
   setUnderwaterWaterLevel(level: number): void { this.underwater.setWaterLevel(level) }
 
+  setWaterCameraState(submerged: boolean, cameraSurfaceY: number): void {
+    this.aerial.setCameraSubmerged(submerged)
+    this.aerial.setCameraSurfaceY(cameraSurfaceY)
+    this.underwater.setCameraSubmerged(submerged)
+    this.underwater.setCameraSurfaceY(cameraSurfaceY)
+    this.lens.setCameraSubmerged(submerged)
+  }
+
   setUnderwaterDebugMode(mode: number): void { this.underwater.setDebugMode(mode) }
 
   /** Share the live render-only caustic field with the underwater medium. */

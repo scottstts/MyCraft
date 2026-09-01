@@ -1,3 +1,5 @@
+import { OCEAN_SURFACE_ALPHA_THRESHOLD } from '../../water/WaterOptics'
+
 export const FILMIC_FLARE_VERTEX_SHADER = /* glsl */ `
   varying vec2 vUv;
 
@@ -369,13 +371,24 @@ export const FILMIC_FLARE_SEED_FRAGMENT_SHADER = /* glsl */ `
 export const FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER = /* glsl */ `
   precision highp float;
   uniform sampler2D tDepth;
+  uniform sampler2D tSceneColor;
   uniform vec2 resolution;
   uniform vec2 sourceTop;
   uniform float solarDiscRadiusUv;
+  uniform float sourceThroughWater;
 
   float skyAt(vec2 sourceUv, vec2 offset) {
-    float rawDepth = texture2D(tDepth, clamp(sourceUv + offset, vec2(0.0), vec2(1.0))).r;
-    return step(0.99999, rawDepth);
+    vec2 uv = clamp(sourceUv + offset, vec2(0.0), vec2(1.0));
+    float rawDepth = texture2D(tDepth, uv).r;
+    // The depth capture deliberately excludes water for refraction. Above
+    // water, reject the visible ocean marker so the direct sky source cannot
+    // bypass the interface. Underwater, sourceTop is already the analytic
+    // Snell-mapped direction and is therefore inside the window; the ocean is
+    // its transmissive aperture, not an occluder. Opaque terrain still blocks
+    // both paths through the shared water-free depth capture.
+    float visibleWater = 1.0 - step(${OCEAN_SURFACE_ALPHA_THRESHOLD.toFixed(6)}, texture2D(tSceneColor, uv).a);
+    float mediumAperture = mix(1.0 - visibleWater, 1.0, sourceThroughWater);
+    return step(0.99999, rawDepth) * mediumAperture;
   }
 
   void main() {

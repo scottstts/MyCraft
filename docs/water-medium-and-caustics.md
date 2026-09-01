@@ -10,7 +10,7 @@ The active order is:
 RenderPass → AerialPerspectivePass (air segment) → UnderwaterPass (water segment) → Bloom → LensFlare → OutputPass
 ```
 
-`UnderwaterPass` reconstructs a world ray and solves its interval below the nominal visual water plane. A camera below the plane integrates from the camera to the receiver or water surface. A camera above the plane integrates only after a valid downward crossing, except for the opaque ocean's zero-alpha marker: that marker already contains an interface Fresnel mix and is left untouched when the camera is above.
+`UnderwaterPass` reconstructs a world ray and solves its interval below the visual water interface. The camera-side choice and local crossing plane come from the same exact displaced-wave height used by `WaterSurfaceMaterial`, not a second nominal-height or view-angle heuristic. Each opaque ocean pixel carries the exact rasterized interface depth in a reserved low-alpha range, so a submerged camera integrates precisely to the displaced surface even while it is above or below the nominal plane. The first visible sample lies on the camera near plane. When the interface crosses a ray inside the clipped camera-to-near interval, the pass toggles that pixel's starting medium and excludes the hidden interval; this is what permits simultaneous dry and underwater pixels during a physical crossing. A camera above the surface integrates only after a valid downward crossing, except for an ocean interface pixel: that pixel already contains a Fresnel mix and is left untouched. No camera-height cross-fade is applied; continuity comes from the changing physical ray length and the moving interface geometry.
 
 Each of eight fixed samples evaluates a world-anchored particulate field. Sample detail is filtered against both the represented ray-segment length and the pixel's world-space ray footprint, so long grazing segments converge to mean density rather than exposing march slices. The local extinction is:
 
@@ -40,6 +40,9 @@ Both block and underwater receivers pass the continuous, unwrapped caustic coord
 ## Review invariants
 
 - `WaterSurfaceMaterial` remains the owner of visible interface Fresnel, reflection, and refraction.
+- The interface draw and both medium passes share one camera-medium authority derived from the displaced surface; raster face orientation, view angle, and clearance thresholds never select the optical side.
+- Camera crossings are resolved by per-ray air/water path lengths and the visible waterline, never by blending in a blue-tinted dry-scene mode.
+- Fullscreen air/water intervals start at the near plane and share the camera-local displaced height; a nominal flat plane must not reclassify dry pixels around a live crest.
 - `UnderwaterPass` does not use a camera-depth dimmer or fixed ambient floor in place of medium transport.
 - `AerialPerspectivePass` never applies air extinction to the below-water part of a finite ray.
 - `WaterCaustics` contains differential-area concentration and shared analytic wave/Snell geometry, not a detached line generator.

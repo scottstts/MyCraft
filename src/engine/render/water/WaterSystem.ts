@@ -22,12 +22,6 @@ const OCEAN_OUTER_CELL_SIZE = 16
 // receiver one complete voxel below it so no generated "seabed" top can
 // cross the optical interface and enter the water-free scene capture.
 const SEABED_SURFACE_CLEARANCE = 2
-// Keep the surface material on one optical side until the camera is clearly
-// across the interface. UnderwaterPass blends the participating medium over
-// this same band, so the material branch cannot flip while the view is still
-// visibly split by the waterline.
-const CAMERA_OPTICS_THRESHOLD = 0.65
-
 function createTerrainHeightTexture(
   bounds: WaterSystemOptions['bounds'],
   seed: number,
@@ -102,6 +96,7 @@ export class WaterSystem {
   private disposed = false
   private seabedBuildToken = 0
   private cameraUnderwater = false
+  private cameraSurfaceY = 0
   private sceneColor: THREE.Texture | null = null
   private sceneDepth: THREE.Texture | null = null
   private sunVisibility: THREE.Texture | null = null
@@ -129,6 +124,7 @@ export class WaterSystem {
     this.terrainHeightTexture = createTerrainHeightTexture(options.bounds, options.seed, options.worldRadius)
 
     const surfaceY = options.waterLevel + OCEAN_WATER_CENTER_OFFSET
+    this.cameraSurfaceY = surfaceY
     this.material = new WaterSurfaceMaterial({
       map: null,
       color: options.color ?? 0x1a6f8e,
@@ -230,6 +226,9 @@ export class WaterSystem {
 
   isCameraUnderwater(): boolean { return this.cameraUnderwater }
 
+  /** Live displaced interface height at the camera's world-space XZ. */
+  getCameraSurfaceY(): number { return this.cameraSurfaceY }
+
   getCausticTexture(): THREE.Texture | null { return this.caustics?.getTexture() ?? null }
 
   getCausticOrigin(): { x: number; y: number } { return this.caustics?.getOrigin() ?? { x: 0, y: 0 } }
@@ -321,8 +320,13 @@ export class WaterSystem {
     this.oceanGroup.position.x = Math.floor(camera.position.x / snap) * snap
     this.oceanGroup.position.z = Math.floor(camera.position.z / snap) * snap
 
-    const waveSurface = this.surfaceY + sampleOceanHeight(camera.position.x, camera.position.z, this.time)
-    this.cameraUnderwater = camera.position.y < waveSurface - CAMERA_OPTICS_THRESHOLD
+    // Camera medium is an exact point classification against the same live
+    // displaced surface used by the ocean mesh. Do not add a height band or
+    // derive this state from face orientation: the visible surface itself
+    // supplies the continuous screen-space waterline during a crossing.
+    this.cameraSurfaceY = this.surfaceY
+      + sampleOceanHeight(camera.position.x, camera.position.z, this.time)
+    this.cameraUnderwater = camera.position.y < this.cameraSurfaceY
     this.material.setCameraUnderwater(this.cameraUnderwater)
 
     this.syncSeabedMaterial()
@@ -337,6 +341,7 @@ export class WaterSystem {
     return {
       time: this.time,
       cameraUnderwater: this.cameraUnderwater,
+      cameraSurfaceY: this.cameraSurfaceY,
       surfaceY: this.surfaceY,
       maxWaveAmplitude: getOceanMaxAmplitude(),
       waveField: {

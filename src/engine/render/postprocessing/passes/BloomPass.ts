@@ -12,6 +12,16 @@ export class BloomWrapperPass extends UnrealBloomPass {
       RENDER_STYLE.bloom.radius,
       RENDER_STYLE.bloom.threshold,
     )
+    // RGB bloom is additive, but alpha is an internal pre-lens interface
+    // channel. Preserve the incoming alpha exactly so LensFlarePass can see
+    // the visible ocean even though its geometric depth capture hides water.
+    this.blendMaterial.blending = THREE.CustomBlending
+    this.blendMaterial.blendEquation = THREE.AddEquation
+    this.blendMaterial.blendSrc = THREE.OneFactor
+    this.blendMaterial.blendDst = THREE.OneFactor
+    this.blendMaterial.blendEquationAlpha = THREE.AddEquation
+    this.blendMaterial.blendSrcAlpha = THREE.ZeroFactor
+    this.blendMaterial.blendDstAlpha = THREE.OneFactor
   }
   setSize(width: number, height: number){ super.setSize(width, height) }
   setSettings({ enabled, strength, threshold }: { enabled?: boolean; strength?: number; threshold?: number }){

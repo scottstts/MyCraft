@@ -5,6 +5,7 @@ import {
   LensFlarePass,
   computeLensFlareSunEnergy,
   projectLensFlareSource,
+  refractLensFlareSunDirectionUnderwater,
 } from '../src/engine/render/postprocessing/passes/LensFlarePass'
 import {
   FILMIC_FLARE_COMPOSITE_FRAGMENT_SHADER,
@@ -74,6 +75,46 @@ describe('filmic lens flare WebGL port', () => {
     expect(computeLensFlareSunEnergy(1)).toBeCloseTo(1)
   })
 
+  it('maps the underwater lens source into the physical Snell window', () => {
+    const overhead = refractLensFlareSunDirectionUnderwater(new THREE.Vector3(0, 1, 0))
+    expect(overhead.toArray()).toEqual([0, 1, 0])
+
+    const horizon = refractLensFlareSunDirectionUnderwater(new THREE.Vector3(1, 0, 0))
+    const criticalAngle = Math.asin(1 / 1.333)
+    expect(Math.acos(horizon.y)).toBeCloseTo(criticalAngle, 6)
+    expect(horizon.x).toBeCloseTo(1 / 1.333, 6)
+    expect(horizon.y).toBeGreaterThan(0)
+
+    const obliqueSun = new THREE.Vector3(0.8, 0.25, -0.4).normalize()
+    const apparent = refractLensFlareSunDirectionUnderwater(obliqueSun)
+    expect(Math.acos(apparent.y)).toBeLessThanOrEqual(criticalAngle + 1e-8)
+    expect(Math.sign(apparent.x)).toBe(Math.sign(obliqueSun.x))
+    expect(Math.sign(apparent.z)).toBe(Math.sign(obliqueSun.z))
+  })
+
+  it('feeds the Snell-mapped source to the complete underwater flare graph', () => {
+    const camera = createCamera()
+    const sun = new THREE.Vector3(0.35, 0.72, -0.60).normalize()
+    const apparent = refractLensFlareSunDirectionUnderwater(sun)
+    const expectedProjection = projectLensFlareSource(
+      camera,
+      apparent,
+      computeLensFlareSunEnergy(sun.y),
+    )
+    const pass = new LensFlarePass()
+
+    pass.setCameraSubmerged(true)
+    pass.update(camera, sun)
+    const diagnostics = pass.getDiagnostics()
+
+    expect(diagnostics.cameraSubmerged).toBe(true)
+    expect(diagnostics.sourceTop[0]).toBeCloseTo(expectedProjection.sourceTop.x, 6)
+    expect(diagnostics.sourceTop[1]).toBeCloseTo(expectedProjection.sourceTop.y, 6)
+    expect(diagnostics.sourceVisibility).toBeCloseTo(expectedProjection.visibility, 6)
+
+    pass.dispose()
+  })
+
   it('retains all three five-level bloom graphs and their authored thresholds', () => {
     const pass = new LensFlarePass()
     pass.setSize(1280, 720)
@@ -136,5 +177,11 @@ describe('filmic lens flare WebGL port', () => {
     expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain('apertureVisibility')
     expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain('solarDiscRadiusUv')
     expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain('outer / 16.0')
+    expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain('uniform sampler2D tSceneColor')
+    expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain('uniform float sourceThroughWater')
+    expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain('float visibleWater = 1.0 - step(0.002000')
+    expect(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER).toContain(
+      'float mediumAperture = mix(1.0 - visibleWater, 1.0, sourceThroughWater)',
+    )
   })
 })

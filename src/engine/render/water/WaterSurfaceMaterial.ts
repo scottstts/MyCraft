@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { OCEAN_WAVES, oceanWaveDeclarations } from './OceanWaveField'
+import { OCEAN_SURFACE_DEPTH_ALPHA_SCALE } from './WaterOptics'
 
 export interface WaterSurfaceParams {
   map: THREE.Texture | null
@@ -625,11 +626,13 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           vec3 normal = uOceanMode
             ? waveNormal(vBaseWorld.xz, uTime, surfaceFootprint, crest, jacobian, slopeVariance, normalVariation)
             : normalize(vNormalVary);
-          // The ocean grid is consistently wound upward. Classify its optical
-          // side from the face actually being shaded, not a camera-height
-          // boolean whose threshold can change as a third-person orbit camera
-          // pitches. Legacy block-water faces retain the explicit medium flag.
-          bool underwaterView = uOceanMode ? !gl_FrontFacing : uCameraUnderwater;
+          // The whole interface draw has one incident medium. A displaced
+          // sheet can expose both raster face orientations near a crest or at
+          // a waterline crossing, but that must never mix air->water and
+          // water->air optics in one frame. The live displaced surface at the
+          // camera owns this uniform state; critical-angle coverage below is
+          // still resolved independently per pixel.
+          bool underwaterView = uCameraUnderwater;
           if (underwaterView && normal.y > 0.0) normal = -normal;
           if (!underwaterView && normal.y < 0.0) normal = -normal;
           vec3 viewDirection = normalize(cameraPosition - opticalWorld);
@@ -933,12 +936,21 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             oceanWaveLod(surfaceFootprint, 8.0)
           );
 
-          // Ocean pixels carry an internal zero-alpha marker for the later
-          // fullscreen atmosphere/medium passes. The ocean is still opaque
-          // (transparent=false, depthWrite=true); this channel only tells
-          // those passes not to mistake the water-free capture's seabed depth
-          // for the visible water surface.
-          gl_FragColor = vec4(max(color, vec3(0.0)), uOceanMode ? 0.0 : clamp(uAlpha, 0.0, 1.0));
+          // The opaque ocean carries its exact visible fragment depth in a
+          // reserved low-alpha range. Later medium and lens passes can then
+          // use the displaced interface actually rasterized at this pixel,
+          // even though their separate scene capture intentionally hides all
+          // water. Opaque block materials start at alpha 1/255, so the ranges
+          // cannot alias.
+          float oceanSurfaceDepth = clamp(
+            vViewDepth / max(uCameraFar, 0.001),
+            0.0,
+            1.0
+          ) * ${OCEAN_SURFACE_DEPTH_ALPHA_SCALE.toFixed(6)};
+          gl_FragColor = vec4(
+            max(color, vec3(0.0)),
+            uOceanMode ? oceanSurfaceDepth : clamp(uAlpha, 0.0, 1.0)
+          );
         }
       `,
     })

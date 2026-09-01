@@ -1,6 +1,14 @@
 /** Shared scene-linear optical coefficients for the rendered water medium. */
 export const WATER_IOR = 1.333
 
+/**
+ * Opaque ocean pixels use alpha as an internal normalized linear view-depth
+ * channel until lens optics have consumed it. Opaque block materials reserve
+ * alpha values at and above 1/255, leaving this range unambiguous.
+ */
+export const OCEAN_SURFACE_DEPTH_ALPHA_SCALE = 0.001
+export const OCEAN_SURFACE_ALPHA_THRESHOLD = 0.002
+
 /** Virtual receiver depth represented by the bounded caustic tile. */
 export const CAUSTIC_REFERENCE_DEPTH = 24.0
 

@@ -3,6 +3,8 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import {
   CAUSTIC_FIELD_SCALE,
   CAUSTIC_REFERENCE_DEPTH,
+  OCEAN_SURFACE_ALPHA_THRESHOLD,
+  OCEAN_SURFACE_DEPTH_ALPHA_SCALE,
   WATER_ABSORPTION,
   WATER_IOR,
   WATER_SCATTERING,
@@ -44,6 +46,7 @@ export class UnderwaterPass extends ShaderPass {
         cameraMatrixWorld: { value: new THREE.Matrix4() },
         uCameraPosition: { value: new THREE.Vector3() },
         waterLevel: { value: 43.0 },
+        cameraSurfaceY: { value: 43.0 },
         // Coefficients are in world metres. Scattering is deliberately
         // non-zero so deep water tends toward blue-green airlight instead of
         // collapsing to a black vacuum after the red channel is absorbed.
@@ -68,6 +71,10 @@ export class UnderwaterPass extends ShaderPass {
         // allowed to run. It is deliberately not the camera's medium state:
         // the camera can be above the surface while a receiver ray crosses it.
         underwater: { value: false },
+        // One camera-medium authority shared with the surface material. The
+        // below-water interval remains per ray; this only chooses which side
+        // of the first interface segment contains the camera.
+        cameraSubmerged: { value: false },
         debugMode: { value: 0 },
       },
       vertexShader: `
@@ -87,6 +94,7 @@ export class UnderwaterPass extends ShaderPass {
         uniform mat4 cameraMatrixWorld;
         uniform vec3 uCameraPosition;
         uniform float waterLevel;
+        uniform float cameraSurfaceY;
         uniform vec3 absorption;
         uniform vec3 scattering;
         uniform vec3 fogColor;
@@ -105,10 +113,10 @@ export class UnderwaterPass extends ShaderPass {
         uniform float causticReferenceDepth;
         uniform float causticFieldScale;
         uniform bool underwater;
+        uniform bool cameraSubmerged;
         uniform int debugMode;
         varying vec2 vUv;
 
-        const float WATERLINE_TRANSITION = 0.65;
         const int MEDIUM_SAMPLES = 8;
         const float WATER_IOR = ${WATER_IOR.toFixed(3)};
 
@@ -238,8 +246,9 @@ export class UnderwaterPass extends ShaderPass {
           // Above-water ocean pixels already contain interface reflection and
           // Fresnel-weighted transmission from WaterSurfaceMaterial. Do not
           // integrate a second camera-side volume over that mixed interface.
-          float waterSurfaceMask = 1.0 - step(0.001, source.a);
-          float cameraAboveWater = step(waterLevel, uCameraPosition.y);
+          float waterSurfaceMask = 1.0 - step(${OCEAN_SURFACE_ALPHA_THRESHOLD.toFixed(6)}, source.a);
+          float cameraBelow = cameraSubmerged ? 1.0 : 0.0;
+          float cameraAboveWater = 1.0 - cameraBelow;
           if (waterSurfaceMask > 0.5 && cameraAboveWater > 0.5) {
             gl_FragColor = source;
             return;
@@ -251,6 +260,12 @@ export class UnderwaterPass extends ShaderPass {
           float finiteReceiver = 1.0 - step(0.999999, rawSceneDepth);
           float sceneViewDepth = readViewDepth(rawSceneDepth);
           float sceneDistance = sceneViewDepth / max(-viewRay.z, 0.02);
+          float encodedSurfaceViewDepth = clamp(
+            source.a / ${OCEAN_SURFACE_DEPTH_ALPHA_SCALE.toFixed(6)},
+            0.0,
+            1.0
+          ) * cameraFar;
+          float encodedSurfaceDistance = encodedSurfaceViewDepth / max(-viewRay.z, 0.02);
 
           // The visible ocean interface owns every above-water sky ray. If a
           // far-sky pixel lacks that marker (for example at the finite ocean
@@ -267,23 +282,51 @@ export class UnderwaterPass extends ShaderPass {
           // occur before the visible receiver.
           float surfaceDistance = -1.0;
           if (abs(ray.y) > 0.001) {
-            surfaceDistance = (waterLevel - uCameraPosition.y) / ray.y;
+            // The camera-medium authority is evaluated against the displaced
+            // wave at the camera. Use that same local interface here instead
+            // of the nominal plane, otherwise a camera above the flat level
+            // but below a crest gives every unmarked pixel a full water path.
+            surfaceDistance = (cameraSurfaceY - uCameraPosition.y) / ray.y;
           }
+          // A visible ocean pixel already carries the exact displaced surface
+          // depth. Prefer it over the nominal plane so the water interval
+          // shrinks continuously to zero at a live crest/trough crossing.
+          surfaceDistance = mix(surfaceDistance, encodedSurfaceDistance, waterSurfaceMask);
           float crossingAhead = max(
             step(0.001, surfaceDistance),
             step(abs(surfaceDistance), 0.001) * step(0.0, -ray.y)
           );
-          float cameraBelow = 1.0 - cameraAboveWater;
           float crossingBeforeReceiver = crossingAhead
             * step(surfaceDistance, sceneDistance + 0.001);
           float crossedDistance = clamp(surfaceDistance, 0.0, sceneDistance);
+          // Rasterization begins on the near plane, not at the pinhole. While
+          // the interface passes through the camera, different near-plane
+          // pixels can already be in different media. Toggle the ray's start
+          // medium when the displaced interface crossing lies inside the
+          // clipped camera-to-near segment, then integrate only the visible
+          // part of that ray. This is the continuous split-screen waterline;
+          // there is no camera-height or pitch transition mode.
+          float visibleRayStart = cameraNear / max(-viewRay.z, 0.02);
+          float crossingBeforeVisibleRay = crossingBeforeReceiver
+            * step(surfaceDistance, visibleRayStart + 0.001);
+          float visibleStartsBelow = mix(
+            cameraBelow,
+            1.0 - cameraBelow,
+            crossingBeforeVisibleRay
+          );
           float waterDistance = cameraBelow > 0.5
             ? (crossingBeforeReceiver > 0.5 ? crossedDistance : sceneDistance)
             : (crossingBeforeReceiver > 0.5 ? max(sceneDistance - crossedDistance, 0.0) : 0.0);
-          waterDistance = min(max(waterDistance, 0.0), cameraFar);
           float waterStart = cameraBelow < 0.5 && crossingBeforeReceiver > 0.5
             ? crossedDistance
             : 0.0;
+          if (crossingBeforeVisibleRay > 0.5) {
+            waterStart = visibleRayStart;
+            waterDistance = visibleStartsBelow > 0.5
+              ? max(sceneDistance - visibleRayStart, 0.0)
+              : 0.0;
+          }
+          waterDistance = min(max(waterDistance, 0.0), cameraFar);
 
           // Angular ray spread plus interval discontinuities bound the world
           // footprint represented by one pixel. This is evaluated outside the
@@ -293,17 +336,6 @@ export class UnderwaterPass extends ShaderPass {
             abs(dFdx(waterStart)) + abs(dFdx(waterDistance)),
             abs(dFdy(waterStart)) + abs(dFdy(waterDistance))
           );
-
-          // Keep the authored soft camera transition for the below-surface
-          // view. Above the interface, non-marker receivers get their actual
-          // water interval at full strength; the visible ocean marker returned
-          // above is the one case whose mixed interface must remain untouched.
-          float cameraWaterBlend = smoothstep(
-            -WATERLINE_TRANSITION,
-            WATERLINE_TRANSITION,
-            waterLevel - uCameraPosition.y
-          );
-          float mediumBlend = cameraBelow > 0.5 ? cameraWaterBlend : 1.0;
 
           vec3 transmittance = vec3(1.0);
           vec3 inScatter = vec3(0.0);
@@ -358,14 +390,13 @@ export class UnderwaterPass extends ShaderPass {
           }
 
           vec3 color = source.rgb * transmittance + inScatter;
-          color = mix(source.rgb, color, mediumBlend);
 
-          if (debugMode == 1) color = vec3(clamp(waterDistance / 64.0, 0.0, 1.0) * mediumBlend);
-          else if (debugMode == 2) color = mix(vec3(1.0), transmittance, mediumBlend);
-          else if (debugMode == 3) color = vec3(clamp(1.0 - transmittance.g, 0.0, 1.0) * mediumBlend);
-          else if (debugMode == 4) color = vec3(clamp(debugCaustic / ${CAUSTIC_FIELD_SCALE.toFixed(1)}, 0.0, 1.0) * mediumBlend);
-          else if (debugMode == 5) color = vec3(clamp(debugDensity, 0.0, 1.0) * mediumBlend);
-          else if (debugMode == 6) color = vec3(clamp(debugSunPhase / 2.0, 0.0, 1.0) * mediumBlend);
+          if (debugMode == 1) color = vec3(clamp(waterDistance / 64.0, 0.0, 1.0));
+          else if (debugMode == 2) color = transmittance;
+          else if (debugMode == 3) color = vec3(clamp(1.0 - transmittance.g, 0.0, 1.0));
+          else if (debugMode == 4) color = vec3(clamp(debugCaustic / ${CAUSTIC_FIELD_SCALE.toFixed(1)}, 0.0, 1.0));
+          else if (debugMode == 5) color = vec3(clamp(debugDensity, 0.0, 1.0));
+          else if (debugMode == 6) color = vec3(clamp(debugSunPhase / 2.0, 0.0, 1.0));
 
           gl_FragColor = vec4(max(color, vec3(0.0)), source.a);
         }
@@ -385,6 +416,8 @@ export class UnderwaterPass extends ShaderPass {
   }
 
   setWaterLevel(level: number): void { this.uniforms.waterLevel.value = level }
+
+  setCameraSurfaceY(level: number): void { this.uniforms.cameraSurfaceY.value = level }
 
   setAbsorption(value: THREE.Vector3): void { (this.uniforms.absorption.value as THREE.Vector3).copy(value) }
 
@@ -422,6 +455,8 @@ export class UnderwaterPass extends ShaderPass {
   }
 
   setUnderwater(value: boolean): void { this.uniforms.underwater.value = value }
+
+  setCameraSubmerged(value: boolean): void { this.uniforms.cameraSubmerged.value = value }
 
   setDebugMode(mode: number): void { this.uniforms.debugMode.value = Math.max(0, Math.floor(mode)) }
 

@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import type { AtmosphereState } from '../../atmosphere/AtmosphereModel';
 import { RENDER_STYLE } from '../../settings/RenderStyle';
+import {
+  OCEAN_SURFACE_ALPHA_THRESHOLD,
+  OCEAN_SURFACE_DEPTH_ALPHA_SCALE,
+} from '../../water/WaterOptics';
 
 /**
  * Depth-aware surface aerial perspective using the same coefficients and
@@ -32,6 +36,8 @@ export class AerialPerspectivePass extends ShaderPass {
         mieCoefficient: { value: 0.018 },
         mieDirectionalG: { value: 0.76 },
         waterLevel: { value: 42.0 },
+        cameraSurfaceY: { value: 42.0 },
+        cameraSubmerged: { value: false },
         maxDistance: { value: 600.0 },
         hazeStart: { value: 36.0 },
         hazeExtinction: { value: 0.0028 },
@@ -70,6 +76,8 @@ export class AerialPerspectivePass extends ShaderPass {
         uniform float mieCoefficient;
         uniform float mieDirectionalG;
         uniform float waterLevel;
+        uniform float cameraSurfaceY;
+        uniform bool cameraSubmerged;
         uniform float maxDistance;
         uniform float hazeStart;
         uniform float hazeExtinction;
@@ -126,17 +134,24 @@ export class AerialPerspectivePass extends ShaderPass {
           vec3 ray = viewRayWorld(viewRay);
           float receiverViewDepth = readDepth(vUv);
 
-          // The opaque ocean writes a zero-alpha marker into the color pass.
-          // Its separate capture intentionally contains the seabed, so the
-          // capture depth is not the visible receiver depth for an ocean pixel.
-          // Replace it with the camera ray's intersection with the nominal
-          // water plane before applying aerial extinction. This keeps the
+          // The opaque ocean writes its visible normalized linear view depth
+          // into a
+          // reserved low-alpha range. Its separate capture intentionally
+          // contains the seabed, so that capture depth is not the visible
+          // receiver depth for an ocean pixel. Decode the displaced surface
+          // that actually won this pixel before applying aerial extinction.
+          // This keeps the
           // atmosphere pass from reintroducing a depth/LOD seam after the
           // surface shader has already performed its Fresnel mix.
-          float waterMask = 1.0 - step(0.001, source.a);
+          float waterMask = 1.0 - step(${OCEAN_SURFACE_ALPHA_THRESHOLD.toFixed(6)}, source.a);
+          float encodedSurfaceViewDepth = clamp(
+            source.a / ${OCEAN_SURFACE_DEPTH_ALPHA_SCALE.toFixed(6)},
+            0.0,
+            1.0
+          ) * cameraFar;
           vec3 cameraPosition = cameraMatrixWorld[3].xyz;
-          float cameraAboveWater = step(waterLevel, cameraPosition.y);
-          float cameraBelowWater = 1.0 - cameraAboveWater;
+          float cameraBelowWater = cameraSubmerged ? 1.0 : 0.0;
+          float cameraAboveWater = 1.0 - cameraBelowWater;
           // The underside surface shader has already evaluated the analytic
           // sky through its Fresnel/Snell window. There is no camera-side air
           // segment before this interface; UnderwaterPass will integrate the
@@ -148,13 +163,15 @@ export class AerialPerspectivePass extends ShaderPass {
           }
           float surfaceRayDistance = -1.0;
           if (abs(ray.y) > 0.001) {
-            surfaceRayDistance = (waterLevel - cameraPosition.y) / ray.y;
+            surfaceRayDistance = (cameraSurfaceY - cameraPosition.y) / ray.y;
           }
+          float encodedSurfaceRayDistance = encodedSurfaceViewDepth / max(-viewRay.z, 0.0001);
+          surfaceRayDistance = mix(surfaceRayDistance, encodedSurfaceRayDistance, waterMask);
           float rayDown = step(0.001, -ray.y);
           float surfaceViewDepth = -surfaceRayDistance * viewRay.z;
-          float validWaterSurfaceRay = cameraAboveWater
+          float validWaterSurfaceRay = max(waterMask, cameraAboveWater
             * rayDown
-            * step(0.001, surfaceRayDistance);
+            * step(0.001, surfaceRayDistance));
           receiverViewDepth = mix(
             receiverViewDepth,
             clamp(surfaceViewDepth, 0.0, cameraFar),
@@ -279,6 +296,10 @@ export class AerialPerspectivePass extends ShaderPass {
     (this.uniforms.invProjectionMatrix.value as THREE.Matrix4).copy(camera.projectionMatrixInverse);
     (this.uniforms.cameraMatrixWorld.value as THREE.Matrix4).copy(camera.matrixWorld);
   }
+
+  setCameraSubmerged(value: boolean): void { this.uniforms.cameraSubmerged.value = value }
+
+  setCameraSurfaceY(value: number): void { this.uniforms.cameraSurfaceY.value = value }
 
   setAtmosphereState(state: AtmosphereState): void {
     (this.uniforms.sunDirection.value as THREE.Vector3).copy(state.sunDirection);

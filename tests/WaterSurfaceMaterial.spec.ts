@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 import { WaterSurfaceMaterial } from '../src/engine/render/water/WaterSurfaceMaterial';
 import { WaterSystem } from '../src/engine/render/water/WaterSystem';
+import { OCEAN_WATER_CENTER_OFFSET, sampleOceanHeight } from '../src/engine/render/water/OceanWaveField';
 
 describe('WaterSurfaceMaterial', () => {
   it('uses projected Snell refraction and reconstructed scene thickness', () => {
@@ -14,7 +15,8 @@ describe('WaterSurfaceMaterial', () => {
     expect(material.fragmentShader).toContain('length(backgroundWorld - opticalWorld)');
     expect(material.fragmentShader).toContain('dielectricFresnel');
     expect(material.fragmentShader).toContain('criticalSafeRefract');
-    expect(material.fragmentShader).toContain('bool underwaterView = uOceanMode ? !gl_FrontFacing : uCameraUnderwater');
+    expect(material.fragmentShader).toContain('bool underwaterView = uCameraUnderwater');
+    expect(material.fragmentShader).not.toContain('gl_FrontFacing');
     expect(material.fragmentShader).toContain('vec3 windowDirection = criticalSafeRefract(incident, normal, eta)');
     expect(material.fragmentShader).toContain('transmitted = window');
     expect(material.fragmentShader).not.toContain('bool tir =');
@@ -67,6 +69,39 @@ describe('WaterSurfaceMaterial', () => {
     expect(material.fragmentShader).not.toContain('pow((1.0 - 1.333)');
 
     material.dispose();
+  });
+
+  it('classifies the camera directly against the displaced surface without an optics threshold', () => {
+    const textureLoad = vi.spyOn(THREE.TextureLoader.prototype, 'load')
+      .mockImplementation((_url, onLoad) => {
+        const texture = new THREE.Texture();
+        onLoad?.(texture);
+        return texture;
+      });
+    const scene = new THREE.Scene();
+    const waterLevel = 42;
+    const water = new WaterSystem(scene, {
+      bounds: { minX: -16, maxX: 16, minZ: -16, maxZ: 16 },
+      waterLevel,
+      farDistance: 128,
+      seed: 17,
+      worldRadius: 32,
+    });
+    const camera = new THREE.PerspectiveCamera(70, 16 / 9, 0.1, 512);
+    const displacedSurface = waterLevel + OCEAN_WATER_CENTER_OFFSET
+      + sampleOceanHeight(0, 0, 0);
+
+    camera.position.set(0, displacedSurface - 1e-4, 0);
+    water.update(0, camera);
+    expect(water.isCameraUnderwater()).toBe(true);
+    expect(water.getCameraSurfaceY()).toBeCloseTo(displacedSurface, 10);
+
+    camera.position.y = displacedSurface + 1e-4;
+    water.update(0, camera);
+    expect(water.isCameraUnderwater()).toBe(false);
+
+    water.dispose();
+    textureLoad.mockRestore();
   });
 
   it('keeps camera reconstruction matrices current', () => {

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { FullScreenQuad, Pass } from 'three/examples/jsm/postprocessing/Pass.js'
 import type { AtmosphereState } from '../../atmosphere/AtmosphereModel'
+import { WATER_IOR } from '../../water/WaterOptics'
 import {
   FILMIC_FLARE_BRIGHT_FRAGMENT_SHADER,
   FILMIC_FLARE_COMPOSITE_FRAGMENT_SHADER,
@@ -32,6 +33,7 @@ export interface LensFlareProjection {
 
 export interface LensFlareDiagnostics {
   enabled: boolean
+  cameraSubmerged: boolean
   debugMode: number
   sourceTop: [number, number]
   sourceVisibility: number
@@ -51,6 +53,7 @@ const scratchForward = new THREE.Vector3()
 const scratchRight = new THREE.Vector3()
 const scratchUp = new THREE.Vector3()
 const scratchSun = new THREE.Vector3()
+const scratchApparentSun = new THREE.Vector3()
 
 function smoothstep(value: number, minimum: number, maximum: number): number {
   return THREE.MathUtils.smoothstep(value, minimum, maximum)
@@ -65,6 +68,31 @@ export function computeLensFlareSunEnergy(sunElevationY: number): number {
     smoothstep(sunElevationY, -0.02, 0.30),
   )
   return visibility * elevationEnergy
+}
+
+/**
+ * Apparent direction of an above-water directional source seen from water.
+ * Refract the incoming air ray into water, then reverse it back into the
+ * camera-to-source convention used by the lens projection. A flat carrier
+ * normal keeps the source inside the canonical 48.75-degree Snell window;
+ * the surface shader supplies the smaller wave-normal deformation and lobe.
+ */
+export function refractLensFlareSunDirectionUnderwater(
+  sunDirection: THREE.Vector3,
+  target = new THREE.Vector3(),
+): THREE.Vector3 {
+  scratchSun.copy(sunDirection).normalize()
+  const eta = 1 / WATER_IOR
+  const cosIncident = THREE.MathUtils.clamp(scratchSun.y, 0, 1)
+  const transmittedCos = Math.sqrt(Math.max(
+    1 - eta * eta * (1 - cosIncident * cosIncident),
+    0,
+  ))
+  return target.set(
+    scratchSun.x * eta,
+    transmittedCos,
+    scratchSun.z * eta,
+  ).normalize()
 }
 
 /**
@@ -362,6 +390,10 @@ class FilmicBloomPyramid {
     }
   }
 
+  invalidateTemporalHistory(): void {
+    this.temporalHistoryValid = false
+  }
+
   renderTemporal(
     renderer: THREE.WebGLRenderer,
     quad: FullScreenQuad,
@@ -429,6 +461,7 @@ export class LensFlarePass extends Pass {
   private readonly previousFieldDirection = new THREE.Vector2(1, 0)
   private readonly oldClearColor = new THREE.Color()
   private effectEnabled = true
+  private cameraSubmerged = false
   private debugMode = 0
   private elapsedSeconds = 0
 
@@ -461,9 +494,11 @@ export class LensFlarePass extends Pass {
 
     this.occlusionMaterial = createShaderMaterial(FILMIC_FLARE_OCCLUSION_FRAGMENT_SHADER, {
       tDepth: { value: null },
+      tSceneColor: this.commonUniforms.tDiffuse,
       resolution: this.commonUniforms.resolution,
       sourceTop: this.commonUniforms.sourceTop,
       solarDiscRadiusUv: { value: 0.0042 },
+      sourceThroughWater: { value: 0 },
     })
     this.flareMaterial = createShaderMaterial(FILMIC_FLARE_FRAGMENT_SHADER, {
       ...this.commonUniforms,
@@ -519,9 +554,12 @@ export class LensFlarePass extends Pass {
   ): void {
     const direction = atmosphere?.sunDirection ?? sunDirection
     const sunEnergy = computeLensFlareSunEnergy(direction.y)
+    const apparentDirection = this.cameraSubmerged
+      ? refractLensFlareSunDirectionUnderwater(direction, scratchApparentSun)
+      : direction
     projectLensFlareSource(
       camera,
-      direction,
+      apparentDirection,
       sunEnergy,
       this.previousSource,
       this.previousFieldDirection,
@@ -543,6 +581,17 @@ export class LensFlarePass extends Pass {
     this.occlusionMaterial.uniforms.solarDiscRadiusUv.value = (
       Math.tan(THREE.MathUtils.degToRad(0.53) * 0.5) / (2 * Math.tan(halfFov))
     )
+  }
+
+  setCameraSubmerged(value: boolean): void {
+    if (this.cameraSubmerged === value) return
+    this.cameraSubmerged = value
+    this.occlusionMaterial.uniforms.sourceThroughWater.value = value ? 1 : 0
+    // The source changes discontinuously between the direct and Snell-mapped
+    // coordinates at the physical medium boundary. Do not leave persistent
+    // source/halo bloom behind at the old coordinate after that change.
+    this.sourceBloom.invalidateTemporalHistory()
+    this.haloBloom.invalidateTemporalHistory()
   }
 
   setEnabled(enabled: boolean): void {
@@ -629,6 +678,7 @@ export class LensFlarePass extends Pass {
     ]
     return {
       enabled: this.effectEnabled,
+      cameraSubmerged: this.cameraSubmerged,
       debugMode: this.debugMode,
       sourceTop: this.projection.sourceTop.toArray(),
       sourceVisibility: this.projection.visibility,
