@@ -262,6 +262,18 @@ describe('player character feet alignment', () => {
       expect(legBounds.min.y).toBeCloseTo(3, 6);
       const eyeAnchor = visualRoot.getObjectByName('EyeAnchor');
       expect(eyeAnchor?.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(4.7, 6);
+
+      const body = visualRoot.getObjectByName('PlayerCharacter.Body');
+      expect(body).toBeTruthy();
+      let bodyMeshCount = 0;
+      body?.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          if (object.name === 'CharacterSwitchVFX.Scan') return;
+          bodyMeshCount += 1;
+          expect(object.castShadow).toBe(true);
+        }
+      });
+      expect(player.getShadowBoxes()).toHaveLength(bodyMeshCount);
     }
 
     player.dispose();

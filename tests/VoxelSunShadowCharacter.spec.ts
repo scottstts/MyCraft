@@ -48,6 +48,30 @@ describe('analytic character sun visibility', () => {
     volume.dispose();
   });
 
+  it('keeps every caster box from the most detailed authored character', () => {
+    const volume = new VoxelOccupancyVolume({
+      minX: -16,
+      maxX: 16,
+      minY: 0,
+      maxY: 16,
+      minZ: -16,
+      maxZ: 16,
+    });
+    const pass = new VoxelSunShadowPass(createRendererStub(), 1, 1, volume);
+    const boxes = Array.from({ length: 43 }, () => ({
+      inverseMatrix: new THREE.Matrix4(),
+      center: new THREE.Vector3(),
+      halfSize: new THREE.Vector3(0.1, 0.1, 0.1),
+    }));
+
+    pass.setCharacterShadowBoxes(boxes);
+
+    expect(pass.getDiagnostics().characterShadowBoxes).toBe(43);
+
+    pass.dispose();
+    volume.dispose();
+  });
+
   it('evaluates the character exactly once after terrain solar visibility, never inside its ray loop', () => {
     const volume = new VoxelOccupancyVolume({
       minX: 0,

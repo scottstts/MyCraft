@@ -29,9 +29,10 @@ const MAX_SHADER_STEPS = 512;
 // remaining a narrow outdoor-sun transition rather than a point-light blur.
 const SOLAR_ANGULAR_RADIUS = 0.00465;
 const SUN_ANGULAR_RADIUS = SOLAR_ANGULAR_RADIUS * 2.25;
-// The reference rig currently contributes 17 box meshes. Keep a small amount
-// of headroom without inflating the fragment uniform arrays unnecessarily.
-const MAX_CHARACTER_SHADOW_BOXES = 24;
+// The authored appearances contribute up to 43 box meshes (Kaelith). Keep a
+// small amount of headroom so decorative parts remain registered as shadow
+// casters when the active appearance changes.
+const MAX_CHARACTER_SHADOW_BOXES = 48;
 
 export interface VoxelSunShadowDiagnostics {
   enabled: boolean;
