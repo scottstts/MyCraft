@@ -36,11 +36,14 @@ describe('weighted ocean seaweed field', () => {
     expect(generated.diagnostics.acceptedCount).toBe(anchors.length)
 
     for (const anchor of anchors) {
-      const sample = terrain(anchor.x, anchor.z)
+      const sample = terrain(Math.floor(anchor.x), Math.floor(anchor.z))
       expect(sample.isOcean).toBe(true)
       expect(anchor.rootY).toBe(sample.height + 1)
       expect(WATER_LEVEL + 0.5 - anchor.rootY).toBeGreaterThan(SEAWEED_MIN_DEPTH)
+      expect(anchor.height).toBe(2)
       expect(anchor.rootY + anchor.height).toBeLessThanOrEqual(generated.diagnostics.safeSurfaceY + 1e-6)
+      expect(anchor.x - Math.floor(anchor.x)).toBeCloseTo(0.5)
+      expect(anchor.z - Math.floor(anchor.z)).toBeCloseTo(0.5)
       expect(anchor.x).toBeGreaterThanOrEqual(bounds.minX)
       expect(anchor.x).toBeLessThan(bounds.maxX)
       expect(anchor.z).toBeGreaterThanOrEqual(bounds.minZ)
@@ -63,6 +66,50 @@ describe('weighted ocean seaweed field', () => {
       const cell = grid.get(key)
       if (cell) cell.push(anchor)
       else grid.set(key, [{ x: anchor.x, z: anchor.z }])
+    }
+  })
+
+  it('allows anchors on a descending underwater seabed', () => {
+    const generated = generateSeaweedAnchors({
+      bounds: { minX: 0, maxX: 16, minZ: 0, maxZ: 32 },
+      terrainSeed: 12345,
+      worldRadius: 16,
+      waterLevel: WATER_LEVEL,
+      distributionSeed: 0x13579bdf,
+      terrainSampler: (x) => ({
+        // One-block descent per X block: every candidate has an uphill side,
+        // but the slope is still gentle enough for the rooted two-block card.
+        height: 24 - Math.floor(x),
+        isOcean: true,
+      }),
+    })
+
+    expect(generated.anchors.length).toBeGreaterThan(0)
+    expect(generated.anchors.some((anchor) => {
+      const current = 24 - Math.floor(anchor.x)
+      const uphill = 24 - Math.floor(anchor.x - 1)
+      return uphill > current
+    })).toBe(true)
+  })
+
+  it('uses the integer terrain column for the exposed top face', () => {
+    const generated = generateSeaweedAnchors({
+      bounds: { minX: 0, maxX: 16, minZ: 0, maxZ: 16 },
+      terrainSeed: 12345,
+      worldRadius: 16,
+      waterLevel: WATER_LEVEL,
+      distributionSeed: 0x10203040,
+      terrainSampler: (x) => ({
+        // Deliberately make a half-coordinate sample disagree with the
+        // generated integer column; the field must use the latter.
+        height: Number.isInteger(x) ? 24 : 30,
+        isOcean: true,
+      }),
+    })
+
+    expect(generated.anchors.length).toBeGreaterThan(0)
+    for (const anchor of generated.anchors) {
+      expect(anchor.rootY).toBe(25)
     }
   })
 

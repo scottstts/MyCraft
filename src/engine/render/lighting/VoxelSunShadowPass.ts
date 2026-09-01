@@ -6,8 +6,9 @@
  * current (continuous) sun direction and writes one visibility value per
  * screen pixel.  No light camera, shadow map, projection fitting, or texel
  * snapping participates in this path.  Opaque blocks are traced as voxels;
- * grass occupancy is traced as a small analytic crossed-blade proxy rather
- * than point-sampling the source PNG as micro-geometry.
+ * grass and render-only seaweed occupancy are traced as small analytic
+ * crossed-blade proxies rather than point-sampling source PNGs as
+ * micro-geometry.
  */
 
 import * as THREE from 'three';
@@ -117,6 +118,7 @@ export class VoxelSunShadowPass {
         uMaxDistance: { value: this.maxDistance },
         uMaxSteps: { value: this.maxSteps },
         uSunAngularRadius: { value: SUN_ANGULAR_RADIUS },
+        uSeaweedWaterLevel: { value: 42.5 },
         uEnabled: { value: true },
         uCharacterBoxCount: { value: 0 },
         uCharacterBoxInverse: { value: this.characterBoxInverse },
@@ -156,6 +158,7 @@ export class VoxelSunShadowPass {
         uniform float uMaxDistance;
         uniform int uMaxSteps;
         uniform float uSunAngularRadius;
+        uniform float uSeaweedWaterLevel;
         uniform bool uEnabled;
         uniform int uCharacterBoxCount;
         uniform mat4 uCharacterBoxInverse[${MAX_CHARACTER_SHADOW_BOXES}];
@@ -286,8 +289,13 @@ export class VoxelSunShadowPass {
           return coverage;
         }
 
-        bool seaweedBladeHit(vec3 local, vec3 direction, ivec3 cell, float maxTravel) {
-          vec4 encoded = seaweedAt(cell);
+        bool seaweedBladeHit(
+          vec3 local,
+          vec3 direction,
+          ivec3 cell,
+          float maxTravel,
+          vec4 encoded
+        ) {
           if (encoded.a <= 0.0) return false;
 
           vec3 root = vec3(
@@ -296,9 +304,11 @@ export class VoxelSunShadowPass {
             float(cell.z) + encoded.g
           );
           float height = max(encoded.a * ${SEAWEED_SHADOW_HEIGHT_MAX.toFixed(1)}, 0.02);
-          // seaweed.png is square and instances use a maximum width scale of
-          // 1.12, so this is a conservative half-width for the shadow proxy.
-          const float halfWidth = 0.56;
+          // Roots are at the center of their block. Keep this analytic shadow
+          // proxy inside that root cell so one field texel is enough; reading
+          // a 3x3 neighbourhood here multiplied the full-screen DDA cost by
+          // nine. The visible cards still use the texture's native aspect.
+          const float halfWidth = 0.47;
           const float epsilon = 1e-4;
           const float selfHitEpsilon = 0.01;
 
@@ -331,20 +341,6 @@ export class VoxelSunShadowPass {
                 );
                 if (seaweedBladeCoverage(uv) > 0.5) return true;
               }
-            }
-          }
-          return false;
-        }
-
-        bool seaweedNearHit(vec3 local, vec3 direction, ivec3 cell, float maxTravel) {
-          // The crossed card can extend into one neighbouring XZ cell. Read a
-          // compact 3x3 root neighbourhood so its shadow is not lost when a
-          // ray meets the plane just beyond the root cell boundary.
-          for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
-            for (int offsetX = -1; offsetX <= 1; offsetX++) {
-              ivec3 anchorCell = cell + ivec3(offsetX, 0, offsetZ);
-              if (insideVolume(anchorCell) && seaweedAt(anchorCell).a > 0.0 &&
-                  seaweedBladeHit(local, direction, anchorCell, maxTravel)) return true;
             }
           }
           return false;
@@ -427,7 +423,7 @@ export class VoxelSunShadowPass {
           return 1.0 - shadowCoverage;
         }
 
-        float traceVisibility(vec3 receiverWorld, vec3 rayDirection) {
+        float traceVisibility(vec3 receiverWorld, vec3 rayDirection, bool includeSeaweed) {
           vec3 direction = normalize(rayDirection);
           vec3 directionSafe = vec3(
             abs(direction.x) < 1e-5 ? (direction.x < 0.0 ? -1e-5 : 1e-5) : direction.x,
@@ -481,7 +477,13 @@ export class VoxelSunShadowPass {
             if (travelled > uMaxDistance || travel >= 1e29) return 1.0;
 
             if (grassAt(cell) > 0.5 && grassBladeHit(local, direction, cell, travel)) return 0.0;
-            if (seaweedNearHit(local, direction, cell, travel)) return 0.0;
+            if (includeSeaweed) {
+              // One nearest-filtered lookup per traversed root cell. Seaweed
+              // is a render-only caster and is deliberately absent from the
+              // opaque voxel texture and from inland/above-water rays.
+              vec4 seaweed = seaweedAt(cell);
+              if (seaweed.a > 0.0 && seaweedBladeHit(local, direction, cell, travel, seaweed)) return 0.0;
+            }
 
             if (voxelDistance.x <= voxelDistance.y && voxelDistance.x <= voxelDistance.z) {
               cell.x += int(stepAxis.x);
@@ -495,15 +497,21 @@ export class VoxelSunShadowPass {
           return 1.0;
         }
 
-        float traceSolarDisc(vec3 receiver, vec3 sun, vec3 tangentA, vec3 tangentB) {
+        float traceSolarDisc(
+          vec3 receiver,
+          vec3 sun,
+          vec3 tangentA,
+          vec3 tangentB,
+          bool includeSeaweed
+        ) {
           // Five cheap probes are used only as a boundary classifier.  If all
           // agree, the receiver is in stable umbra/full light and no extra
           // rays are needed.  Mixed probes trigger equal-area disc sampling.
-          float center = traceVisibility(receiver, sun);
-          float sideA = traceVisibility(receiver, normalize(sun + tangentA * uSunAngularRadius));
-          float sideB = traceVisibility(receiver, normalize(sun - tangentA * uSunAngularRadius));
-          float sideC = traceVisibility(receiver, normalize(sun + tangentB * uSunAngularRadius));
-          float sideD = traceVisibility(receiver, normalize(sun - tangentB * uSunAngularRadius));
+          float center = traceVisibility(receiver, sun, includeSeaweed);
+          float sideA = traceVisibility(receiver, normalize(sun + tangentA * uSunAngularRadius), includeSeaweed);
+          float sideB = traceVisibility(receiver, normalize(sun - tangentA * uSunAngularRadius), includeSeaweed);
+          float sideC = traceVisibility(receiver, normalize(sun + tangentB * uSunAngularRadius), includeSeaweed);
+          float sideD = traceVisibility(receiver, normalize(sun - tangentB * uSunAngularRadius), includeSeaweed);
           if (center == sideA && center == sideB && center == sideC && center == sideD) return center;
 
           const int DISC_SAMPLES = 16;
@@ -514,7 +522,11 @@ export class VoxelSunShadowPass {
             float radius = sqrt(fraction) * uSunAngularRadius;
             float angle = (float(i) + 0.5) * GOLDEN_ANGLE;
             vec2 disk = vec2(cos(angle), sin(angle)) * radius;
-            sum += traceVisibility(receiver, normalize(sun + tangentA * disk.x + tangentB * disk.y));
+            sum += traceVisibility(
+              receiver,
+              normalize(sun + tangentA * disk.x + tangentB * disk.y),
+              includeSeaweed
+            );
           }
           return sum / float(5 + DISC_SAMPLES);
         }
@@ -535,7 +547,8 @@ export class VoxelSunShadowPass {
           if (dot(tangentA, tangentA) < 1e-6) tangentA = vec3(1.0, 0.0, 0.0);
           tangentA = normalize(tangentA);
           vec3 tangentB = normalize(cross(sun, tangentA));
-          float visibility = traceSolarDisc(receiver, sun, tangentA, tangentB);
+          bool includeSeaweed = receiver.y < uSeaweedWaterLevel - 0.05;
+          float visibility = traceSolarDisc(receiver, sun, tangentA, tangentB, includeSeaweed);
           // The player caster is evaluated exactly once per receiver, outside
           // traceSolarDisc's terrain ray loop. The screen bound is a
           // conservative optimization; the world-space AABB remains the
@@ -581,6 +594,11 @@ export class VoxelSunShadowPass {
   setSunDirection(direction: THREE.Vector3): void {
     this.sunDirection.copy(direction).normalize();
     (this.quadMaterial.uniforms.uSunDirection.value as THREE.Vector3).copy(this.sunDirection);
+  }
+
+  setSeaweedWaterLevel(level: number): void {
+    if (!Number.isFinite(level)) return;
+    this.quadMaterial.uniforms.uSeaweedWaterLevel.value = level;
   }
 
   /**

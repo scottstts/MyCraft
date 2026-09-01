@@ -223,27 +223,24 @@ export class VoxelOccupancyVolume {
         Math.floor(anchor.rootY - this.origin.y + Math.max(anchor.height, 0) - 1e-4),
       );
       if (maxY < minY) continue;
-      for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
-        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-          const cellX = anchor.cellX + offsetX;
-          const cellZ = anchor.cellZ + offsetZ;
-          const brickX = Math.floor(cellX / VOXEL_SHADOW_BRICK_SIZE);
-          const brickZ = Math.floor(cellZ / VOXEL_SHADOW_BRICK_SIZE);
-          if (brickX < 0 || brickX >= this.brickWidth || brickZ < 0 || brickZ >= this.brickDepth) continue;
-          for (let y = minY; y <= maxY; y += 1) {
-            const brickY = Math.floor(y / VOXEL_SHADOW_BRICK_SIZE);
-            this.brickOccupancy[this.brickIndex(brickX, brickY, brickZ)] = 255;
-          }
-        }
+      // Roots are locked to block centers and the shadow proxy is clipped to
+      // that root cell. Marking a 3x3 neighbourhood made every solar ray
+      // enter nine times as many seaweed candidate columns as necessary.
+      const brickX = Math.floor(anchor.cellX / VOXEL_SHADOW_BRICK_SIZE);
+      const brickZ = Math.floor(anchor.cellZ / VOXEL_SHADOW_BRICK_SIZE);
+      if (brickX < 0 || brickX >= this.brickWidth || brickZ < 0 || brickZ >= this.brickDepth) continue;
+      for (let y = minY; y <= maxY; y += 1) {
+        const brickY = Math.floor(y / VOXEL_SHADOW_BRICK_SIZE);
+        this.brickOccupancy[this.brickIndex(brickX, brickY, brickZ)] = 255;
       }
     }
   }
 
-  private markTexturesDirty(): void {
+  private markTexturesDirty(includeSeaweed = false): void {
     this.texture.needsUpdate = true;
     this.brickTexture.needsUpdate = true;
     this.grassTexture.needsUpdate = true;
-    this.seaweedTexture.needsUpdate = true;
+    if (includeSeaweed) this.seaweedTexture.needsUpdate = true;
   }
 
   /**
@@ -289,7 +286,7 @@ export class VoxelOccupancyVolume {
     }
 
     this.rebuildBricks();
-    this.markTexturesDirty();
+    this.markTexturesDirty(true);
   }
 
   /** Replace one full chunk's occupancy from its authoritative voxel array. */

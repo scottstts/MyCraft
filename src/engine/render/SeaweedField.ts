@@ -48,11 +48,17 @@ export interface SeaweedFieldDiagnostics {
 
 /** Seaweed starts below the beach shelf, where the sea floor has room for it. */
 export const SEAWEED_MIN_DEPTH = 5.0
-export const SEAWEED_MIN_HEIGHT = 1.75
-export const SEAWEED_MAX_HEIGHT = 7.0
-export const SEAWEED_MIN_DISTANCE = 2.65
-export const SEAWEED_CANDIDATE_SPACING = 2.8
+/** Keep every card two blocks tall so the five-block depth floor is explicit. */
+export const SEAWEED_HEIGHT = 2.0
+export const SEAWEED_MIN_HEIGHT = SEAWEED_HEIGHT
+export const SEAWEED_MAX_HEIGHT = SEAWEED_HEIGHT
+// Keep the visible cards from stacking over one another. This also bounds
+// fragment overdraw when the camera looks across a deep-water stand.
+export const SEAWEED_MIN_DISTANCE = 4.5
+export const SEAWEED_CANDIDATE_SPACING = 4.8
 export const SEAWEED_SAFE_SURFACE_CLEARANCE = 0.14
+const SEAWEED_SLOPE_SAMPLE_RADIUS = 1
+const SEAWEED_MAX_TERRAIN_STEP = 2
 
 const HASH_A = 0x9e3779b9
 const HASH_B = 0x85ebca6b
@@ -106,11 +112,12 @@ function fieldDepthWeight(depth: number, patch: number): number {
 /**
  * Generate a weighted Poisson-disk field from random candidate positions.
  *
- * Candidates are jittered inside a coarse search lattice only to bound the
- * amount of work; their acceptance, priority, height, and yaw seed are all
- * random draws from the per-load distribution seed. A priority-ordered dart
- * throw plus a spatial rejection grid gives the field blue-noise spacing while
- * the depth and macro patch weights create natural stands and open gaps.
+ * A jittered coarse search lattice only chooses which integer blocks become
+ * candidates; accepted roots are always block-center positions. Acceptance,
+ * priority, and yaw/phase seed are random draws from the per-load distribution
+ * seed. A priority-ordered dart throw plus a spatial rejection grid gives the
+ * field blue-noise spacing while the depth and macro patch weights create
+ * natural stands and open gaps.
  */
 export function generateSeaweedAnchors(options: SeaweedFieldOptions): {
   anchors: SeaweedAnchor[]
@@ -131,32 +138,55 @@ export function generateSeaweedAnchors(options: SeaweedFieldOptions): {
 
   type Candidate = SeaweedAnchor & { priority: number; rejectionRadius: number }
   const candidates: Candidate[] = []
+  const sampledBlocks = new Set<string>()
 
   for (let gridX = candidateMinX; gridX <= candidateMaxX; gridX += 1) {
     for (let gridZ = candidateMinZ; gridZ <= candidateMaxZ; gridZ += 1) {
       const jitterX = hash2D(gridX, gridZ, options.distributionSeed ^ HASH_C) - 0.5
       const jitterZ = hash2D(gridX, gridZ, options.distributionSeed ^ (HASH_C ^ 0x51ed270b)) - 0.5
-      const x = (gridX + 0.5 + jitterX * 0.86) * candidateSpacing
-      const z = (gridZ + 0.5 + jitterZ * 0.86) * candidateSpacing
+      const rawX = (gridX + 0.5 + jitterX * 0.86) * candidateSpacing
+      const rawZ = (gridZ + 0.5 + jitterZ * 0.86) * candidateSpacing
+      const blockX = Math.floor(rawX)
+      const blockZ = Math.floor(rawZ)
+      const blockKey = `${blockX},${blockZ}`
+      if (sampledBlocks.has(blockKey)) continue
+      sampledBlocks.add(blockKey)
+
+      // Randomness chooses the block only. The root is always the exact
+      // center of that block's top face, never a jittered point within it.
+      const x = blockX + 0.5
+      const z = blockZ + 0.5
       if (x < options.bounds.minX || x >= options.bounds.maxX || z < options.bounds.minZ || z >= options.bounds.maxZ) continue
 
-      const sample = terrain(x, z)
+      // Terrain columns are generated and meshed from integer block
+      // coordinates. Sample that exact column for the top block height, then
+      // place the visual root at its center (+0.5) below.
+      const sample = terrain(blockX, blockZ)
       // This is the important ocean/inland-water boundary. A low terrain
       // height is not enough because inland lake depressions are still land
       // samples in the generator's island mask.
       if (!sample.isOcean) continue
 
-      const neighbourX = terrain(x + 1, z)
-      const neighbourZ = terrain(x, z + 1)
-      const slope = Math.max(
-        Math.abs(neighbourX.height - sample.height),
-        Math.abs(neighbourZ.height - sample.height),
-      )
-      if (slope > 2) continue
+      let slope = 0
+      for (let offsetZ = -SEAWEED_SLOPE_SAMPLE_RADIUS;
+        offsetZ <= SEAWEED_SLOPE_SAMPLE_RADIUS;
+        offsetZ += 1) {
+        for (let offsetX = -SEAWEED_SLOPE_SAMPLE_RADIUS;
+          offsetX <= SEAWEED_SLOPE_SAMPLE_RADIUS;
+          offsetX += 1) {
+          if (offsetX === 0 && offsetZ === 0) continue
+          const neighbour = terrain(blockX + offsetX, blockZ + offsetZ)
+          slope = Math.max(slope, Math.abs(neighbour.height - sample.height))
+        }
+      }
+      // Descending seabed terrain is valid habitat. Only reject abrupt steps
+      // that would put a two-block card against a near-vertical wall; do not
+      // reject a candidate merely because the uphill neighbour is higher.
+      if (slope > SEAWEED_MAX_TERRAIN_STEP) continue
 
       const rootY = sample.height + 1
       const depth = waterLevel + OCEAN_WATER_CENTER_OFFSET - rootY
-      if (depth <= SEAWEED_MIN_DEPTH) continue
+      if (depth < SEAWEED_MIN_DEPTH) continue
 
       const patch = valueNoise2D(
         x * 0.034 + options.terrainSeed * 0.00017,
@@ -168,23 +198,15 @@ export function generateSeaweedAnchors(options: SeaweedFieldOptions): {
       const randomAcceptance = hash2D(gridX, gridZ, options.distributionSeed ^ 0x3c6ef372)
       if (randomAcceptance > acceptance) continue
 
-      const randomHeight = hash2D(gridX, gridZ, options.distributionSeed ^ 0xda3e39cb)
       const randomVariation = hash2D(gridX, gridZ, options.distributionSeed ^ 0x1b56c4f5)
       const availableHeight = safeSurfaceY - rootY
-      const heightCeiling = Math.min(
-        SEAWEED_MAX_HEIGHT,
-        availableHeight,
-        2.35 + depth * 0.20,
-      )
-      if (heightCeiling < SEAWEED_MIN_HEIGHT) continue
-      const height = SEAWEED_MIN_HEIGHT
-        + (heightCeiling - SEAWEED_MIN_HEIGHT) * (0.35 + randomHeight * 0.65)
+      if (availableHeight < SEAWEED_MAX_HEIGHT) continue
 
       candidates.push({
         x,
         z,
         rootY,
-        height,
+        height: SEAWEED_MIN_HEIGHT,
         seed: randomVariation,
         // A weighted random priority prevents the scan order from becoming a
         // visible lattice while keeping the final accepted set stable for the
@@ -260,7 +282,7 @@ export function generateSeaweedAnchors(options: SeaweedFieldOptions): {
         max: Number.isFinite(maximumHeightSeen) ? maximumHeightSeen : 0,
       },
       oceanOnly: true,
-      weightedBy: ['ocean-only terrain mask', 'minimum water depth', 'macro habitat patches', 'slope clearance'],
+      weightedBy: ['ocean-only terrain mask', 'minimum water depth', 'macro habitat patches', 'slope clearance', 'block-top root clearance'],
     },
   }
 }

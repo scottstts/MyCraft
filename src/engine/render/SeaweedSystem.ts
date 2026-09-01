@@ -21,6 +21,10 @@ export interface SeaweedSystemOptions {
   distributionSeed?: number
 }
 
+const SEAWEED_BILLBOARD_SEGMENTS = 4
+const SEAWEED_RENDER_DISTANCE = 220
+const SEAWEED_CULL_INTERVAL = 0.12
+
 function createPlaceholderTexture(): THREE.DataTexture {
   const texture = new THREE.DataTexture(
     // Keep the asynchronous loading frame invisible rather than showing a
@@ -85,6 +89,8 @@ export class SeaweedSystem {
   private textureAspect: number | null = null
   private readonly groups = new Map<string, THREE.Group>()
   private anchors: SeaweedAnchor[] = []
+  private lastCullTime = -Infinity
+  private readonly lastCullPosition = new THREE.Vector3(Infinity, 0, Infinity)
   private fieldDiagnostics: SeaweedFieldDiagnostics = {
     distributionSeed: 0,
     candidateCount: 0,
@@ -153,9 +159,31 @@ export class SeaweedSystem {
     this.rebuildField()
   }
 
-  update(timeSeconds: number): void {
+  update(timeSeconds: number, camera?: THREE.PerspectiveCamera): void {
     if (this.disposed) return
     this.material.setTime(timeSeconds)
+    if (!camera) return
+
+    const moved = this.lastCullPosition.distanceToSquared(camera.position) > 16
+    if (timeSeconds - this.lastCullTime < SEAWEED_CULL_INTERVAL && !moved) return
+    this.lastCullTime = timeSeconds
+    this.lastCullPosition.copy(camera.position)
+
+    const maxDistance = Math.min(
+      SEAWEED_RENDER_DISTANCE,
+      Math.max(128, Math.max(
+        this.options.bounds.maxX - this.options.bounds.minX,
+        this.options.bounds.maxZ - this.options.bounds.minZ,
+      ) * 0.5),
+    )
+    const maxDistanceSquared = maxDistance * maxDistance
+    const halfChunkX = CHUNK_SIZE.x * 0.5
+    const halfChunkZ = CHUNK_SIZE.z * 0.5
+    for (const group of this.groups.values()) {
+      const dx = group.position.x + halfChunkX - camera.position.x
+      const dz = group.position.z + halfChunkZ - camera.position.z
+      group.visible = dx * dx + dz * dz <= maxDistanceSquared
+    }
   }
 
   setWaterLevel(level: number): void {
@@ -208,6 +236,9 @@ export class SeaweedSystem {
 
   getDiagnostics(): SeaweedFieldDiagnostics & {
     chunkGroups: number
+    visibleChunkGroups: number
+    instanceCount: number
+    instanced: boolean
     texture: string
     textureAspect: number | null
     castShadow: boolean
@@ -217,6 +248,9 @@ export class SeaweedSystem {
     return {
       ...this.fieldDiagnostics,
       chunkGroups: this.groups.size,
+      visibleChunkGroups: Array.from(this.groups.values()).filter((group) => group.visible).length,
+      instanceCount: this.anchors.length,
+      instanced: true,
       texture: 'src/assets/textures/seaweed.png',
       textureAspect: this.textureAspect,
       castShadow: true,
@@ -263,7 +297,9 @@ export class SeaweedSystem {
       const [cx, cz] = key.split(',').map(Number)
       const geometry = this.baseGeometry.clone()
       const seeds = new Float32Array(chunkAnchors.length)
-      geometry.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1))
+      const seedAttribute = new THREE.InstancedBufferAttribute(seeds, 1)
+      seedAttribute.setUsage(THREE.StaticDrawUsage)
+      geometry.setAttribute('aSeed', seedAttribute)
       const mesh = new THREE.InstancedMesh(geometry, this.material, chunkAnchors.length)
       mesh.name = `SeaweedBillboards:${key}`
       // The project renderer resolves sun visibility through the shared voxel
@@ -273,6 +309,7 @@ export class SeaweedSystem {
       mesh.receiveShadow = true
       mesh.renderOrder = 1
       mesh.frustumCulled = true
+      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
 
       const dummy = new THREE.Object3D()
       const centerOffset = new THREE.Vector3()
@@ -281,15 +318,17 @@ export class SeaweedSystem {
         const anchor = chunkAnchors[index]
         const localX = anchor.x - cx * CHUNK_SIZE.x
         const localZ = anchor.z - cz * CHUNK_SIZE.z
-        const widthScale = 0.78 + anchor.seed * 0.34
         seeds[index] = anchor.seed
-        // Preserve the continuous root while giving each plant a random yaw.
-        // The shared billboard geometry is centered at (0.5, 0.5), so its
-        // scaled/rotated center offset must be subtracted from the instance
-        // translation rather than assuming a unit, axis-aligned transform.
+        // Roots are exact block centers. The shared billboard geometry is
+        // centered at (0.5, 0.5), so its scaled/rotated center offset must be
+        // subtracted from the instance translation rather than assuming a
+        // unit, axis-aligned transform.
         dummy.quaternion.setFromAxisAngle(yawAxis, anchor.seed * Math.PI * 2)
-        dummy.scale.set(widthScale, anchor.height, widthScale)
-        centerOffset.set(0.5 * widthScale, 0, 0.5 * widthScale).applyQuaternion(dummy.quaternion)
+        // The geometry width already contains the loaded texture aspect. A
+        // uniform world scale keeps the physical card ratio identical to the
+        // asset; the field's height is the size variation.
+        dummy.scale.setScalar(anchor.height)
+        centerOffset.set(0.5 * anchor.height, 0, 0.5 * anchor.height).applyQuaternion(dummy.quaternion)
         dummy.position.set(
           localX - centerOffset.x,
           anchor.rootY,
@@ -322,7 +361,7 @@ export class SeaweedSystem {
     }
     this.textureAspect = aspect
     this.baseGeometry?.dispose()
-    this.baseGeometry = createXBillboardGeometry(this.textureAspect, 1.0)
+    this.baseGeometry = createXBillboardGeometry(this.textureAspect, 1.0, SEAWEED_BILLBOARD_SEGMENTS)
     this.disposeGroups()
     this.rebuildGroups()
   }

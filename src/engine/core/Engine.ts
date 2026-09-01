@@ -547,7 +547,7 @@ function update(dtSeconds: number) {
   // blocks, swimming, or interaction state.
   if (waterSystem && camera) {
     waterSystem.update(dtSeconds, camera);
-    seaweedSystem?.update(waterSystem.getTime());
+    seaweedSystem?.update(waterSystem.getTime(), camera);
     seaweedSystem?.setWaterCausticTexture(
       waterSystem.getCausticTexture(),
       waterSystem.getCausticOrigin(),
@@ -820,6 +820,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     maxZ: bounds.maxZ,
   });
   voxelSunShadowPass = new VoxelSunShadowPass(baseRenderer, canvasSize.width, canvasSize.height, voxelShadowVolume);
+  voxelSunShadowPass.setSeaweedWaterLevel(VISUAL_WATER_LEVEL);
   const shadowResolution = voxelSunShadowPass.getDiagnostics().resolution;
   blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), shadowResolution.width, shadowResolution.height, true);
   blockMaterial?.setVoxelShadowDepthTexture(composer.getDepthTexture(), camera.near, camera.far);

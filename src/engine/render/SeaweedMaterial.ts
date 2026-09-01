@@ -51,7 +51,6 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
 
       varying vec2 vUv;
       varying vec3 vWorldPosition;
-      varying vec3 vViewPosition;
       varying vec3 vWorldNormal;
       varying float vWaterDepth;
       varying float vFlow;
@@ -67,44 +66,55 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
         vec2 sideDirection = vec2(-flowDirection.y, flowDirection.x);
         float bladeT = clamp(position.y, 0.0, 1.0);
         float instanceHeight = max(length(instanceMatrix[1].xyz), 0.001);
-        float phase = dot(anchorWorld.xz, flowDirection) * 0.19
+        float seedPhase = aSeed * 6.28318530718;
+        float phase = dot(anchorWorld.xz, flowDirection) * 0.115
+          + dot(anchorWorld.xz, sideDirection) * 0.021
           - uTime * uFlowSpeed
-          + aSeed * 6.28318530718;
-        float crossPhase = dot(anchorWorld.xz, sideDirection) * 0.13
-          + uTime * uFlowSpeed * 0.71
-          + aSeed * 3.17;
-        float broadCurrent = sin(phase) * 0.58
-          + sin(phase * 0.47 + aSeed * 4.7) * 0.27
-          + sin(crossPhase) * 0.15;
-        float gust = 0.72 + 0.28 * sin(uTime * uFlowSpeed * 0.42 + aSeed * 9.0);
-        float rooted = pow(bladeT, 1.62);
-        float bend = uFlowStrength * instanceHeight
-          * (0.74 + broadCurrent * 0.26)
-          * gust
-          * rooted;
-        float flutter = sin(uTime * (5.0 + hash11(aSeed) * 2.0)
-          + aSeed * 19.0 + anchorWorld.x * 0.23 - anchorWorld.z * 0.17)
-          * uFlutter
-          * instanceHeight
-          * pow(bladeT, 2.15);
+          + seedPhase;
+        float crossPhase = dot(anchorWorld.xz, sideDirection) * 0.17
+          + dot(anchorWorld.xz, flowDirection) * 0.031
+          + uTime * uFlowSpeed * 0.43
+          + seedPhase * 0.67;
+
+        // A traveling vertical phase makes each segmented card flex as a
+        // continuous underwater wave instead of rocking as one rigid sheet.
+        // The smooth envelope is exactly zero at the root, preserving the
+        // block-top attachment while the upper sections follow the current.
+        float rooted = bladeT * bladeT * (3.0 - 2.0 * bladeT);
+        float alongWave = phase + bladeT * 2.45;
+        float crossWave = crossPhase - bladeT * 2.85;
+        float currentWave = sin(alongWave) * 0.68
+          + sin(alongWave * 0.53 - uTime * uFlowSpeed * 0.18 + seedPhase * 0.37) * 0.22;
+        float sideWave = sin(crossWave) * 0.18;
+        float gust = 0.82 + 0.18 * sin(uTime * uFlowSpeed * 0.37 + seedPhase * 1.7);
+        float bendAmplitude = uFlowStrength * instanceHeight * rooted * gust;
+        vec2 displacement = (
+          flowDirection * currentWave + sideDirection * sideWave
+        ) * bendAmplitude;
+        float flutter = sin(
+          uTime * (4.0 + hash11(aSeed) * 1.5)
+          + seedPhase * 2.7
+          + dot(anchorWorld.xz, sideDirection) * 0.31
+          + bladeT * 5.0
+        ) * uFlutter * instanceHeight * pow(bladeT, 2.6);
+        displacement += sideDirection * flutter;
 
         vec3 localPosition = position;
         vec4 worldPosition = modelMatrix * instanceMatrix * vec4(localPosition, 1.0);
-        worldPosition.xz += flowDirection * bend + sideDirection * flutter;
+        worldPosition.xz += displacement;
 
         vec3 baseNormal = normalize(mat3(modelMatrix * instanceMatrix) * normal);
         vec3 currentNormal = normalize(
           baseNormal
-          - vec3(flowDirection.x, 0.0, flowDirection.y) * uFlowStrength * rooted * 0.52
+          - vec3(displacement.x, 0.0, displacement.y) * 0.42
           + vec3(0.0, 0.10, 0.0) * rooted
         );
 
         vUv = uv;
         vWorldPosition = worldPosition.xyz;
-        vViewPosition = (viewMatrix * worldPosition).xyz;
         vWorldNormal = currentNormal;
         vWaterDepth = max(uWaterLevel - worldPosition.y, 0.0);
-        vFlow = clamp(0.5 + broadCurrent * 0.5, 0.0, 1.0);
+        vFlow = clamp(0.5 + currentWave * 0.36 + sideWave * 0.22, 0.0, 1.0);
         gl_Position = projectionMatrix * viewMatrix * worldPosition;
       }
     `
@@ -121,10 +131,7 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
       uniform float alphaCutoff;
 
       uniform sampler2D voxelShadowMask;
-      uniform sampler2D voxelShadowDepth;
       uniform vec2 voxelShadowResolution;
-      uniform float voxelShadowCameraNear;
-      uniform float voxelShadowCameraFar;
       uniform bool voxelShadowEnabled;
 
       uniform bool waterCausticEnabled;
@@ -138,81 +145,20 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
       uniform bool waterCausticMapEnabled;
       uniform vec2 waterCausticOrigin;
       uniform float waterCausticExtent;
-      uniform vec2 waterCausticResolution;
 
       varying vec2 vUv;
       varying vec3 vWorldPosition;
-      varying vec3 vViewPosition;
       varying vec3 vWorldNormal;
       varying float vWaterDepth;
       varying float vFlow;
 
-      float decodeVoxelShadowDepth(float raw) {
-        if (raw >= 0.999999) return voxelShadowCameraFar;
-        return (voxelShadowCameraNear * voxelShadowCameraFar) /
-          ((voxelShadowCameraFar - voxelShadowCameraNear) * raw - voxelShadowCameraFar);
-      }
-
-      float sampleVoxelShadowDepth(vec2 uv) {
-        return -decodeVoxelShadowDepth(
-          texture2D(voxelShadowDepth, clamp(uv, vec2(0.0), vec2(1.0))).r
-        );
-      }
-
-      float sampleVoxelShadow(vec2 uv) {
-        return texture2D(voxelShadowMask, clamp(uv, vec2(0.0), vec2(1.0))).r;
-      }
-
       float getVoxelShadowMask() {
         if (!voxelShadowEnabled) return 1.0;
         vec2 uv = gl_FragCoord.xy / max(voxelShadowResolution, vec2(1.0));
-        float center = sampleVoxelShadow(uv);
-        float uncertainty = smoothstep(0.02, 0.98, 4.0 * center * (1.0 - center));
-        if (uncertainty <= 0.0) return center;
-        vec2 texel = 1.0 / max(voxelShadowResolution, vec2(1.0));
-        float referenceDepth = -vViewPosition.z;
-        vec2 offsets[4];
-        offsets[0] = vec2(texel.x, 0.0);
-        offsets[1] = vec2(-texel.x, 0.0);
-        offsets[2] = vec2(0.0, texel.y);
-        offsets[3] = vec2(0.0, -texel.y);
-        float weighted = 0.0;
-        float weightSum = 0.0;
-        for (int i = 0; i < 4; i++) {
-          float neighbourDepth = sampleVoxelShadowDepth(uv + offsets[i]);
-          float tolerance = max(0.025, referenceDepth * 0.015);
-          float weight = 1.0 - smoothstep(
-            tolerance,
-            tolerance * 4.0,
-            abs(neighbourDepth - referenceDepth)
-          );
-          weighted += sampleVoxelShadow(uv + offsets[i]) * weight;
-          weightSum += weight;
-        }
-        if (weightSum <= 1e-4) return center;
-        return mix(center, weighted / weightSum, 0.55 * uncertainty);
-      }
-
-      float sampleWaterCausticPhase(
-        vec2 causticCoord,
-        vec2 phaseOffset,
-        vec2 diagonalA,
-        vec2 diagonalB,
-        float footprintMix
-      ) {
-        vec2 uv = causticCoord + phaseOffset;
-        float center = texture2D(waterCausticMap, uv).r;
-        float footprintAverage = (
-          texture2D(waterCausticMap, uv + diagonalA).r
-          + texture2D(waterCausticMap, uv - diagonalA).r
-          + texture2D(waterCausticMap, uv + diagonalB).r
-          + texture2D(waterCausticMap, uv - diagonalB).r
-        ) * 0.25;
-        return clamp(
-          mix(center, footprintAverage, footprintMix) * waterCausticFieldScale,
-          0.0,
-          8.0
-        );
+        // The full-screen voxel pass already resolves a filtered visibility
+        // value. A single lookup keeps dense alpha cards from multiplying
+        // that pass's cost with another five-tap depth reconstruction.
+        return texture2D(voxelShadowMask, clamp(uv, vec2(0.0), vec2(1.0))).r;
       }
 
       float sampleWaterCaustics(vec3 worldPosition) {
@@ -228,32 +174,14 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
         vec2 projected = worldPosition.xz + refractedSun.xz * referenceTravel;
         vec2 causticCoord = (projected - waterCausticOrigin)
           / max(waterCausticExtent, 1.0) + 0.5;
-
-        vec2 footprintX = dFdx(causticCoord);
-        vec2 footprintY = dFdy(causticCoord);
-        vec2 diagonalA = (footprintX + footprintY) * 0.35;
-        vec2 diagonalB = (footprintX - footprintY) * 0.35;
-        float footprint = max(length(footprintX), length(footprintY))
-          * max(waterCausticResolution.x, waterCausticResolution.y);
-        float footprintMix = smoothstep(0.75, 3.0, footprint);
-
-        float f00 = sampleWaterCausticPhase(
-          causticCoord, vec2(0.0), diagonalA, diagonalB, footprintMix
+        // WaterCaustics owns the filtered/mipmapped footprint. One linear
+        // sample is sufficient for the thin vegetation receiver and avoids
+        // the old 20-sample per-fragment caustic gather.
+        return clamp(
+          texture2D(waterCausticMap, causticCoord).r * waterCausticFieldScale,
+          0.0,
+          8.0
         );
-        float f10 = sampleWaterCausticPhase(
-          causticCoord, vec2(0.5, 0.0), diagonalA, diagonalB, footprintMix
-        );
-        float f01 = sampleWaterCausticPhase(
-          causticCoord, vec2(0.0, 0.5), diagonalA, diagonalB, footprintMix
-        );
-        float f11 = sampleWaterCausticPhase(
-          causticCoord, vec2(0.5), diagonalA, diagonalB, footprintMix
-        );
-        float focusedExcess = max(f00 - 1.0, 0.0)
-          + max(f10 - 1.0, 0.0)
-          + max(f01 - 1.0, 0.0)
-          + max(f11 - 1.0, 0.0);
-        return clamp(1.0 + focusedExcess, 0.0, 8.0);
       }
 
       float waterSunTransmission(float cosIncident) {
@@ -353,9 +281,9 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
       uniforms: {
         map: { value: map },
         uTime: { value: 0 },
-        uFlowStrength: { value: 0.22 },
-        uFlowSpeed: { value: 0.82 },
-        uFlutter: { value: 0.08 },
+        uFlowStrength: { value: 0.075 },
+        uFlowSpeed: { value: 0.72 },
+        uFlutter: { value: 0.018 },
         uFlowDirection: { value: new THREE.Vector2(0.72, 0.69).normalize() },
         uWaterLevel: { value: 42.5 },
         sunDirection: { value: new THREE.Vector3(0.35, 0.9, 0.2).normalize() },

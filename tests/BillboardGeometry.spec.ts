@@ -32,4 +32,14 @@ describe('crossed billboard geometry', () => {
 
     geometry.dispose()
   })
+
+  it('can segment the same shared cross for smooth rooted deformation', () => {
+    const geometry = createXBillboardGeometry(0.5, 1, 4)
+
+    expect(geometry.getAttribute('position').count).toBe(20)
+    expect(geometry.getAttribute('uv').count).toBe(20)
+    expect(geometry.getIndex()?.count).toBe(48)
+
+    geometry.dispose()
+  })
 })

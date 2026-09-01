@@ -27,9 +27,13 @@ describe('SeaweedMaterial', () => {
     expect(material.vertexShader).toContain('attribute float aSeed')
     expect(material.vertexShader).toContain('uFlowStrength')
     expect(material.vertexShader).toContain('uTime')
+    expect(material.vertexShader).toContain('float rooted = bladeT * bladeT')
+    expect(material.vertexShader).toContain('float alongWave = phase + bladeT')
     expect(material.fragmentShader).toContain('if (tex.a < alphaCutoff) discard')
     expect(material.fragmentShader).toContain('waterCausticMap')
     expect(material.fragmentShader).toContain('voxelShadowMask')
+    expect(material.fragmentShader).not.toContain('sampleWaterCausticPhase')
+    expect(material.fragmentShader).not.toContain('voxelShadowDepth')
     expect(material.uniforms.waterCausticEnabled).toBeDefined()
     expect(material.uniforms.voxelShadowEnabled).toBeDefined()
 
