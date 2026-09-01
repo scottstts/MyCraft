@@ -7,6 +7,7 @@
  */
 
 import * as THREE from 'three';
+import { enableMeshStandardForwardRefraction } from './water/ForwardRefraction';
 import { PLAYER, SWING_CYCLE_SECONDS } from '../../config/constants';
 import type { InputSystem } from '../systems/Input';
 import type { PlayerController, PlayerMovementState } from '../systems/PlayerController';
@@ -609,6 +610,7 @@ export class PlayerCharacter {
 
   private createMaterial(options: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
     const material = new THREE.MeshStandardMaterial(options);
+    enableMeshStandardForwardRefraction(material);
     this.ownedMaterials.push(material);
     this.materialRecords.push({
       material,

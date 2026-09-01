@@ -5,6 +5,11 @@
 
 import * as THREE from 'three';
 import { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH, WATER_EXTINCTION, WATER_IOR } from './water/WaterOptics';
+import {
+  attachForwardRefractionUniforms,
+  forwardRefractionFragmentDeclarations,
+  forwardRefractionVertexDeclarations,
+} from './water/ForwardRefraction';
 
 function createWhiteTexture(): THREE.DataTexture {
   const texture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -23,6 +28,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     const vertexShader = `
       // Block vertex shader using per-vertex tint and ambient occlusion
       #include <common>
+      ${forwardRefractionVertexDeclarations()}
       attribute vec3 color;
       attribute float ao;
       varying vec3 vColor;
@@ -46,13 +52,18 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           
           vec4 viewPosition = viewMatrix * worldPosition;
           vViewPosition = viewPosition.xyz;
-
-          gl_Position = projectionMatrix * viewPosition;
+          vec4 directClip = projectionMatrix * viewPosition;
+          vec4 apparentClip = forwardRefractionProject(
+            worldPosition.xyz,
+            directClip
+          );
+          gl_Position = apparentClip;
       }
     `;
 
     const fragmentShader = `
       #include <common>
+      ${forwardRefractionFragmentDeclarations()}
       uniform sampler2D voxelShadowMask;
       uniform sampler2D voxelShadowDepth;
       uniform vec2 voxelShadowResolution;
@@ -85,6 +96,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
 
       float getVoxelShadowMask() {
         if (!voxelShadowEnabled) return 1.0;
+        if (uForwardRefractionActive > 0.5) {
+          return forwardRefractionSunVisibility(voxelShadowResolution);
+        }
         // gl_FragCoord is already at the pixel centre.  The former extra
         // half-pixel offset put nearest samples on texel boundaries.
         vec2 uv = gl_FragCoord.xy / max(voxelShadowResolution, vec2(1.0));
@@ -400,6 +414,14 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       }
 
       void main() {
+          forwardRefractionDiscardCameraMedium();
+          if (uForwardRefractionOutputReceiver > 0.5) {
+            gl_FragColor = vec4(
+              forwardRefractionEncodeReceiver(vForwardRefractionSourceWorld),
+              1.0
+            );
+            return;
+          }
           vec4 texColor = texture2D_AA(map, vUv);
           // Atlas textures are uploaded as SRGBColorSpace; WebGL performs the
           // transfer-function decode during sampling, so this value is already
@@ -456,7 +478,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           // the lighting-mask precision that affects the scene color.
           float indirectMask = lighting.a * clamp(lightingMix, 0.0, 1.0);
           float directLightFraction = max(1.0 - indirectMask, 1.0 / 255.0);
-          gl_FragColor = vec4(color, directLightFraction);
+          gl_FragColor = vec4(
+            color,
+            uForwardRefractionActive > 0.5 ? 1.0 : directLightFraction
+          );
       }
     `;
 
@@ -516,6 +541,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       // chunks are intentionally disabled; VoxelSunShadowPass owns visibility.
       lights: false,
     });
+    attachForwardRefractionUniforms(this);
   }
 
   /**

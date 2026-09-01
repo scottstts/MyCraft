@@ -103,6 +103,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         tSunVisibility: { value: null },
         uHasSceneColor: { value: 0 },
         uHasSceneDepth: { value: 0 },
+        uForwardProjection: { value: false },
         uHasSunVisibility: { value: 0 },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uCameraNear: { value: 0.1 },
@@ -221,6 +222,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
         uniform sampler2D tSunVisibility;
         uniform int uHasSceneColor;
         uniform int uHasSceneDepth;
+        uniform bool uForwardProjection;
         uniform int uHasSunVisibility;
         uniform vec2 uResolution;
         uniform float uCameraNear;
@@ -294,7 +296,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           out float crest,
           out float jacobian,
           out float slopeVariance,
-          out float normalVariation
+          out float normalVariation,
+          out vec3 transportNormal
         ) {
           vec3 tangentX = vec3(1.0, 0.0, 0.0);
           vec3 tangentZ = vec3(0.0, 0.0, 1.0);
@@ -334,6 +337,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             }
           `).join('\n')}
           vec3 macro = normalize(cross(tangentZ, tangentX));
+          transportNormal = macro;
           jacobian = jxx * jzz - jxz * jzx;
 
           vec2 wind = normalize(vec2(0.80, 0.40));
@@ -473,57 +477,6 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           return clip.xy / max(clip.w, 0.0001) * 0.5 + 0.5;
         }
 
-        // Validate one candidate along the screen-space refraction segment.
-        // The candidate direction changes with the UV backtrack, so the
-        // receiver is checked against the matching ray rather than the full
-        // refraction ray. This lets silhouettes reduce distortion locally
-        // without ever accepting an above-water foreground sample.
-        float refractedReceiverValidity(
-          vec2 uv,
-          float surfaceDepth,
-          vec3 surfaceWorld,
-          vec3 candidateDirection,
-          out float rawDepth,
-          out vec3 worldPosition
-        ) {
-          float insideUv = step(0.002, uv.x) * step(0.002, uv.y) *
-            step(uv.x, 0.998) * step(uv.y, 0.998);
-          vec2 safeUv = clamp(uv, vec2(0.002), vec2(0.998));
-          rawDepth = texture2D(tSceneDepth, safeUv).r;
-          float finiteReceiver = 1.0 - step(0.999999, rawDepth);
-          float backgroundDepth = decodeDepth(rawDepth);
-          float depthSeparation = backgroundDepth - surfaceDepth;
-          float depthTransition = clamp(fwidth(depthSeparation) * 1.5, 0.025, 0.35);
-          float depthValidity = smoothstep(
-            0.025 - depthTransition,
-            0.10 + depthTransition,
-            depthSeparation
-          );
-
-          worldPosition = reconstructWorldPosition(safeUv, rawDepth);
-          float interfaceSeparation = worldPosition.y - surfaceWorld.y;
-          float interfaceTransition = clamp(fwidth(interfaceSeparation) * 1.5, 0.06, 0.30);
-          float belowInterfaceValidity = 1.0 - smoothstep(
-            0.10 - interfaceTransition,
-            0.32 + interfaceTransition,
-            interfaceSeparation
-          );
-
-          vec3 candidateOffset = worldPosition - surfaceWorld;
-          float rayAdvance = dot(candidateOffset, candidateDirection);
-          float rayMiss = length(
-            candidateOffset - candidateDirection * max(rayAdvance, 0.0)
-          );
-          float worldPerPixel = 2.0 * max(rayAdvance, 0.0) /
-            max(abs(uProjectionMatrix[1][1]) * uResolution.y, 1.0);
-          float rayCone = max(0.65, worldPerPixel * 2.5);
-          float rayConsistency = step(0.0, rayAdvance) *
-            (1.0 - smoothstep(rayCone, rayCone * 3.0, rayMiss));
-
-          return insideUv * finiteReceiver * depthValidity *
-            belowInterfaceValidity * rayConsistency;
-        }
-
         float ggxDistribution(float noH, float alpha) {
           float alpha2 = alpha * alpha;
           float denominator = noH * noH * (alpha2 - 1.0) + 1.0;
@@ -610,6 +563,7 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           float jacobian = 1.0;
           float slopeVariance = 0.0;
           float normalVariation = 0.0;
+          vec3 transportNormal = normalize(vNormalVary);
           float surfaceFootprint = oceanPixelFootprint(vBaseWorld);
           // Rebuild the displaced optical carrier from the continuous base
           // plane. Rasterized vWorld is still used for the visible geometry,
@@ -624,7 +578,16 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             );
           }
           vec3 normal = uOceanMode
-            ? waveNormal(vBaseWorld.xz, uTime, surfaceFootprint, crest, jacobian, slopeVariance, normalVariation)
+            ? waveNormal(
+                vBaseWorld.xz,
+                uTime,
+                surfaceFootprint,
+                crest,
+                jacobian,
+                slopeVariance,
+                normalVariation,
+                transportNormal
+              )
             : normalize(vNormalVary);
           // The whole interface draw has one incident medium. A displaced
           // sheet can expose both raster face orientations near a crest or at
@@ -635,6 +598,8 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           bool underwaterView = uCameraUnderwater;
           if (underwaterView && normal.y > 0.0) normal = -normal;
           if (!underwaterView && normal.y < 0.0) normal = -normal;
+          if (underwaterView && transportNormal.y > 0.0) transportNormal = -transportNormal;
+          if (!underwaterView && transportNormal.y < 0.0) transportNormal = -transportNormal;
           vec3 viewDirection = normalize(cameraPosition - opticalWorld);
           float eta = underwaterView ? (1.0 / uEtaAirWater) : uEtaAirWater;
           float etaIncident = underwaterView ? (1.0 / uEtaAirWater) : 1.0;
@@ -661,116 +626,108 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           );
           if (!underwaterView) fresnel = max(fresnel, geometricFresnelResult.x);
           vec3 incident = -viewDirection;
-          vec3 refractedDirection = refract(incident, normal, eta);
+          vec3 refractedDirection = criticalSafeRefract(
+            incident,
+            transportNormal,
+            eta
+          );
 
           vec3 deep = uColor;
           vec3 transmitted = deep;
           vec3 reflected = deep;
           float pathLength = uDepthApprox / max(abs(refractedDirection.y), 0.08);
           vec3 sceneRefraction = deep;
-          float foregroundReject = 0.0;
           float screenProjectionCoverage = 1.0;
           float sceneHitValidity = 0.0;
 
           if (!underwaterView) {
             reflected = skyRadiance(reflect(incident, normal));
             vec2 screenUv = gl_FragCoord.xy / max(uResolution, vec2(1.0));
-            float surfaceDepth = -(viewMatrix * vec4(opticalWorld, 1.0)).z;
-            float baseRawDepth = uHasSceneDepth == 1 ? texture2D(tSceneDepth, screenUv).r : 1.0;
-            float baseBackgroundDepth = decodeDepth(baseRawDepth);
-            vec3 opticalDirection = normalize(mix(
-              incident,
-              refractedDirection,
-              clamp(uRefractAmount, 0.0, 1.0)
-            ));
-            vec3 opticalView = normalize(mat3(viewMatrix) * opticalDirection);
-            float estimatedTravel = uDepthApprox / max(abs(refractedDirection.y), 0.08);
-            if (uHasSceneDepth == 1 && baseRawDepth < 0.999999) {
-              float axialGap = max(baseBackgroundDepth - surfaceDepth, 0.0);
-              estimatedTravel = axialGap / max(-opticalView.z, 0.08);
-            }
+            if (uForwardProjection && uHasSceneColor == 1 && uHasSceneDepth == 1) {
+              // The source geometry was already transported through Snell's
+              // interface before rasterization. Color, depth, coverage, and
+              // silhouette therefore occupy this exact water pixel together.
+              vec4 apparentSample = texture2D(tSceneColor, screenUv);
+              float apparentRawDepth = texture2D(tSceneDepth, screenUv).r;
+              float depthCoverage = 1.0 - step(0.999999, apparentRawDepth);
+              // Filtered alpha is the silhouette's coverage authority. Depth
+              // is nearest-sampled and may select the clear neighbour at an
+              // antialiased edge; it may refine path length but must never
+              // erase that color/coverage sample.
+              sceneHitValidity = clamp(apparentSample.a, 0.0, 1.0);
+              screenProjectionCoverage = sceneHitValidity;
+              sceneRefraction = apparentSample.rgb / max(apparentSample.a, 0.001);
 
-            // Project a Snell ray from the actual displaced interface to the
-            // estimated background depth. This keeps the bend in camera space
-            // and avoids the old world-XZ screen offset, whose direction
-            // changed as the camera rotated.
-            float projectedValid = 0.0;
-            vec2 projectedUv = projectWorldToUv(
-              opticalWorld + opticalDirection * estimatedTravel,
-              projectedValid
-            );
-            float insideUv = step(0.002, projectedUv.x) * step(0.002, projectedUv.y) *
-              step(projectedUv.x, 0.998) * step(projectedUv.y, 0.998);
-            screenProjectionCoverage = projectedValid * insideUv;
-            vec2 refractedUv = clamp(projectedUv, vec2(0.002), vec2(0.998));
-            vec3 fallbackBackgroundWorld = opticalWorld + opticalDirection * estimatedTravel;
-            vec3 backgroundWorld = fallbackBackgroundWorld;
-            vec2 resolvedUv = refractedUv;
-            float resolvedRawDepth = 1.0;
-            if (uHasSceneDepth == 1) {
-              // Walk from the fully refracted projection back toward the
-              // incident pixel. Receiver validity is a soft coverage value:
-              // each tap consumes only the still-unresolved portion. The
-              // remainder stays on the incident sample, so a rejected
-              // receiver cannot become a reflection mask.
-              resolvedUv = screenUv;
-              resolvedRawDepth = baseRawDepth;
-              for (int backtrackIndex = 0; backtrackIndex < 5; backtrackIndex++) {
-                float backtrack = 1.0 - float(backtrackIndex) * 0.25;
-                vec2 candidateUv = mix(screenUv, projectedUv, backtrack);
-                vec3 candidateDirection = normalize(mix(
-                  incident,
-                  opticalDirection,
-                  backtrack
-                ));
-                float candidateRawDepth = 1.0;
-                vec3 candidateWorld = opticalWorld + candidateDirection * estimatedTravel;
-                float candidateValidity = refractedReceiverValidity(
-                  candidateUv,
-                  surfaceDepth,
-                  opticalWorld,
-                  candidateDirection,
-                  candidateRawDepth,
-                  candidateWorld
-                );
-                float acceptCandidate = (1.0 - sceneHitValidity) * candidateValidity;
-                vec2 safeCandidateUv = clamp(candidateUv, vec2(0.002), vec2(0.998));
-                resolvedUv = resolvedUv + (safeCandidateUv - screenUv) * acceptCandidate;
-                resolvedRawDepth = resolvedRawDepth +
-                  (candidateRawDepth - baseRawDepth) * acceptCandidate;
-                backgroundWorld = backgroundWorld +
-                  (candidateWorld - fallbackBackgroundWorld) * acceptCandidate;
-                sceneHitValidity = clamp(
-                  sceneHitValidity + acceptCandidate,
-                  0.0,
-                  1.0
-                );
-                if (backtrackIndex == 0) foregroundReject = 1.0 - candidateValidity;
-              }
+              // Forward vertices preserve their real radial camera distance
+              // in target depth. Intersect that sphere with the physically
+              // refracted ray to recover the actual water-segment length.
+              vec3 apparentWorld = reconstructWorldPosition(screenUv, apparentRawDepth);
+              float sourceDistance = length(apparentWorld - cameraPosition);
+              vec3 interfaceOffset = opticalWorld - cameraPosition;
+              float rayProjection = dot(interfaceOffset, refractedDirection);
+              float discriminant = rayProjection * rayProjection +
+                sourceDistance * sourceDistance -
+                dot(interfaceOffset, interfaceOffset);
+              float physicalWaterPath = -rayProjection + sqrt(max(discriminant, 0.0));
+              pathLength = mix(
+                pathLength,
+                max(physicalWaterPath, 0.0),
+                sceneHitValidity * depthCoverage
+              );
             } else {
+              // Legacy block water is a bounded translucent sheet rather than
+              // the global ocean interface. Keep its conventional lookup
+              // isolated from the ocean's forward optical contract.
+              float surfaceDepth = -(viewMatrix * vec4(opticalWorld, 1.0)).z;
+              float baseRawDepth = uHasSceneDepth == 1
+                ? texture2D(tSceneDepth, screenUv).r
+                : 1.0;
+              float baseBackgroundDepth = decodeDepth(baseRawDepth);
+              vec3 opticalDirection = normalize(mix(
+                incident,
+                refractedDirection,
+                clamp(uRefractAmount, 0.0, 1.0)
+              ));
+              vec3 opticalView = normalize(mat3(viewMatrix) * opticalDirection);
+              float estimatedTravel = uDepthApprox / max(abs(refractedDirection.y), 0.08);
+              if (uHasSceneDepth == 1 && baseRawDepth < 0.999999) {
+                float axialGap = max(baseBackgroundDepth - surfaceDepth, 0.0);
+                estimatedTravel = axialGap / max(-opticalView.z, 0.08);
+              }
+              float projectedValid = 0.0;
+              vec2 projectedUv = projectWorldToUv(
+                opticalWorld + opticalDirection * estimatedTravel,
+                projectedValid
+              );
+              float insideUv = step(0.002, projectedUv.x) * step(0.002, projectedUv.y) *
+                step(projectedUv.x, 0.998) * step(projectedUv.y, 0.998);
+              screenProjectionCoverage = projectedValid * insideUv;
+              vec2 resolvedUv = clamp(projectedUv, vec2(0.002), vec2(0.998));
+              float resolvedRawDepth = uHasSceneDepth == 1
+                ? texture2D(tSceneDepth, resolvedUv).r
+                : 1.0;
               sceneHitValidity = screenProjectionCoverage;
+              vec4 sceneSample = uHasSceneColor == 1
+                ? texture2D(tSceneColor, resolvedUv)
+                : vec4(deep, 0.0);
+              if (uHasSunVisibility == 1) {
+                float receiverDepth = decodeDepth(resolvedRawDepth);
+                float sunVisibility = refractedSunVisibility(resolvedUv, receiverDepth);
+                float directLightFraction = clamp(sceneSample.a, 0.0, 1.0);
+                sceneSample.rgb *= mix(1.0, sunVisibility, directLightFraction);
+              }
+              sceneRefraction = sceneSample.rgb;
+              pathLength = mix(pathLength, estimatedTravel, sceneHitValidity);
             }
-            vec4 sceneSample = vec4(deep, 0.0);
-            if (uHasSceneColor == 1) sceneSample = texture2D(tSceneColor, resolvedUv);
-
-            // The capture's alpha stores the fraction of this receiver's
-            // lighting that came from direct sun. Reapply only that portion
-            // with the live visibility mask; ambient light, emissive color,
-            // and Beer-Lambert in-scatter remain physically independent.
-            if (uHasSunVisibility == 1) {
-              float receiverDepth = decodeDepth(resolvedRawDepth);
-              float sunVisibility = refractedSunVisibility(resolvedUv, receiverDepth);
-              float directLightFraction = clamp(sceneSample.a, 0.0, 1.0);
-              sceneSample.rgb *= mix(1.0, sunVisibility, directLightFraction);
-            }
-            sceneRefraction = sceneSample.rgb;
-            float reconstructedPath = max(length(backgroundWorld - opticalWorld), 0.0);
-            pathLength = mix(pathLength, reconstructedPath, sceneHitValidity);
             vec3 transmittance = exp(-uAbsorption * max(pathLength, 0.0));
             float forwardScatter = pow(max(dot(viewDirection, -normalize(uSunDir)), 0.0), 4.0);
             vec3 scatterColor = mix(deep * 0.72, uFogColor * 0.38, 0.55);
             scatterColor += uSunColor * uFogColor * forwardScatter * 0.08;
-            transmitted = sceneRefraction * transmittance + scatterColor * (1.0 - transmittance);
+            vec3 receiverRadiance = sceneRefraction * transmittance +
+              scatterColor * (1.0 - transmittance);
+            vec3 openWaterRadiance = deep * transmittance +
+              scatterColor * (1.0 - transmittance);
+            transmitted = mix(openWaterRadiance, receiverRadiance, sceneHitValidity);
           } else {
             // Underwater Snell window: evaluate one continuous transmitted
             // sky body on every underside fragment. Fresnel and the filtered
@@ -797,6 +754,16 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
             float transmittedSun = pow(windowSun, lobeExponent) * lobeExponent * (24.0 / 700.0);
             float transmittedHalo = pow(windowSun, 24.0) * 0.08;
             window += uSunColor * (transmittedSun + transmittedHalo);
+            if (uForwardProjection && uHasSceneColor == 1) {
+              vec2 screenUv = gl_FragCoord.xy / max(uResolution, vec2(1.0));
+              vec4 apparentSample = texture2D(tSceneColor, screenUv);
+              float apparentCoverage = clamp(apparentSample.a, 0.0, 1.0);
+              vec3 apparentRadiance = apparentSample.rgb /
+                max(apparentSample.a, 0.001);
+              window = mix(window, apparentRadiance, apparentCoverage);
+              sceneHitValidity = apparentCoverage;
+              screenProjectionCoverage = apparentCoverage;
+            }
             transmitted = window;
             reflected = underwaterReflection;
             pathLength = 0.0;
@@ -804,29 +771,24 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
 
           float bodyFog = 1.0 - exp(-max(pathLength, 0.0) / max(uWaterClarity, 1.0));
           if (underwaterView) transmitted = mix(transmitted, uFogColor, bodyFog * uUnderwaterFogStrength);
-          // Screen-space refraction becomes ill-conditioned as the projected
-          // water footprint approaches the horizon. Fade that bounded
-          // approximation out over the reflection-dominated interval; exact
-          // Fresnel still owns the energy split outside this validity gate.
+          // Only the legacy bounded block-water lookup needs a grazing
+          // validity interval. The ocean's forward projection remains valid
+          // across the frustum and is governed solely by exact Fresnel.
           float grazingWidth = clamp(fwidth(geometricCosIncident) * 2.0, 0.002, 0.025);
-          float grazingTransmissionCoverage = smoothstep(
+          float grazingTransmissionCoverage = uForwardProjection
+            ? 1.0
+            : smoothstep(
             0.035 - grazingWidth,
             0.140 + grazingWidth,
             geometricCosIncident
           );
-          // Receiver validity controls only how far the screen-space sample
-          // may distort toward the refracted projection. A rejected lookup
-          // already falls back toward screenUv above; it is not an optical
-          // event and must not give extra energy to sky reflection.
-          float refractionResolveCoverage = 1.0;
           float interfaceTransmission = underwaterView
             ? windowCoverage * (1.0 - fresnel)
-            : (1.0 - fresnel) * grazingTransmissionCoverage * refractionResolveCoverage;
+            : (1.0 - fresnel) * grazingTransmissionCoverage;
           float transmissionWeight = clamp(interfaceTransmission, 0.0, 1.0);
           float reflectionWeight = 1.0 - transmissionWeight;
-          // Every scene/depth/refraction/fallback term is contained in the
-          // transmitted color and receives this explicit (1 - Fresnel)-derived
-          // interface weight, including rejected and same-pixel lookups.
+          // Every transmitted source receives this one explicit
+          // (1 - Fresnel)-derived interface weight.
           vec3 color = reflected * reflectionWeight + transmitted * transmissionWeight;
 
           vec3 lightDirection = normalize(uSunDir);
@@ -921,10 +883,14 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
           if (uDebugMode == 1) color = vec3(clamp(vHeight - uWaterLevel + 0.5, 0.0, 1.0));
           else if (uDebugMode == 2) color = normal * 0.5 + 0.5;
           else if (uDebugMode == 3) color = vec3(fresnel);
-          else if (uDebugMode == 4) color = vec3(foregroundReject, 1.0 - windowCoverage, clamp(pathLength / 16.0, 0.0, 1.0));
+          else if (uDebugMode == 4) color = vec3(sceneHitValidity, 1.0 - windowCoverage, clamp(pathLength / 16.0, 0.0, 1.0));
           else if (uDebugMode == 5) color = exp(-uAbsorption * max(pathLength, 0.0));
           else if (uDebugMode == 6) color = vec3(foam, crest, 1.0 - normal.y);
-          else if (uDebugMode == 7) color = vec3(screenProjectionCoverage, sceneHitValidity, grazingTransmissionCoverage);
+          else if (uDebugMode == 7) color = vec3(
+            screenProjectionCoverage,
+            sceneHitValidity,
+            underwaterView ? windowCoverage : 1.0 - fresnel
+          );
           else if (uDebugMode == 8) color = vec3(
             clamp(slopeVariance * 28.0, 0.0, 1.0),
             clamp(localRoughness, 0.0, 1.0),
@@ -1054,6 +1020,17 @@ export class WaterSurfaceMaterial extends THREE.ShaderMaterial {
     ;(this.uniforms.uResolution.value as THREE.Vector2).set(Math.max(1, Math.floor(resolution.x)), Math.max(1, Math.floor(resolution.y)))
     this.uniforms.uCameraNear.value = cameraNear
     this.uniforms.uCameraFar.value = cameraFar
+  }
+
+  setForwardRefractionInputs(
+    sceneColor: THREE.Texture | null,
+    sceneDepth: THREE.Texture | null,
+    resolution: { x: number; y: number },
+    cameraNear: number,
+    cameraFar: number,
+  ): void {
+    this.setSceneInputs(sceneColor, sceneDepth, resolution, cameraNear, cameraFar)
+    this.uniforms.uForwardProjection.value = !!sceneColor && !!sceneDepth
   }
 
   setSunVisibility(texture: THREE.Texture | null): void {

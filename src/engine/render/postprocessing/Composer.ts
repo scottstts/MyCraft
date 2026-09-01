@@ -15,6 +15,7 @@ import { AerialPerspectivePass } from './passes/AerialPerspectivePass'
 import { UnderwaterPass } from './passes/UnderwaterPass'
 import type { AtmosphereState } from '../atmosphere/AtmosphereModel'
 import type { VoxelSunShadowPass } from '../lighting/VoxelSunShadowPass.js'
+import { ForwardRefractionPass } from '../water/ForwardRefractionPass'
 
 export class Composer {
   private composer: EffectComposer
@@ -25,6 +26,7 @@ export class Composer {
   private output: OutputPass
   private underwater: UnderwaterPass
   private depthTarget: THREE.WebGLRenderTarget
+  private forwardRefraction: ForwardRefractionPass
   private renderer: THREE.WebGLRenderer
   private scene: THREE.Scene
   private voxelSunShadow: VoxelSunShadowPass | null = null
@@ -54,6 +56,12 @@ export class Composer {
     depthTex.format = THREE.DepthStencilFormat
     this.depthTarget.depthTexture = depthTex
     this.depthTarget.texture.colorSpace = THREE.NoColorSpace
+    this.forwardRefraction = new ForwardRefractionPass(
+      renderer,
+      scene,
+      effective.width,
+      effective.height,
+    )
 
     this.renderPass = new RenderPass(scene, camera)
     this.composer.addPass(this.renderPass)
@@ -97,6 +105,7 @@ export class Composer {
     this.composer.setPixelRatio(pixelRatio)
     const effective = this.getEffectiveSize(w, h)
     this.depthTarget.setSize(effective.width, effective.height)
+    this.forwardRefraction.setSize(effective.width, effective.height)
     // Ensure attached depth texture tracks the new size
     if (this.depthTarget.depthTexture) {
       this.depthTarget.depthTexture.image.width = effective.width
@@ -189,6 +198,22 @@ export class Composer {
     return { x: this.depthTarget.width, y: this.depthTarget.height }
   }
 
+  getForwardRefractionColorTexture(): THREE.Texture {
+    return this.forwardRefraction.getColorTexture()
+  }
+
+  getForwardRefractionDepthTexture(): THREE.DepthTexture {
+    return this.forwardRefraction.getDepthTexture()
+  }
+
+  getForwardRefractionResolution(): { x: number; y: number } {
+    return this.forwardRefraction.getResolution()
+  }
+
+  getForwardRefractionDiagnostics(): Record<string, unknown> {
+    return this.forwardRefraction.getDiagnostics()
+  }
+
   setOpaqueCaptureHooks(before: (() => void) | null, after: (() => void) | null): void {
     this.beforeOpaqueCapture = before
     this.afterOpaqueCapture = after
@@ -243,6 +268,13 @@ export class Composer {
     // RenderPass samples its screen-space mask.
     this.voxelSunShadow?.update(camera, sunDirWorld)
 
+    // Transport opposite-medium geometry through the interface before the
+    // ocean samples it. This pass rasterizes the refracted silhouette itself;
+    // no water fragment searches or displaces the ordinary scene image.
+    this.forwardRefraction.render(camera, (receiverTexture, receiverDepth) => {
+      this.voxelSunShadow?.updateForward(receiverTexture, receiverDepth)
+    })
+
     // Update per-pass uniforms
     this.aerial.setCamera(camera)
     this.underwater.setCamera(camera)
@@ -294,6 +326,7 @@ export class Composer {
   dispose(): void {
     this.voxelSunShadow?.dispose()
     this.depthTarget.dispose()
+    this.forwardRefraction.dispose()
     this.underwater.dispose()
     this.lens.dispose()
     this.composer.dispose()

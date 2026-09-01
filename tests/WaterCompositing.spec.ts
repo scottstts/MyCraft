@@ -82,7 +82,7 @@ describe('water compositing ownership', () => {
     expect(material.fragmentShader).toContain('reflected * reflectionWeight + transmitted * transmissionWeight');
     expect(material.fragmentShader).toContain('? windowCoverage * (1.0 - fresnel)');
     expect(material.fragmentShader).toContain('float transmittedSun = pow(windowSun, lobeExponent)');
-    expect(material.fragmentShader).toContain('(1.0 - fresnel) * grazingTransmissionCoverage * refractionResolveCoverage');
+    expect(material.fragmentShader).toContain('(1.0 - fresnel) * grazingTransmissionCoverage');
     expect(material.fragmentShader).toContain('vViewDepth / max(uCameraFar, 0.001)');
     expect(material.fragmentShader).toContain(') * 0.001000');
     expect(material.fragmentShader).toContain('uOceanMode ? oceanSurfaceDepth : clamp(uAlpha, 0.0, 1.0)');
@@ -94,7 +94,7 @@ describe('water compositing ownership', () => {
     const material = new BlockMaterial(new THREE.Texture(), null);
 
     expect(material.fragmentShader).toContain('float directLightFraction = max(1.0 - indirectMask, 1.0 / 255.0)');
-    expect(material.fragmentShader).toContain('gl_FragColor = vec4(color, directLightFraction)');
+    expect(material.fragmentShader).toContain('uForwardRefractionActive > 0.5 ? 1.0 : directLightFraction');
 
     material.dispose();
   });

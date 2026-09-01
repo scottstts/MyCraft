@@ -1,10 +1,16 @@
 import * as THREE from 'three'
+import {
+  attachForwardRefractionUniforms,
+  forwardRefractionFragmentDeclarations,
+  forwardRefractionVertexDeclarations,
+} from './water/ForwardRefraction'
 
 export class GrassMaterial extends THREE.ShaderMaterial {
   constructor(map: THREE.Texture) {
     const vertexShader = `
       // Instanced billboard vertex shader
       // Applies per-instance transform and passes world/view data for lighting
+      ${forwardRefractionVertexDeclarations()}
       varying vec2 vUv;
       varying vec3 vNormal;
       varying vec3 vWorldPos;
@@ -19,13 +25,19 @@ export class GrassMaterial extends THREE.ShaderMaterial {
         vWorldPos = worldPos.xyz;
         vec4 viewPos = viewMatrix * worldPos;
         vViewPos = viewPos.xyz;
-        gl_Position = projectionMatrix * viewPos;
+        vec4 directClip = projectionMatrix * viewPos;
+        vec4 apparentClip = forwardRefractionProject(
+          worldPos.xyz,
+          directClip
+        );
+        gl_Position = apparentClip;
       }
     `;
 
     const fragmentShader = `
       // Grass billboard fragment shader
       // Lighting matches BlockMaterial style (ambient/day-night + sun diffuse), with alpha cutout
+      ${forwardRefractionFragmentDeclarations()}
       varying vec2 vUv;
       varying vec3 vNormal;
       varying vec3 vWorldPos;
@@ -60,6 +72,9 @@ export class GrassMaterial extends THREE.ShaderMaterial {
 
       float getVoxelShadowMask() {
         if (!voxelShadowEnabled) return 1.0;
+        if (uForwardRefractionActive > 0.5) {
+          return forwardRefractionSunVisibility(voxelShadowResolution);
+        }
         vec2 uv = gl_FragCoord.xy / max(voxelShadowResolution, vec2(1.0));
         float center = sampleVoxelShadow(uv);
         float uncertainty = smoothstep(0.02, 0.98, 4.0 * center * (1.0 - center));
@@ -88,8 +103,16 @@ export class GrassMaterial extends THREE.ShaderMaterial {
       }
 
       void main(){
+        forwardRefractionDiscardCameraMedium();
         vec4 tex = texture2D(map, vUv);
         if (tex.a < alphaCutoff) discard;
+        if (uForwardRefractionOutputReceiver > 0.5) {
+          gl_FragColor = vec4(
+            forwardRefractionEncodeReceiver(vForwardRefractionSourceWorld),
+            1.0
+          );
+          return;
+        }
         // The grass texture is uploaded as SRGBColorSpace, so sampled RGB is
         // already linear in WebGL.
         vec3 albedo = tex.rgb;
@@ -140,6 +163,7 @@ export class GrassMaterial extends THREE.ShaderMaterial {
         voxelShadowEnabled: { value: false },
       }
     });
+    attachForwardRefractionUniforms(this)
   }
 
   setMap(tex: THREE.Texture) {

@@ -12,6 +12,8 @@ RenderPass → AerialPerspectivePass → UnderwaterPass → Bloom → LensFlare 
 
 `OutputPass` owns the final scene-linear-to-display transform. The renderer uses ACES filmic tone mapping at a fixed exposure of `0.92`, and sRGB output. The sun-linked [filmic lens flare](lens-flare.md) is documented separately. Screen-space AO and adaptive exposure are not in the active chain; voxel/per-vertex AO and the authored exposure calibration remain the chosen image treatment.
 
+Before the visible `RenderPass`, the composer updates three scene-derived resources in order: the water-free scene/depth capture, voxel sun visibility, and the forward water-interface transmission layer. The last resource is not a second ordinary scene capture. Participating source materials run a forward Fermat/Snell vertex projection and rasterize their opposite-medium silhouette directly into a transparent color/depth target. The visible ocean then samples that target at the same framebuffer coordinate, so refraction cannot separate color from coverage or create a second outline around submerged geometry.
+
 ## Drawing-buffer policy
 
 The logical viewport is the browser viewport, clamped to at least one CSS pixel. The renderer uses one shared policy from `src/engine/render/rendererSizing.ts`:
@@ -29,7 +31,7 @@ The final DPR is allowed to be below `1` on large displays. Only invalid or non-
 
 `Renderer` applies the logical size and DPR together with one `setDrawingBufferSize(width, height, dpr)` call. It does not pair separate renderer `setPixelRatio()` and `setSize()` calls for a resize. `ResizeCoordinator` coalesces browser resize notifications into one animation-frame commit, ignores transient zero-sized resize states, and then updates the camera, composer targets, water inputs, and shadow textures from that exact commit.
 
-The composer has its own internal render targets, so its atomic resize method updates the EffectComposer ratio, depth texture, effect passes, and voxel-shadow target from the renderer’s already-committed DPR. No subsystem reads `window.devicePixelRatio` independently.
+The composer has its own internal render targets, so its atomic resize method updates the EffectComposer ratio, depth texture, full-resolution forward-refraction target, effect passes, and voxel-shadow target from the renderer’s already-committed DPR. No subsystem reads `window.devicePixelRatio` independently.
 
 ## Scene and material ownership
 
@@ -39,6 +41,6 @@ The native Three.js shadow-map rasterizer is disabled. Direct-sun visibility is 
 
 ## Frame and resize order
 
-The engine applies queued chunk mesh swaps at the beginning of a frame, then consumes input, updates gameplay systems, advances atmosphere/water state, and renders through the composer. Chunk swaps are deferred from worker events so depth and color passes see a stable scene for the whole frame.
+The engine applies queued chunk mesh swaps at the beginning of a frame, then consumes input, updates gameplay systems, advances atmosphere/water state, and renders through the composer. The composer captures water-free depth, resolves current voxel visibility, forward-projects opposite-medium geometry, and only then renders the visible scene/post chain. Chunk swaps are deferred from worker events so all of those passes see a stable scene for the whole frame.
 
 On shutdown, `Composer`, materials, chunk meshes, shadow resources, water resources, and the renderer are disposed by the engine. A new start constructs a fresh scene graph rather than reusing partially disposed GPU state.

@@ -906,6 +906,13 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       camera.near,
       camera.far,
     );
+    waterSystem.setForwardRefractionInputs(
+      composer?.getForwardRefractionColorTexture() ?? null,
+      composer?.getForwardRefractionDepthTexture() ?? null,
+      composer?.getForwardRefractionResolution() ?? { x: canvasSize.width, y: canvasSize.height },
+      camera.near,
+      camera.far,
+    );
     waterSystem.setSunVisibility(voxelSunShadowPass?.getTexture() ?? null);
     // Seaweed is a render-only ocean layer. Its per-load random seed is not
     // derived from the saved world seed, so a reload produces a new field
@@ -1053,6 +1060,13 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
           composer?.getSceneColorTexture() ?? null,
           composer?.getDepthTexture() ?? null,
           composer?.getSceneColorResolution() ?? { x: size.width, y: size.height },
+          camera.near,
+          camera.far,
+        );
+        waterSystem.setForwardRefractionInputs(
+          composer?.getForwardRefractionColorTexture() ?? null,
+          composer?.getForwardRefractionDepthTexture() ?? null,
+          composer?.getForwardRefractionResolution() ?? { x: size.width, y: size.height },
           camera.near,
           camera.far,
         );
@@ -1351,6 +1365,7 @@ function setPlayerCharacter(character: unknown): void {
       skyAerosolStrength: atmosphere.skyAerosolStrength,
     } : null,
     water: waterSystem?.getDiagnostics() ?? null,
+    forwardRefraction: composer?.getForwardRefractionDiagnostics() ?? null,
     seaweed: seaweedSystem?.getDiagnostics() ?? null,
     exposure: composer?.getExposureDiagnostics() ?? null,
   };

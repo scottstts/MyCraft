@@ -6,13 +6,19 @@ import { WaterSystem } from '../src/engine/render/water/WaterSystem';
 import { OCEAN_WATER_CENTER_OFFSET, sampleOceanHeight } from '../src/engine/render/water/OceanWaveField';
 
 describe('WaterSurfaceMaterial', () => {
-  it('uses projected Snell refraction and reconstructed scene thickness', () => {
+  it('uses forward-projected Snell transport with coherent color, depth, and coverage', () => {
     const material = new WaterSurfaceMaterial({ map: null, ocean: true });
 
     expect(material.fragmentShader).toContain('projectWorldToUv');
     expect(material.fragmentShader).toContain('reconstructWorldPosition');
     expect(material.fragmentShader).toContain('uProjectionMatrix * viewMatrix');
-    expect(material.fragmentShader).toContain('length(backgroundWorld - opticalWorld)');
+    expect(material.fragmentShader).toContain('uForwardProjection');
+    expect(material.fragmentShader).toContain('texture2D(tSceneColor, screenUv)');
+    expect(material.fragmentShader).toContain('texture2D(tSceneDepth, screenUv)');
+    expect(material.fragmentShader).toContain('apparentSample.rgb / max(apparentSample.a, 0.001)');
+    expect(material.fragmentShader).toContain('sceneHitValidity = clamp(apparentSample.a, 0.0, 1.0)');
+    expect(material.fragmentShader).toContain('sceneHitValidity * depthCoverage');
+    expect(material.fragmentShader).toContain('float physicalWaterPath = -rayProjection + sqrt');
     expect(material.fragmentShader).toContain('dielectricFresnel');
     expect(material.fragmentShader).toContain('criticalSafeRefract');
     expect(material.fragmentShader).toContain('bool underwaterView = uCameraUnderwater');
@@ -27,7 +33,7 @@ describe('WaterSurfaceMaterial', () => {
     expect(material.vertexShader).toContain('oceanWaveLod(footprint, OCEAN_WAVE_LENGTH_');
     expect(material.fragmentShader).toContain('float surfaceFootprint = oceanPixelFootprint(vBaseWorld)');
     expect(material.fragmentShader).toContain('opticalWorld = vBaseWorld + oceanWaveDisplacement(');
-    expect(material.fragmentShader).toContain('waveNormal(vBaseWorld.xz, uTime, surfaceFootprint');
+    expect(material.fragmentShader).toContain('transportNormal');
     expect(material.fragmentShader).not.toContain('float surfaceDepth = vViewDepth');
     expect(material.fragmentShader).toContain('float slopeVariance');
     expect(material.fragmentShader).toContain('float filteredRoughness');
@@ -38,27 +44,20 @@ describe('WaterSurfaceMaterial', () => {
     expect(material.fragmentShader).toContain('geometricFresnelResult');
     expect(material.fragmentShader).toContain('grazingTransmissionCoverage');
     expect(material.fragmentShader).toContain('sceneHitValidity');
-    expect(material.fragmentShader).toContain('float refractionResolveCoverage');
-    expect(material.fragmentShader).toContain('refractedReceiverValidity');
-    expect(material.fragmentShader).toContain('fwidth(interfaceSeparation)');
-    expect(material.fragmentShader).toContain('for (int backtrackIndex = 0; backtrackIndex < 5; backtrackIndex++)');
-    expect(material.fragmentShader).toContain('vec2 candidateUv = mix(screenUv, projectedUv, backtrack)');
-    expect(material.fragmentShader).toContain('vec3 candidateDirection = normalize(mix(');
-    expect(material.fragmentShader).toContain('float acceptCandidate = (1.0 - sceneHitValidity) * candidateValidity');
-    expect(material.fragmentShader).toContain('resolvedUv = resolvedUv + (safeCandidateUv - screenUv) * acceptCandidate');
-    expect(material.fragmentShader).toContain('sceneHitValidity + acceptCandidate');
-    expect(material.fragmentShader).not.toContain('step(0.5, candidateValidity)');
+    expect(material.fragmentShader).not.toContain('refractedReceiverValidity');
+    expect(material.fragmentShader).not.toContain('backtrackIndex');
+    expect(material.fragmentShader).not.toContain('candidateUv');
     expect(material.fragmentShader).toContain('float swashArrival = smoothstep(');
     expect(material.fragmentShader).toContain('shorelineBand * patchMask * swashArrival');
     expect(material.fragmentShader).not.toContain('shorelineBand * (1.0 - patchMask) * foamFront');
     expect(material.fragmentShader).not.toContain('contactFallbackCoverage');
     expect(material.fragmentShader).toContain('sceneRefraction = sceneSample.rgb');
     expect(material.fragmentShader).not.toContain('sceneRefraction = mix(deep, sceneSample.rgb, sceneHitValidity)');
-    expect(material.fragmentShader).toContain('(1.0 - fresnel) * grazingTransmissionCoverage * refractionResolveCoverage');
+    expect(material.fragmentShader).toContain('(1.0 - fresnel) * grazingTransmissionCoverage');
     expect(material.fragmentShader).not.toContain('mix(refractedUv, screenUv, foregroundReject)');
     expect(material.fragmentShader).not.toContain('vec2 resolvedUv = refractedUv;\n            float resolvedRawDepth = uHasSceneDepth');
     expect(material.fragmentShader).not.toContain('step(uWaterLevel - 0.05, candidateWorld.y)');
-    expect(material.fragmentShader).toContain('float refractionResolveCoverage = 1.0;');
+    expect(material.fragmentShader).not.toContain('refractionResolveCoverage');
     expect(material.fragmentShader).not.toContain('pow(sun, 2200.0)');
     expect(material.fragmentShader).toContain('uDebugMode == 8');
     expect(material.fragmentShader).toContain('uDebugMode == 9');

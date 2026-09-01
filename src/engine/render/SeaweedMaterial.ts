@@ -5,6 +5,11 @@ import {
   WATER_EXTINCTION,
   WATER_IOR,
 } from './water/WaterOptics'
+import {
+  attachForwardRefractionUniforms,
+  forwardRefractionFragmentDeclarations,
+  forwardRefractionVertexDeclarations,
+} from './water/ForwardRefraction'
 
 type UniformRecord = Record<string, { value: unknown }>
 
@@ -39,6 +44,7 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
     const neutralCausticTexture = createNeutralCausticTexture()
     const vertexShader = `
       precision highp float;
+      ${forwardRefractionVertexDeclarations()}
 
       attribute float aSeed;
 
@@ -115,12 +121,15 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
         vWorldNormal = currentNormal;
         vWaterDepth = max(uWaterLevel - worldPosition.y, 0.0);
         vFlow = clamp(0.5 + currentWave * 0.36 + sideWave * 0.22, 0.0, 1.0);
-        gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        vec4 directClip = projectionMatrix * viewMatrix * worldPosition;
+        vec4 apparentClip = forwardRefractionProject(worldPosition.xyz, directClip);
+        gl_Position = apparentClip;
       }
     `
 
     const fragmentShader = `
       precision highp float;
+      ${forwardRefractionFragmentDeclarations()}
 
       uniform sampler2D map;
       uniform vec3 sunDirection;
@@ -154,6 +163,9 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
 
       float getVoxelShadowMask() {
         if (!voxelShadowEnabled) return 1.0;
+        if (uForwardRefractionActive > 0.5) {
+          return forwardRefractionSunVisibility(voxelShadowResolution);
+        }
         vec2 uv = gl_FragCoord.xy / max(voxelShadowResolution, vec2(1.0));
         // The full-screen voxel pass already resolves a filtered visibility
         // value. A single lookup keeps dense alpha cards from multiplying
@@ -197,8 +209,16 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
       }
 
       void main() {
+        forwardRefractionDiscardCameraMedium();
         vec4 tex = texture2D(map, vUv);
         if (tex.a < alphaCutoff) discard;
+        if (uForwardRefractionOutputReceiver > 0.5) {
+          gl_FragColor = vec4(
+            forwardRefractionEncodeReceiver(vForwardRefractionSourceWorld),
+            1.0
+          );
+          return;
+        }
 
         vec3 albedo = tex.rgb;
         vec3 normal = normalize(vWorldNormal);
@@ -319,6 +339,7 @@ export class SeaweedMaterial extends THREE.ShaderMaterial {
       toneMapped: false,
       lights: false,
     })
+    attachForwardRefractionUniforms(this)
     this.neutralCausticTexture = neutralCausticTexture
   }
 

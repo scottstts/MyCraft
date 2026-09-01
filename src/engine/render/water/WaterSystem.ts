@@ -7,6 +7,7 @@ import { getOceanMaxAmplitude, OCEAN_WATER_CENTER_OFFSET, OCEAN_WAVES, sampleOce
 import { WaterSurfaceMaterial } from './WaterSurfaceMaterial'
 import { CAUSTIC_REFERENCE_DEPTH, CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
 import sandTextureUrl from '../../../assets/textures/sand.png'
+import { setForwardRefractionWaterState } from './ForwardRefraction'
 
 const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
 const SEABED_FLOOR_Y = 0
@@ -99,6 +100,9 @@ export class WaterSystem {
   private cameraSurfaceY = 0
   private sceneColor: THREE.Texture | null = null
   private sceneDepth: THREE.Texture | null = null
+  private forwardRefractionColor: THREE.Texture | null = null
+  private forwardRefractionDepth: THREE.Texture | null = null
+  private forwardRefractionResolution = new THREE.Vector2(1, 1)
   private sunVisibility: THREE.Texture | null = null
   private resolution = new THREE.Vector2(1, 1)
   private cameraNear = 0.1
@@ -280,6 +284,28 @@ export class WaterSystem {
     this.blockWaterMaterial?.setSceneInputs(sceneColor, sceneDepth, this.resolution, cameraNear, cameraFar)
   }
 
+  setForwardRefractionInputs(
+    sceneColor: THREE.Texture | null,
+    sceneDepth: THREE.Texture | null,
+    resolution: { x: number; y: number },
+    cameraNear: number,
+    cameraFar: number,
+  ): void {
+    this.forwardRefractionColor = sceneColor
+    this.forwardRefractionDepth = sceneDepth
+    this.forwardRefractionResolution.set(
+      Math.max(1, Math.floor(resolution.x)),
+      Math.max(1, Math.floor(resolution.y)),
+    )
+    this.material.setForwardRefractionInputs(
+      sceneColor,
+      sceneDepth,
+      resolution,
+      cameraNear,
+      cameraFar,
+    )
+  }
+
   setSunVisibility(texture: THREE.Texture | null): void {
     this.sunVisibility = texture
     this.material.setSunVisibility(texture)
@@ -328,6 +354,14 @@ export class WaterSystem {
       + sampleOceanHeight(camera.position.x, camera.position.z, this.time)
     this.cameraUnderwater = camera.position.y < this.cameraSurfaceY
     this.material.setCameraUnderwater(this.cameraUnderwater)
+    setForwardRefractionWaterState({
+      waterLevel: this.surfaceY,
+      time: this.time,
+      waveAmp: Number(this.material.uniforms.uWaveAmp.value),
+      waveChop: Number(this.material.uniforms.uWaveChop.value),
+      waveSpeed: Number(this.material.uniforms.uWaveSpeed.value),
+      cameraUnderwater: this.cameraUnderwater,
+    })
 
     this.syncSeabedMaterial()
     if (this.caustics) {
@@ -355,6 +389,12 @@ export class WaterSystem {
       seabedMeshes: seabedMeshes.length,
       caustics: this.caustics?.getDiagnostics() ?? null,
       sceneInputs: { color: !!this.sceneColor, depth: !!this.sceneDepth, resolution: this.resolution.toArray(), near: this.cameraNear, far: this.cameraFar },
+      forwardRefraction: {
+        color: !!this.forwardRefractionColor,
+        depth: !!this.forwardRefractionDepth,
+        resolution: this.forwardRefractionResolution.toArray(),
+        projection: 'forward-fermat-snell',
+      },
       sunVisibility: !!this.sunVisibility,
       waterExcludedFromCapture: this.opaqueCaptureActive,
     }

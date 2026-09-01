@@ -19,6 +19,10 @@ import {
 } from './VoxelOccupancyVolume.js';
 import type { CharacterShadowBox } from './CharacterShadowBox';
 import { RENDER_STYLE } from '../settings/RenderStyle';
+import {
+  setForwardRefractionReceiverVolume,
+  setForwardRefractionSunVisibility,
+} from '../water/ForwardRefraction';
 
 const MAX_SHADER_STEPS = 512;
 // The real sun's angular radius is ~0.00465 rad (0.266 degrees). A restrained
@@ -46,6 +50,7 @@ export class VoxelSunShadowPass {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly volume: VoxelOccupancyVolume;
   private readonly target: THREE.WebGLRenderTarget;
+  private readonly forwardTarget: THREE.WebGLRenderTarget;
   private readonly quadGeometry: THREE.PlaneGeometry;
   private readonly quadMaterial: THREE.ShaderMaterial;
   private readonly quad: THREE.Mesh;
@@ -97,12 +102,24 @@ export class VoxelSunShadowPass {
       stencilBuffer: false,
     });
     this.target.texture.colorSpace = THREE.NoColorSpace;
+    this.forwardTarget = new THREE.WebGLRenderTarget(effectiveWidth, effectiveHeight, {
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      format: THREE.RGBAFormat,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    this.forwardTarget.texture.colorSpace = THREE.NoColorSpace;
+    setForwardRefractionReceiverVolume(volume.origin, volume.dimensions);
+    setForwardRefractionSunVisibility(this.supported ? this.forwardTarget.texture : null);
 
     this.quadGeometry = new THREE.PlaneGeometry(2, 2);
     this.quadMaterial = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: {
         tDepth: { value: null },
+        tReceiverWorld: { value: this.forwardTarget.texture },
+        uUseReceiverWorld: { value: false },
         uVoxelOccupancy: { value: volume.texture },
         uBrickOccupancy: { value: volume.brickTexture },
         uGrassOccupancy: { value: volume.grassTexture },
@@ -143,6 +160,8 @@ export class VoxelSunShadowPass {
         precision highp int;
 
         uniform sampler2D tDepth;
+        uniform sampler2D tReceiverWorld;
+        uniform bool uUseReceiverWorld;
         uniform sampler3D uVoxelOccupancy;
         uniform sampler3D uBrickOccupancy;
         uniform sampler3D uGrassOccupancy;
@@ -533,11 +552,16 @@ export class VoxelSunShadowPass {
 
         void main() {
           float viewDepth = readViewDepth(vUv);
-          if (!uEnabled || viewDepth >= uCameraFar * 0.999) {
+          vec4 receiverSample = texture(tReceiverWorld, vUv);
+          if (!uEnabled || (uUseReceiverWorld
+              ? receiverSample.a <= 0.0
+              : viewDepth >= uCameraFar * 0.999)) {
             outColor = vec4(1.0, 0.0, 0.0, 1.0);
             return;
           }
-          vec3 receiver = reconstructWorldPosition(vUv, viewDepth);
+          vec3 receiver = uUseReceiverWorld
+            ? uVolumeOrigin + receiverSample.rgb * uVolumeSize
+            : reconstructWorldPosition(vUv, viewDepth);
           vec3 sun = normalize(uSunDirection);
           // Project a fixed world-up vector onto the solar-disc tangent plane.
           // Only the singular straight-up case needs a fallback; there is no
@@ -554,8 +578,10 @@ export class VoxelSunShadowPass {
           // conservative optimization; the world-space AABB remains the
           // correctness guard inside traceCharacterVisibility.
           if (uCharacterBoxCount > 0 &&
-              vUv.x >= uCharacterScreenBounds.x && vUv.x <= uCharacterScreenBounds.z &&
-              vUv.y >= uCharacterScreenBounds.y && vUv.y <= uCharacterScreenBounds.w) {
+              (uUseReceiverWorld || (
+                vUv.x >= uCharacterScreenBounds.x && vUv.x <= uCharacterScreenBounds.z &&
+                vUv.y >= uCharacterScreenBounds.y && vUv.y <= uCharacterScreenBounds.w
+              ))) {
             // Use the receiver's camera-space pixel footprint as a stable
             // geometric edge width. It avoids undefined derivatives inside
             // the divergent character broadphase branch.
@@ -579,6 +605,10 @@ export class VoxelSunShadowPass {
     return this.target.texture;
   }
 
+  getForwardTexture(): THREE.Texture {
+    return this.forwardTarget.texture;
+  }
+
   setDepthTexture(texture: THREE.Texture): void {
     this.depthTexture = texture;
     this.quadMaterial.uniforms.tDepth.value = texture;
@@ -589,6 +619,7 @@ export class VoxelSunShadowPass {
     const effectiveHeight = Math.max(1, Math.floor(height * this.renderer.getPixelRatio()));
     this.resolution.set(effectiveWidth, effectiveHeight);
     this.target.setSize(effectiveWidth, effectiveHeight);
+    this.forwardTarget.setSize(effectiveWidth, effectiveHeight);
   }
 
   setSunDirection(direction: THREE.Vector3): void {
@@ -665,6 +696,33 @@ export class VoxelSunShadowPass {
     this.renderer.clear(true, false, false);
     this.renderer.render(this.scene, this.camera);
     this.renderer.setRenderTarget(previousTarget);
+  }
+
+  /**
+   * Resolve the same world-space caster field for forward-refracted source
+   * receivers. The input stores the source point that generated each
+   * apparent pixel, so visibility remains attached to geometry rather than
+   * to the unrefracted camera silhouette.
+   */
+  updateForward(
+    receiverTexture: THREE.Texture,
+    receiverDepth: THREE.DepthTexture,
+  ): void {
+    this.quadMaterial.uniforms.tReceiverWorld.value = receiverTexture;
+    this.quadMaterial.uniforms.tDepth.value = receiverDepth;
+    this.quadMaterial.uniforms.uUseReceiverWorld.value = true;
+
+    const previousTarget = this.renderer.getRenderTarget();
+    if (this.supported) {
+      this.renderer.setRenderTarget(this.forwardTarget);
+      this.renderer.clear(true, false, false);
+      this.renderer.render(this.scene, this.camera);
+    }
+    this.renderer.setRenderTarget(previousTarget);
+
+    this.quadMaterial.uniforms.uUseReceiverWorld.value = false;
+    this.quadMaterial.uniforms.tReceiverWorld.value = this.forwardTarget.texture;
+    this.quadMaterial.uniforms.tDepth.value = this.depthTexture;
   }
 
   getDiagnostics(): VoxelSunShadowDiagnostics {
@@ -782,6 +840,7 @@ export class VoxelSunShadowPass {
 
   dispose(): void {
     this.target.dispose();
+    this.forwardTarget.dispose();
     this.quadGeometry.dispose();
     this.quadMaterial.dispose();
   }
