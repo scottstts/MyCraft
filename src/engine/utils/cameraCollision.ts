@@ -1,6 +1,6 @@
 /**
  * Module: engine/utils/cameraCollision
- * Purpose: Hard-constrain a third-person camera sphere against solid voxels
+ * Purpose: Hard-constrain a first- or third-person camera volume against solid voxels
  * Invariants: Mutates and returns `candidate`; final pose respects minimumY
  */
 

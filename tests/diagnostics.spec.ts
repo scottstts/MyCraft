@@ -36,7 +36,7 @@ describe('diagnostic player cameras', () => {
     for (const camera of cameras) {
       expect(camera).toBeInstanceOf(THREE.PerspectiveCamera);
       expect(camera.fov).toBe(70);
-      expect(camera.near).toBe(0.1);
+      expect(camera.near).toBe(0.01);
       expect(camera.far).toBe(1024);
       expect(camera.rotation.order).toBe('YXZ');
       expect(Number.isFinite(camera.position.x)).toBe(true);

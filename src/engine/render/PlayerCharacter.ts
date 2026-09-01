@@ -46,6 +46,11 @@ const CFG = {
   thirdPersonAimDistance: 8,
   cameraCollisionRadius: 0.2,
   cameraCollisionPadding: 0.04,
+  // The first-person camera is a smaller physical volume than the orbit
+  // camera. It still needs a small swept footprint so the eye cannot enter a
+  // voxel when the character's forward-facing eye anchor reaches a wall.
+  firstPersonCameraCollisionRadius: 0.04,
+  firstPersonCameraCollisionPadding: 0.02,
   // Rotating the upright rig into its horizontal swim pose moves the arms,
   // legs, and held tool below the character root. Lift the posed body so its
   // lowest rendered point remains on the physics collider's feet plane.
@@ -105,6 +110,7 @@ export class PlayerCharacter {
   private elapsedTime = 0;
   private swingActive = false;
   private swingTime = 0;
+  private snapCameraOnNextUpdate = false;
   private swingAudio: HTMLAudioElement | null = null;
   private currentCharacter: PlayerCharacterId;
 
@@ -224,8 +230,16 @@ export class PlayerCharacter {
   }
 
   setFirstPerson(value: boolean): void {
+    const viewChanged = this.isFirstPerson !== value;
     this.isFirstPerson = value;
     this.input?.setMovementYawOffset?.(value ? 0 : Math.PI);
+    if (viewChanged) {
+      // First-person looks along the character's current heading. Third-person
+      // retains its existing orbit convention (`orbitYaw = lookYaw + PI`), so
+      // seed its look yaw half a turn back to put the camera behind the body.
+      this.input?.setLookOrientation?.(value ? this.bodyYaw : this.bodyYaw - Math.PI);
+      if (!value) this.snapCameraOnNextUpdate = true;
+    }
     // Only the geometry surrounding the eye is hidden. The real arms,
     // pickaxe, torso, backpack, and legs remain part of the rig in FPS view.
     this.headMesh.visible = !value;
@@ -276,7 +290,11 @@ export class PlayerCharacter {
     this.applyAnimation(dt, state);
 
     this.character.updateMatrixWorld(true);
-    if (updateCamera) this.updateCamera(dt, snapCamera);
+    if (updateCamera) {
+      const shouldSnapCamera = snapCamera || this.snapCameraOnNextUpdate;
+      this.snapCameraOnNextUpdate = false;
+      this.updateCamera(dt, shouldSnapCamera);
+    }
     this.character.updateMatrixWorld(true);
   }
 
@@ -485,13 +503,33 @@ export class PlayerCharacter {
 
     const { yaw, pitch } = this.input?.getOrientation() ?? { yaw: 0, pitch: 0 };
     if (this.isFirstPerson) {
-      camera.position.copy(this.scratchPosition);
       this.scratchDirection.set(
         -Math.sin(yaw) * Math.cos(pitch),
         Math.sin(pitch),
         -Math.cos(yaw) * Math.cos(pitch),
       ).normalize();
-      camera.lookAt(camera.position.clone().add(this.scratchDirection));
+
+      // The controller eye is the collision-safe physical origin. Sweep the
+      // rig's anatomical eye anchor toward its authored slightly-forward
+      // position so head turns and the face offset cannot put the camera in a
+      // solid terrain voxel.
+      if (this.controller) {
+        this.controller.getEyePosition(this.scratchTarget);
+        this.scratchCameraCandidate.copy(this.scratchPosition);
+        constrainCameraToSolidVoxels(
+          this.controller.getWorld(),
+          this.scratchTarget,
+          this.scratchCameraCandidate,
+          CFG.firstPersonCameraCollisionRadius,
+          CFG.firstPersonCameraCollisionPadding,
+        );
+        camera.position.copy(this.scratchCameraCandidate);
+      } else {
+        camera.position.copy(this.scratchPosition);
+      }
+
+      this.scratchTarget.copy(camera.position).add(this.scratchDirection);
+      camera.lookAt(this.scratchTarget);
       camera.updateMatrixWorld(true);
       return;
     }

@@ -151,6 +151,81 @@ describe('player character feet alignment', () => {
     player.dispose();
   });
 
+  it('keeps the first-person eye anchor behind a terrain wall', () => {
+    installCanvasStub();
+
+    const player = new PlayerCharacter();
+    const playerRoot = new THREE.Group();
+    const camera = new THREE.PerspectiveCamera();
+    const input = {
+      getOrientation: () => ({ yaw: Math.PI, pitch: 0 }),
+    } as unknown as InputSystem;
+    const world = {
+      isBlockSolid: (x: number, y: number, z: number) => x === 0 && y === 1 && z === 0,
+    } as unknown as World;
+    const controller = {
+      getFeetPosition: (target = new THREE.Vector3()) => target.set(0.5, 0, -0.3),
+      getEyePosition: (target = new THREE.Vector3()) => target.set(0.5, PLAYER.eyeHeight, -0.3),
+      getMovementState: () => createIdleState(),
+      getWorld: () => world,
+    } as unknown as PlayerController;
+
+    player.init(playerRoot, camera, input);
+    player.setController(controller);
+    player.setFirstPerson(true);
+    player.update(0);
+
+    // The authored eye anchor is just beyond the face, but the wall is close
+    // enough that the camera volume must stop before the voxel face.
+    expect(camera.position.z).toBeLessThan(-0.05);
+    expect(camera.position.y).toBeCloseTo(PLAYER.eyeHeight, 6);
+
+    player.dispose();
+  });
+
+  it('re-seeds view heading on toggles without changing the startup front orbit', () => {
+    installCanvasStub();
+
+    const player = new PlayerCharacter();
+    const playerRoot = new THREE.Group();
+    const camera = new THREE.PerspectiveCamera();
+    let orientation = { yaw: Math.PI, pitch: 0 };
+    const input = {
+      getOrientation: () => orientation,
+      setMovementYawOffset: () => undefined,
+      setLookOrientation: (yaw: number, pitch = orientation.pitch) => {
+        orientation = { yaw, pitch };
+      },
+    } as unknown as InputSystem;
+    const world = { isBlockSolid: () => false } as unknown as World;
+    const controller = {
+      getFeetPosition: (target = new THREE.Vector3()) => target.set(0, 0, 0),
+      getEyePosition: (target = new THREE.Vector3()) => target.set(0, PLAYER.eyeHeight, 0),
+      getMovementState: () => createIdleState(),
+      getWorld: () => world,
+    } as unknown as PlayerController;
+
+    player.init(playerRoot, camera, input);
+    player.setController(controller);
+
+    // The initial false -> false state keeps the authored front-facing start.
+    player.update(0, true, true);
+    expect(camera.position.z).toBeGreaterThan(0);
+
+    player.setFirstPerson(true);
+    player.update(0);
+    expect(orientation.yaw).toBeCloseTo(Math.PI, 6);
+    expect(camera.getWorldDirection(new THREE.Vector3()).z).toBeGreaterThan(0.99);
+
+    player.setFirstPerson(false);
+    player.update(0);
+    expect(orientation.yaw).toBeCloseTo(0, 6);
+    expect(camera.position.z).toBeLessThan(0);
+    expect(camera.getWorldDirection(new THREE.Vector3()).z).toBeGreaterThan(0.99);
+
+    player.dispose();
+  });
+
   it('switches between every authored appearance without changing the shared rig contract', () => {
     installCanvasStub();
 

@@ -98,6 +98,16 @@ export class InputSystem {
   }
 
   /**
+   * Re-seed the look heading when a view mode owns a new default framing.
+   * Pitch is preserved unless a caller explicitly supplies a replacement.
+   */
+  setLookOrientation(yaw: number, pitch: number = this.pitchRadians): void {
+    this.yawRadians = yaw;
+    this.pitchRadians = pitch;
+    this.update();
+  }
+
+  /**
    * Clean up listeners
    */
   destroy(): void {

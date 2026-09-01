@@ -26,7 +26,7 @@ export function createPlayerCamera(aspect: number = 1): THREE.PerspectiveCamera 
   const camera = new THREE.PerspectiveCamera(
     70,    // fov
     aspect, // aspect ratio
-    0.1,   // near
+    0.01,  // near - keep close first-person limbs visible
     1024    // far - increased to comfortably see larger worlds
   );
   
