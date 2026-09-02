@@ -1,13 +1,23 @@
-// Auto-import all music files in the folder (Vite)
-const modules = import.meta.glob('../assets/sounds/music/*.{mp3,ogg,wav,webm}', { eager: true }) as Record<string, { default: string }>
 type Track = { url: string; name: string }
-const ALL_TRACKS: Track[] = Object.entries(modules).map(([key, mod]) => {
-  // key example: '../assets/sounds/music/Blessed.mp3'
-  const base = key.split('/').pop() || mod.default
+const MUSIC_FILES = [
+  'Away.mp3',
+  'By the Sea.mp3',
+  'Evening Glow.mp3',
+  'Golden Hour.mp3',
+  'Ocean Breeze.mp3',
+  'Sand Castle.mp3',
+  'Serenade.mp3',
+  'Silhouette.mp3',
+  'Static_Dream.mp3',
+  'Wind Whisper.mp3',
+]
+
+const ALL_TRACKS: Track[] = MUSIC_FILES.map((file) => {
+  const base = file
   const name = (base.replace(/\.[^.]+$/, '') || 'Track')
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
-  return { url: mod.default, name }
+  return { url: `/music/${encodeURIComponent(file)}`, name }
 })
 
 let audio: HTMLAudioElement | null = null
