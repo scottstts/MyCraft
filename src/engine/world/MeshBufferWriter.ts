@@ -1,4 +1,8 @@
 import type { MeshBuffers } from '../../types/workers.js';
+import {
+  FORWARD_REFRACTION_INDEX_BUCKETS,
+  type ForwardRefractionIndexBucket,
+} from './ForwardRefractionMeshing.js';
 
 type QuadVertex = readonly [number, number, number];
 type QuadNormal = readonly [number, number, number];
@@ -15,11 +19,18 @@ type QuadUv = readonly [number, number];
 export class MeshBufferWriter {
   private readonly buffers: MeshBuffers | null;
   private readonly expectedFaces: number | null;
+  private readonly expectedForwardIndices: Record<ForwardRefractionIndexBucket, number>;
+  private readonly forwardIndexOffsets: Record<ForwardRefractionIndexBucket, number>;
   private faceCount = 0;
   private vertexCount = 0;
 
-  constructor(expectedFaces?: number) {
+  constructor(
+    expectedFaces?: number,
+    expectedForwardIndices: Partial<Record<ForwardRefractionIndexBucket, number>> = {},
+  ) {
     this.expectedFaces = expectedFaces ?? null;
+    this.expectedForwardIndices = this.createBucketCounts(expectedForwardIndices);
+    this.forwardIndexOffsets = this.createBucketCounts();
     if (expectedFaces === undefined) {
       this.buffers = null;
       return;
@@ -34,6 +45,12 @@ export class MeshBufferWriter {
       colors: new Float32Array(vertexCapacity * 3),
       indices: new Uint32Array(expectedFaces * 6),
     };
+    const forwardIndices: Partial<Record<ForwardRefractionIndexBucket, Uint32Array>> = {};
+    for (const bucket of FORWARD_REFRACTION_INDEX_BUCKETS) {
+      const indexCount = this.expectedForwardIndices[bucket];
+      if (indexCount > 0) forwardIndices[bucket] = new Uint32Array(indexCount);
+    }
+    if (Object.keys(forwardIndices).length > 0) this.buffers.forwardIndices = forwardIndices;
   }
 
   get isCounting(): boolean {
@@ -48,9 +65,14 @@ export class MeshBufferWriter {
     return this.vertexCount;
   }
 
-  addFaceCount(): void {
+  getForwardIndexCounts(): Record<ForwardRefractionIndexBucket, number> {
+    return this.createBucketCounts(this.expectedForwardIndices);
+  }
+
+  addFaceCount(forwardBucket?: ForwardRefractionIndexBucket): void {
     this.faceCount += 1;
     this.vertexCount += 4;
+    if (forwardBucket) this.expectedForwardIndices[forwardBucket] += 6;
   }
 
   addFace(
@@ -59,9 +81,10 @@ export class MeshBufferWriter {
     uvOrder: readonly QuadUv[],
     aoValues: readonly number[],
     color: number,
+    forwardBucket?: ForwardRefractionIndexBucket,
   ): void {
     if (this.isCounting) {
-      this.addFaceCount();
+      this.addFaceCount(forwardBucket);
       return;
     }
     if (quad.length !== 4 || uvOrder.length !== 4 || aoValues.length !== 4) {
@@ -113,6 +136,17 @@ export class MeshBufferWriter {
       buffers.indices[indexOffset + 4] = vertexOffset + 2;
       buffers.indices[indexOffset + 5] = vertexOffset + 3;
     }
+    if (forwardBucket) {
+      const forwardIndices = buffers.forwardIndices?.[forwardBucket];
+      if (!forwardIndices) {
+        throw new Error(`[MeshBufferWriter] Missing forward index bucket: ${forwardBucket}`);
+      }
+      const forwardOffset = this.forwardIndexOffsets[forwardBucket];
+      for (let index = 0; index < 6; index += 1) {
+        forwardIndices[forwardOffset + index] = buffers.indices[indexOffset + index];
+      }
+      this.forwardIndexOffsets[forwardBucket] += 6;
+    }
     this.faceCount += 1;
     this.vertexCount += 4;
   }
@@ -126,6 +160,23 @@ export class MeshBufferWriter {
         `[MeshBufferWriter] Face count changed between passes: expected ${this.expectedFaces}, got ${this.faceCount}`,
       );
     }
+    for (const bucket of FORWARD_REFRACTION_INDEX_BUCKETS) {
+      if (this.forwardIndexOffsets[bucket] !== this.expectedForwardIndices[bucket]) {
+        throw new Error(
+          `[MeshBufferWriter] Forward index count changed for ${bucket}: expected ${this.expectedForwardIndices[bucket]}, got ${this.forwardIndexOffsets[bucket]}`,
+        );
+      }
+    }
     return this.buffers;
+  }
+
+  private createBucketCounts(
+    values: Partial<Record<ForwardRefractionIndexBucket, number>> = {},
+  ): Record<ForwardRefractionIndexBucket, number> {
+    const counts = {} as Record<ForwardRefractionIndexBucket, number>;
+    for (const bucket of FORWARD_REFRACTION_INDEX_BUCKETS) {
+      counts[bucket] = values[bucket] ?? 0;
+    }
+    return counts;
   }
 }

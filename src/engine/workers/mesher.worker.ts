@@ -23,6 +23,12 @@ import {
 import { CHUNK_SIZE } from '../../config/constants.js';
 import { localToIndex } from '../utils/coords.js';
 import { MeshBufferWriter } from '../world/MeshBufferWriter.js';
+import {
+  classifyForwardRefractionMedium,
+  FORWARD_REFRACTION_WATER_LEVEL_OFFSET,
+  getForwardRefractionIndexBucket,
+  type ForwardRefractionIndexBucket,
+} from '../world/ForwardRefractionMeshing.js';
 
 // The unified WaterSystem owns the continuous sea-level plane. Water blocks
 // remain in World for swimming/flooding/placement, but their duplicate sea
@@ -105,20 +111,22 @@ function handleMeshChunk(request: MeshChunkRequest): void {
   // Transfer the output buffers for performance.
   self.postMessage(response, {
     transfer: [
-      mesh.opaque.positions.buffer,
-      mesh.opaque.normals.buffer,
-      mesh.opaque.uvs.buffer,
-      mesh.opaque.ao.buffer,
-      mesh.opaque.indices.buffer,
-      mesh.opaque.colors.buffer,
-      mesh.transparent.positions.buffer,
-      mesh.transparent.normals.buffer,
-      mesh.transparent.uvs.buffer,
-      mesh.transparent.ao.buffer,
-      mesh.transparent.indices.buffer,
-      mesh.transparent.colors.buffer,
+      ...getMeshTransferBuffers(mesh.opaque),
+      ...getMeshTransferBuffers(mesh.transparent),
     ],
   });
+}
+
+function getMeshTransferBuffers(mesh: ReturnType<MeshBufferWriter['toBuffers']>): ArrayBuffer[] {
+  return [
+    mesh.positions.buffer,
+    mesh.normals.buffer,
+    mesh.uvs.buffer,
+    mesh.ao.buffer,
+    mesh.indices.buffer,
+    mesh.colors.buffer,
+    ...Object.values(mesh.forwardIndices ?? {}).map((indices) => indices.buffer),
+  ];
 }
 
 function assertMesherConfig(): void {
@@ -171,8 +179,14 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
   const transparentCounts = new MeshBufferWriter();
   meshChunkPass(chunkData, neighbors, key, opaqueCounts, transparentCounts);
 
-  const opaque = new MeshBufferWriter(opaqueCounts.getFaceCount());
-  const transparent = new MeshBufferWriter(transparentCounts.getFaceCount());
+  const opaque = new MeshBufferWriter(
+    opaqueCounts.getFaceCount(),
+    opaqueCounts.getForwardIndexCounts(),
+  );
+  const transparent = new MeshBufferWriter(
+    transparentCounts.getFaceCount(),
+    transparentCounts.getForwardIndexCounts(),
+  );
   meshChunkPass(chunkData, neighbors, key, opaque, transparent);
   return {
     opaque: opaque.toBuffers(),
@@ -271,12 +285,13 @@ function meshChunkPass(
 
           if (!shouldRenderFace) continue;
           if (block.opaque) {
+            const forwardBucket = getForwardRefractionBucket(face.name, gy, currentIsLeaf);
             addFaceQuad(
               lx, ly, lz, gx, gy, gz, face, block,
               opaqueWriter,
               chunkData,
               neighbors,
-              rot, tint,
+              rot, tint, forwardBucket,
             );
           } else {
             addFaceQuad(
@@ -315,10 +330,11 @@ function addFaceQuad(
     negZ?: { voxels: Uint8Array };
   } | undefined,
   uvRotation: number,
-  tintJitter: number
+  tintJitter: number,
+  forwardBucket?: ForwardRefractionIndexBucket,
 ): void {
   if (writer.isCounting) {
-    writer.addFaceCount();
+    writer.addFaceCount(forwardBucket);
     return;
   }
 
@@ -477,7 +493,29 @@ function addFaceQuad(
     aoValues.push(aoFactor * (isSolid ? 0.7 : 1.0));
   }
 
-  writer.addFace(quad, [nx, ny, nz], uvOrder, aoValues, isSolid ? tintJitter : 1.0);
+  writer.addFace(
+    quad,
+    [nx, ny, nz],
+    uvOrder,
+    aoValues,
+    isSolid ? tintJitter : 1.0,
+    forwardBucket,
+  );
+}
+
+function getForwardRefractionBucket(
+  faceName: string,
+  blockY: number,
+  cutout: boolean,
+): ForwardRefractionIndexBucket {
+  const minY = faceName === 'top' ? blockY + 1 : blockY;
+  const maxY = faceName === 'bottom' ? blockY : blockY + 1;
+  const medium = classifyForwardRefractionMedium(
+    minY,
+    maxY,
+    WATER_LEVEL + FORWARD_REFRACTION_WATER_LEVEL_OFFSET,
+  );
+  return getForwardRefractionIndexBucket(medium, cutout);
 }
 
 function getFaceUV(block: BlockDef, faceName: string, gx: number, gy: number, gz: number): [number, number] {

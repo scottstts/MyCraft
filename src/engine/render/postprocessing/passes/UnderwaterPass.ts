@@ -85,6 +85,9 @@ export class UnderwaterPass extends ShaderPass {
         }
       `,
       fragmentShader: `
+        #ifdef GL_EXT_shader_texture_lod
+        #extension GL_EXT_shader_texture_lod : enable
+        #endif
         precision highp float;
         uniform sampler2D tDiffuse;
         uniform sampler2D tDepth;
@@ -194,6 +197,17 @@ export class UnderwaterPass extends ShaderPass {
           return clamp(1.0 - 0.5 * (rs * rs + rp * rp), 0.0, 1.0);
         }
 
+        vec4 sampleCausticTexture(vec2 uv, float mipLevel) {
+          #ifdef GL_EXT_shader_texture_lod
+          return texture2DLodEXT(causticMap, uv, mipLevel);
+          #else
+          // WebGL1 without EXT_shader_texture_lod still gets the target's
+          // implicit derivative filtering; the explicit path above is used
+          // whenever the extension is available.
+          return texture2D(causticMap, uv);
+          #endif
+        }
+
         float sampleCausticField(vec3 worldPosition, float worldFilterWidth) {
           if (!causticMapEnabled) return 1.0;
           vec3 sun = normalize(uSunDirection);
@@ -207,26 +221,18 @@ export class UnderwaterPass extends ShaderPass {
           // calculated by texture2D. RepeatWrapping performs the actual tile
           // wrap without manufacturing a large derivative at each seam.
           vec2 uv = causticCoord;
-          vec2 texel = 1.0 / max(causticResolution, vec2(1.0));
           float footprint = worldFilterWidth / max(causticExtent, 1.0)
             * max(causticResolution.x, causticResolution.y);
-          // Most long volume segments cover many caustic texels and therefore
-          // integrate to neutral energy. Avoid five texture reads for that
-          // already-converged case; retain the full filter only near the
-          // interface where the optical web is actually resolvable.
+          // Convert the physical world-space footprint into the target's
+          // texel footprint and select its prefiltered irradiance level. The
+          // extension path avoids relying on a derivative that does not see
+          // the finite march segment; the fallback remains one implicit
+          // lookup on WebGL1 implementations without shader-texture-lod.
           if (footprint >= 10.0) return 1.0;
-          float center = texture2D(causticMap, uv).r;
-          if (footprint <= 0.75) {
-            return clamp(center * causticFieldScale, 0.0, 8.0);
-          }
-          float neighbours = (
-            texture2D(causticMap, uv + vec2(texel.x, 0.0)).r
-            + texture2D(causticMap, uv - vec2(texel.x, 0.0)).r
-            + texture2D(causticMap, uv + vec2(0.0, texel.y)).r
-            + texture2D(causticMap, uv - vec2(0.0, texel.y)).r
-          ) * 0.25;
-          float filtered = mix(center, neighbours, smoothstep(0.75, 2.5, footprint));
-          // The encoded neutral concentration is 1 / fieldScale. A wide ray
+          float maxMip = log2(max(causticResolution.x, causticResolution.y));
+          float mipLevel = clamp(log2(max(footprint, 1.0)), 0.0, maxMip);
+          float filtered = sampleCausticTexture(uv, mipLevel).r;
+          // The encoded neutral concentration is 1 / fieldScale. A broad ray
           // tube sees average irradiance, not an aliased periodic filament.
           filtered = mix(
             filtered,

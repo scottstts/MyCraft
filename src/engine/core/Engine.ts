@@ -52,7 +52,11 @@ import {
 import { applyDiagnosticCameraPose, type DiagnosticCameraId } from '../../diagnostics/cameras';
 import { VoxelOccupancyVolume } from '../render/lighting/VoxelOccupancyVolume.js';
 import { VoxelSunShadowPass } from '../render/lighting/VoxelSunShadowPass.js';
-import { ForwardRefractionParticipantRegistry } from '../render/water/ForwardRefraction';
+import {
+  createForwardRefractionReceiverMaterials,
+  ForwardRefractionParticipantRegistry,
+  type ForwardRefractionReceiverMaterials,
+} from '../render/water/ForwardRefraction';
 import { ResizeCoordinator } from '../render/ResizeCoordinator';
 import {
   createStartupError,
@@ -105,6 +109,7 @@ let diagnosticView: DiagnosticCameraId | null = null;
 let voxelShadowVolumeReported = false;
 let voxelShadowVolume: VoxelOccupancyVolume | null = null;
 let voxelSunShadowPass: VoxelSunShadowPass | null = null;
+let forwardRefractionReceiverMaterials: ForwardRefractionReceiverMaterials | null = null;
 // Render-only center of the one-voxel water envelope. Gameplay keeps its
 // existing WATER_LEVEL + 1.0 interaction surface; this value only drives
 // water optics, caustics, and screen-space water masking.
@@ -355,6 +360,9 @@ function flushPendingChunkMeshes(): void {
 }
 
 function update(dtSeconds: number) {
+  // Reset the shared renderer counters and retire completed asynchronous GPU
+  // timer queries before any water, shadow, or post-processing work starts.
+  composer?.beginFrame();
   // Apply any pending mesh swaps before rendering starts this frame.
   // Try to co-apply neighboring chunks arriving together to prevent a 1-frame "hole" at borders.
   if (chunkRenderer && pendingChunkMeshes.size) {
@@ -699,6 +707,10 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
   blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80, 0, CAUSTIC_REFERENCE_DEPTH, 1.35);
   const forwardRefractionParticipants = new ForwardRefractionParticipantRegistry();
+  forwardRefractionReceiverMaterials = createForwardRefractionReceiverMaterials({
+    map: atlas.getTexture(),
+    alphaCutoff: 0.5,
+  });
 
   // Water material uses the same shader as far ocean, but uses vUv on block meshes
   waterMaterial = new WaterSurfaceMaterial({
@@ -721,7 +733,10 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   chunkRenderer = new ChunkRenderer(
     scene,
     { opaque: blockMaterial, transparent: waterMaterial },
-    { forwardRefractionParticipants },
+    {
+      forwardRefractionParticipants,
+      forwardRefractionReceiverMaterials,
+    },
   );
   
   // Create player rig root and in-world first-person body
@@ -950,6 +965,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       blockWaterMaterial: waterMaterial ?? undefined,
       seabedAtlas: atlas.getConfig(),
       renderer: baseRenderer,
+      stageProfiler: composer?.getStageProfiler(),
       forwardRefractionParticipants,
       registerShadowSamplingMaterial: (material) => composer?.registerShadowSamplingMaterial(material),
       unregisterShadowSamplingMaterial: (material) => composer?.unregisterShadowSamplingMaterial(material),
@@ -1257,6 +1273,12 @@ function stop() {
     chunkRenderer = null;
   }
 
+  if (forwardRefractionReceiverMaterials) {
+    forwardRefractionReceiverMaterials.opaque.dispose();
+    forwardRefractionReceiverMaterials.cutout.dispose();
+    forwardRefractionReceiverMaterials = null;
+  }
+
   // Clean up render-only ocean vegetation before the shared block material
   // and scene-owned shadow bindings are released.
   if (seaweedSystem) {
@@ -1433,6 +1455,7 @@ function setPlayerCharacter(character: unknown): void {
     } : null,
     water: waterSystem?.getDiagnostics() ?? null,
     forwardRefraction: composer?.getForwardRefractionDiagnostics() ?? null,
+    renderStages: composer?.getRenderDiagnostics() ?? null,
     seaweed: seaweedSystem?.getDiagnostics() ?? null,
     exposure: composer?.getExposureDiagnostics() ?? null,
   };

@@ -35,7 +35,7 @@ No independent phase, ridge, scrolling decal, or color mask is added after the a
 
 The block receiver changes only direct sun. It combines concentration with interface transmission, water absorption along the refracted light path, receiver-angle correction, sun altitude, and the existing voxel shadow visibility. Ambient sky, stars, material albedo, and shadows are not brightened by the caustic texture. If the render target is unavailable, the sampler is neutral and no synthetic caustic pattern is invented.
 
-Both block and underwater receivers pass the continuous, unwrapped caustic coordinate to mipmapped `texture2D` samples. `RepeatWrapping` performs the tile wrap after derivatives are calculated; applying `fract` in a receiver would manufacture a derivative discontinuity at each tile edge and select neutral coarse mips, producing straight no-caustics bands.
+Block receivers keep the continuous, unwrapped coordinate and fetch four half-period phase samples from the mipmapped field; the old five-fetch footprint gather is gone. The underwater volume selects one explicit mip level from the physical ray/screen footprint and falls back to the target's implicit derivative filtering on WebGL1, returning neutral irradiance once the footprint is already converged. `RepeatWrapping` performs the tile wrap after derivatives are calculated; applying `fract` in a receiver would manufacture a derivative discontinuity at each tile edge and select neutral coarse mips, producing straight no-caustics bands. The three lens-flare bloom pyramids use the same authored Gaussian weights through adjacent bilinear-paired taps, so the blur budget does not scale with the unpaired kernel samples.
 
 ## Review invariants
 

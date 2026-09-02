@@ -42,6 +42,10 @@ describe('voxel leaf shadow path', () => {
     expect(shader).toContain('leafBrickDensityAt');
     expect(shader).toContain('uniform highp usampler3D uVoxelCasterFlags');
     expect(shader).toContain('uniform highp usampler3D uMacroBrickOccupancy');
+    expect(shader).toContain('uniform sampler2D uXZMaxCasterHeight64');
+    expect(shader).toContain('rayClearsXZTile');
+    expect(shader).toContain('receiverNeedsVoxelTrace');
+    expect(shader).toContain('uSunIntensity <= 0.0001');
     expect(shader).toContain('texelFetch(uVoxelCasterFlags');
     expect(shader).toContain('getMacroBrickBoundary');
     expect(shader).toContain('if (grassAt(cell) && grassBladeHit');

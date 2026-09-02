@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import {
   FILMIC_LENS_FLARE_PRESET,
   LensFlarePass,
+  createGaussianTapLayout,
   computeLensFlareSunEnergy,
   projectLensFlareSource,
   refractLensFlareSunDirectionUnderwater,
@@ -140,6 +141,31 @@ describe('filmic lens flare WebGL port', () => {
       height: 720,
       type: THREE.HalfFloatType,
     })
+    pass.dispose()
+  })
+
+  it('pairs adjacent Gaussian taps at weighted bilinear centroids', () => {
+    const layout = createGaussianTapLayout(22)
+    expect(layout.pairs).toHaveLength(10)
+    expect(layout.tailOffset).toBe(21)
+    expect(layout.tailWeight).toBeGreaterThan(0)
+    for (let index = 0; index < layout.pairs.length; index += 1) {
+      const pair = layout.pairs[index]
+      expect(pair.offset).toBeGreaterThan(1 + index * 2)
+      expect(pair.offset).toBeLessThan(2 + index * 2)
+      expect(pair.weight).toBeGreaterThan(0)
+    }
+
+    const pass = new LensFlarePass()
+    const sourceBloom = pass['sourceBloom'] as {
+      blurMaterials: THREE.ShaderMaterial[]
+    }
+    const largestKernel = sourceBloom.blurMaterials[4]
+    expect(largestKernel.fragmentShader).toContain('#define GAUSSIAN_PAIR_COUNT 10')
+    // The fixed loop expands to ten paired offsets at compile time; the
+    // source contains only the center, two pair-side, and two tail-side
+    // bilinear lookup sites.
+    expect((largestKernel.fragmentShader.match(/texture2D\(colorTexture/g) ?? []).length).toBe(5)
     pass.dispose()
   })
 

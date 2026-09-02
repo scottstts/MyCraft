@@ -166,16 +166,20 @@ describe('water compositing ownership', () => {
     pass.dispose();
   });
 
-  it('keeps underwater caustic coordinates unwrapped for implicit mip derivatives', () => {
+  it('uses one derivative-aware underwater caustic sample for each receiver', () => {
     const pass = new UnderwaterPass();
     const fragmentShader = (pass.material as THREE.ShaderMaterial).fragmentShader;
-    const samplerStart = fragmentShader.indexOf('float sampleCausticField');
+    const samplerStart = fragmentShader.indexOf('vec4 sampleCausticTexture');
     const samplerEnd = fragmentShader.indexOf('void main()', samplerStart);
     const sampler = fragmentShader.slice(samplerStart, samplerEnd);
 
     expect(sampler).toContain('vec2 uv = causticCoord;');
-    expect(sampler).toContain('texture2D(causticMap, uv).r');
-    expect(sampler).toContain('texture2D(causticMap, uv + vec2(texel.x, 0.0)).r');
+    expect(sampler).toContain('vec4 sampleCausticTexture(vec2 uv, float mipLevel)');
+    expect(sampler).toContain('texture2DLodEXT(causticMap, uv, mipLevel)');
+    expect(sampler).toContain('float filtered = sampleCausticTexture(uv, mipLevel).r');
+    expect((sampler.match(/sampleCausticTexture\(uv, mipLevel\)/g) ?? []).length).toBe(1);
+    expect(sampler).not.toContain('uv + vec2(texel.x, 0.0)');
+    expect(sampler).not.toContain('uv + vec2(0.0, texel.y)');
     expect(sampler).not.toContain('fract(causticCoord)');
     expect(sampler).not.toContain('fract(uv');
 
@@ -336,8 +340,13 @@ describe('water compositing ownership', () => {
     expect(fragmentShader).toContain('float sampleWaterCaustics(vec3 worldPosition)');
     expect(fragmentShader).toContain('float waterSunTransmission(float cosIncident)');
     expect(fragmentShader).toContain('waterCausticReferenceDepth - depth');
-    expect(fragmentShader).toContain('float center = texture2D(waterCausticMap, uv).r');
-    expect(fragmentShader).toContain('vec2 footprintX = dFdx(causticCoord)');
+    const phaseStart = fragmentShader.indexOf('float sampleWaterCausticPhase');
+    const phaseEnd = fragmentShader.indexOf('float sampleWaterCaustics', phaseStart);
+    const phase = fragmentShader.slice(phaseStart, phaseEnd);
+    expect(phase).toContain('texture2D(waterCausticMap, causticCoord + phaseOffset).r');
+    expect((phase.match(/texture2D\(waterCausticMap/g) ?? []).length).toBe(1);
+    expect(fragmentShader).not.toContain('footprintX');
+    expect(fragmentShader).not.toContain('footprintY');
     expect(fragmentShader).not.toContain('mix(filtered, 0.25');
     expect(fragmentShader).toContain('vec3 waterDirect = directSun * transport');
     expect(fragmentShader).not.toContain('waterCausticField(vec2 worldXZ');

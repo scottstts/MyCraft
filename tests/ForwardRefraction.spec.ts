@@ -4,7 +4,9 @@ import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 import {
   AIR_REFRACTIVE_INDEX,
   ConservativeRefractionSourceCuller,
+  createForwardRefractionReceiverMaterials,
   FORWARD_REFRACTION_LAYER,
+  FORWARD_REFRACTION_MEDIUM,
   FORWARD_REFRACTION_MATERIAL_FLAG,
   FORWARD_REFRACTION_SOLVE_STEPS,
   WATER_REFRACTIVE_INDEX,
@@ -16,6 +18,10 @@ import {
   solveFlatRefractionInterface,
 } from '../src/engine/render/water/ForwardRefraction';
 import { ForwardRefractionPass } from '../src/engine/render/water/ForwardRefractionPass';
+import {
+  classifyForwardRefractionMedium,
+  FORWARD_REFRACTION_WAVE_MARGIN,
+} from '../src/engine/world/ForwardRefractionMeshing';
 
 function snellResidual(
   camera: THREE.Vector3,
@@ -106,6 +112,39 @@ describe('forward water-interface projection', () => {
     expect(declarations).toContain('receiver.rgb - expectedSource');
   });
 
+  it('classifies terrain faces conservatively around the full wave envelope', () => {
+    expect(FORWARD_REFRACTION_WAVE_MARGIN).toBe(0.5);
+    expect(classifyForwardRefractionMedium(44, 45, 42.5)).toBe('above');
+    expect(classifyForwardRefractionMedium(40, 41, 42.5)).toBe('below');
+    expect(classifyForwardRefractionMedium(42, 43, 42.5)).toBe('boundary');
+    // Touching the envelope stays uncertain: only a false positive is safe.
+    expect(classifyForwardRefractionMedium(43, 44, 42.5)).toBe('boundary');
+  });
+
+  it('uses minimal receiver fragments while retaining exact leaf cutouts', () => {
+    const materials = createForwardRefractionReceiverMaterials({
+      map: new THREE.Texture(),
+      alphaCutoff: 0.5,
+    });
+
+    expect(materials.opaque.userData[FORWARD_REFRACTION_MATERIAL_FLAG]).toBe(true);
+    expect(materials.cutout.userData[FORWARD_REFRACTION_MATERIAL_FLAG]).toBe(true);
+    expect(materials.opaque.fragmentShader).toContain('vec4(vForwardRefractionSourceWorld, 1.0)');
+    expect(materials.opaque.fragmentShader).not.toContain('texture2D(uForwardReceiverMap');
+    expect(materials.cutout.fragmentShader).toContain('texture2D(uForwardReceiverMap');
+    expect(materials.cutout.fragmentShader).toContain('uForwardReceiverAlphaCutoff');
+    expect(materials.opaque.fragmentShader).toContain('forwardRefractionDiscardCameraMedium');
+    expect(materials.opaque.fragmentShader).toContain('uForwardRefractionOutputReceiver < 0.5');
+    expect(materials.cutout.vertexShader).toContain('vForwardReceiverUv = uv');
+    expect(materials.opaque.depthTest).toBe(true);
+    expect(materials.opaque.depthWrite).toBe(true);
+    expect(materials.cutout.depthTest).toBe(true);
+    expect(materials.cutout.depthWrite).toBe(true);
+
+    materials.opaque.dispose();
+    materials.cutout.dispose();
+  });
+
   it('keeps radiance in half float but allocates the receiver field as RGB32F', () => {
     const renderer = {
       getDrawingBufferSize: (size: THREE.Vector2) => size.set(32, 24),
@@ -149,6 +188,123 @@ describe('forward water-interface projection', () => {
     expect(mesh.layers.mask).toBe(1);
     mesh.geometry.dispose();
     material.dispose();
+  });
+
+  it('stores source medium metadata and restores the original layer mask', () => {
+    const registry = new ForwardRefractionParticipantRegistry();
+    const material = new THREE.MeshBasicMaterial();
+    material.userData[FORWARD_REFRACTION_MATERIAL_FLAG] = true;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+    mesh.layers.set(4);
+
+    expect(registry.register(mesh, { forwardOnly: true, medium: 'below' })).toBe(true);
+    expect(mesh.layers.mask).toBe(1 << FORWARD_REFRACTION_LAYER);
+    expect(mesh.userData[FORWARD_REFRACTION_MEDIUM]).toBe('below');
+    registry.unregister(mesh);
+    expect(mesh.layers.mask).toBe(1 << 4);
+    expect(mesh.userData[FORWARD_REFRACTION_MEDIUM]).toBeUndefined();
+
+    mesh.geometry.dispose();
+    material.dispose();
+  });
+
+  it('rejects definitely above-water terrain from an above-water forward draw', () => {
+    const scene = new THREE.Scene();
+    const material = new THREE.MeshBasicMaterial();
+    material.userData[FORWARD_REFRACTION_MATERIAL_FLAG] = true;
+    const below = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+    const above = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+    scene.add(below, above);
+    const registry = new ForwardRefractionParticipantRegistry();
+    registry.register(below, { forwardOnly: true, medium: 'below' });
+    registry.register(above, { forwardOnly: true, medium: 'above' });
+    const renderedVisibility: Array<[boolean, boolean]> = [];
+    const renderer = {
+      getRenderTarget: () => null,
+      getClearAlpha: () => 1,
+      getClearColor: (color: THREE.Color) => color.set(0x000000),
+      getDrawingBufferSize: (size: THREE.Vector2) => size.set(32, 24),
+      setRenderTarget: vi.fn(),
+      setClearColor: vi.fn(),
+      clear: vi.fn(),
+      render: vi.fn(() => renderedVisibility.push([above.visible, below.visible])),
+    } as unknown as THREE.WebGLRenderer;
+    const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
+    camera.position.set(0, 8, 4);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld(true);
+    const previousUnderwater = forwardRefractionUniforms.uForwardCameraUnderwater.value;
+    setForwardRefractionWaterState({
+      waterLevel: 0,
+      time: 0,
+      waveAmp: 1,
+      waveChop: 1,
+      waveSpeed: 1,
+      cameraUnderwater: false,
+    });
+
+    const pass = new ForwardRefractionPass(renderer, scene, 32, 24, registry);
+    pass.render(camera);
+
+    expect(renderedVisibility).toEqual([
+      [false, true],
+      [false, true],
+    ]);
+    expect(above.visible).toBe(true);
+    expect(below.visible).toBe(true);
+    setForwardRefractionWaterState({
+      waterLevel: 0,
+      time: 0,
+      waveAmp: 1,
+      waveChop: 1,
+      waveSpeed: 1,
+      cameraUnderwater: previousUnderwater,
+    });
+    pass.dispose();
+    below.geometry.dispose();
+    above.geometry.dispose();
+    material.dispose();
+  });
+
+  it('uses the minimal receiver material only for the receiver target', () => {
+    const scene = new THREE.Scene();
+    const colorMaterial = new THREE.MeshBasicMaterial();
+    colorMaterial.userData[FORWARD_REFRACTION_MATERIAL_FLAG] = true;
+    const receiverMaterial = new THREE.MeshBasicMaterial();
+    receiverMaterial.userData[FORWARD_REFRACTION_MATERIAL_FLAG] = true;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), colorMaterial);
+    scene.add(mesh);
+    const registry = new ForwardRefractionParticipantRegistry();
+    registry.register(mesh, {
+      forwardOnly: true,
+      medium: 'below',
+      receiverMaterial,
+      colorMaterial,
+    });
+    const renderedMaterials: THREE.Material[] = [];
+    const renderer = {
+      getRenderTarget: () => null,
+      getClearAlpha: () => 1,
+      getClearColor: (color: THREE.Color) => color.set(0x000000),
+      setRenderTarget: vi.fn(),
+      setClearColor: vi.fn(),
+      clear: vi.fn(),
+      render: vi.fn(() => renderedMaterials.push(mesh.material as THREE.Material)),
+    } as unknown as THREE.WebGLRenderer;
+    const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
+    camera.position.set(0, 8, 4);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld(true);
+    const pass = new ForwardRefractionPass(renderer, scene, 32, 24, registry);
+    pass.render(camera);
+
+    expect(renderedMaterials).toEqual([receiverMaterial, colorMaterial]);
+    expect(mesh.material).toBe(colorMaterial);
+
+    pass.dispose();
+    mesh.geometry.dispose();
+    receiverMaterial.dispose();
+    colorMaterial.dispose();
   });
 
   it('culls only sources that cannot cross the conservative underwater Snell window', () => {

@@ -9,13 +9,23 @@ import {
   setForwardRefractionOutputReceiver,
   setForwardRefractionReceiverTexture,
   setForwardRefractionResolution,
+  FORWARD_REFRACTION_MEDIUM,
+  FORWARD_REFRACTION_RECEIVER_MATERIAL,
+  FORWARD_REFRACTION_COLOR_MATERIAL,
 } from './ForwardRefraction'
+import type { RenderStageProfiler } from '../RenderStageProfiler.js'
+import type { ForwardRefractionMedium } from '../../world/ForwardRefractionMeshing.js'
 
 interface RenderableState {
   object: THREE.Mesh | THREE.Line | THREE.Points
   visible: boolean
   frustumCulled: boolean
   bounds: THREE.Box3
+}
+
+interface ForwardMaterialState {
+  object: THREE.Mesh | THREE.Line | THREE.Points
+  material: THREE.Material | THREE.Material[]
 }
 
 /**
@@ -35,6 +45,7 @@ export class ForwardRefractionPass {
   private activeRenderableStateCount = 0
   private readonly participants: ForwardRefractionParticipantRegistry
   private readonly sourceCuller = new ConservativeRefractionSourceCuller()
+  private readonly stageProfiler?: RenderStageProfiler
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -42,10 +53,12 @@ export class ForwardRefractionPass {
     width: number,
     height: number,
     participants?: ForwardRefractionParticipantRegistry,
+    stageProfiler?: RenderStageProfiler,
   ) {
     this.renderer = renderer
     this.scene = scene
     this.participants = participants ?? new ForwardRefractionParticipantRegistry()
+    this.stageProfiler = stageProfiler
     // The compatibility constructor remains useful to isolated callers. The
     // game supplies a shared registry and registers each render system at its
     // creation/rebuild boundary instead of paying this traversal per frame.
@@ -148,6 +161,7 @@ export class ForwardRefractionPass {
     const previousBackground = this.scene.background
     const previousCameraLayers = camera.layers.mask
     this.renderer.getClearColor(this.clearColor)
+    let previousForwardMaterials: ForwardMaterialState[] = []
 
     try {
       const cameraUnderwater = Boolean(forwardRefractionUniforms.uForwardCameraUnderwater.value)
@@ -161,6 +175,10 @@ export class ForwardRefractionPass {
         // conservative source boxes have culling temporarily overridden.
         for (const object of this.participants.getParticipants()) {
           if (!object.visible) continue
+          if (!this.isMediumVisible(object, cameraUnderwater)) {
+            this.saveAndHide(object)
+            continue
+          }
           const state = this.renderableStates[this.activeRenderableStateCount] ?? {
             object,
             visible: true,
@@ -193,20 +211,32 @@ export class ForwardRefractionPass {
           object.frustumCulled = false
           this.activeRenderableStateCount += 1
         }
+      } else {
+        // Above-water views do not need source-box culling, but they still
+        // benefit from rejecting the large, definitely-above terrain ranges.
+        for (const object of this.participants.getParticipants()) {
+          if (!object.visible || this.isMediumVisible(object, cameraUnderwater)) continue
+          this.saveAndHide(object)
+        }
       }
 
       this.scene.background = null
       camera.layers.set(FORWARD_REFRACTION_LAYER)
       setForwardRefractionActive(true)
       setForwardRefractionOutputReceiver(true)
+      previousForwardMaterials = this.setForwardMaterialMode('receiver')
       // Do not leave the receiver sampler bound to the texture currently
       // attached for drawing, even though the receiver branch does not sample
       // it. WebGL feedback validation is attachment based.
       setForwardRefractionReceiverTexture(null)
-      this.renderer.setRenderTarget(this.receiverTarget)
-      this.renderer.setClearColor(0x000000, 0)
-      this.renderer.clear(true, true, false)
-      this.renderer.render(this.scene, camera)
+      const renderReceiver = () => {
+        this.renderer.setRenderTarget(this.receiverTarget)
+        this.renderer.setClearColor(0x000000, 0)
+        this.renderer.clear(true, true, false)
+        this.renderer.render(this.scene, camera)
+      }
+      if (this.stageProfiler) this.stageProfiler.measure('forward-receiver-render', renderReceiver)
+      else renderReceiver()
 
       resolveReceiverVisibility?.(
         this.receiverTarget.texture,
@@ -215,10 +245,15 @@ export class ForwardRefractionPass {
 
       setForwardRefractionReceiverTexture(this.receiverTarget.texture)
       setForwardRefractionOutputReceiver(false)
-      this.renderer.setRenderTarget(this.target)
-      this.renderer.setClearColor(0x000000, 0)
-      this.renderer.clear(true, true, false)
-      this.renderer.render(this.scene, camera)
+      this.setForwardMaterialMode('color')
+      const renderColor = () => {
+        this.renderer.setRenderTarget(this.target)
+        this.renderer.setClearColor(0x000000, 0)
+        this.renderer.clear(true, true, false)
+        this.renderer.render(this.scene, camera)
+      }
+      if (this.stageProfiler) this.stageProfiler.measure('forward-color-render', renderColor)
+      else renderColor()
     } finally {
       setForwardRefractionOutputReceiver(false)
       setForwardRefractionActive(false)
@@ -237,6 +272,7 @@ export class ForwardRefractionPass {
       // unregisters from the participant registry.
       this.renderableStates.length = this.activeRenderableStateCount
       this.activeRenderableStateCount = 0
+      this.restoreForwardMaterials(previousForwardMaterials)
     }
   }
 
@@ -252,6 +288,7 @@ export class ForwardRefractionPass {
       receiverSpace: 'source-world-rgb32f',
       participatingObjects: this.participants.size,
       sourceCulling: this.sourceCuller.getDiagnostics(),
+      mediumSegregation: true,
     }
   }
 
@@ -261,5 +298,49 @@ export class ForwardRefractionPass {
     this.renderableStates.length = 0
     this.target.dispose()
     this.receiverTarget.dispose()
+  }
+
+  private isMediumVisible(object: THREE.Object3D, cameraUnderwater: boolean): boolean {
+    const medium = object.userData[FORWARD_REFRACTION_MEDIUM] as ForwardRefractionMedium | undefined
+    if (!medium || medium === 'boundary') return true
+    return cameraUnderwater ? medium === 'above' : medium === 'below'
+  }
+
+  private saveAndHide(object: THREE.Mesh | THREE.Line | THREE.Points): void {
+    const state = this.renderableStates[this.activeRenderableStateCount] ?? {
+      object,
+      visible: true,
+      frustumCulled: true,
+      bounds: new THREE.Box3(),
+    }
+    this.renderableStates[this.activeRenderableStateCount] = state
+    state.object = object
+    state.visible = object.visible
+    state.frustumCulled = object.frustumCulled
+    object.visible = false
+    object.frustumCulled = false
+    this.activeRenderableStateCount += 1
+  }
+
+  private setForwardMaterialMode(mode: 'receiver' | 'color'): ForwardMaterialState[] {
+    const previousMaterials: ForwardMaterialState[] = []
+    for (const object of this.participants.getParticipants()) {
+      const receiverMaterial = object.userData[FORWARD_REFRACTION_RECEIVER_MATERIAL] as
+        THREE.Material | undefined
+      const colorMaterial = object.userData[FORWARD_REFRACTION_COLOR_MATERIAL] as
+        THREE.Material | undefined
+      if (!receiverMaterial || !colorMaterial) continue
+      if (mode === 'receiver') {
+        previousMaterials.push({ object, material: object.material })
+        object.material = receiverMaterial
+      } else {
+        object.material = colorMaterial
+      }
+    }
+    return previousMaterials
+  }
+
+  private restoreForwardMaterials(states: ForwardMaterialState[]): void {
+    for (const state of states) state.object.material = state.material
   }
 }

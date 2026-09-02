@@ -206,31 +206,84 @@ function createShaderMaterial(fragmentShader: string, uniforms: UniformMap): THR
   })
 }
 
-function createBlurMaterial(kernelRadius: number): THREE.ShaderMaterial {
-  const sigma = kernelRadius / 3
-  const coefficients = Array.from({ length: kernelRadius }, (_, index) => (
+export interface GaussianTapPair {
+  offset: number
+  weight: number
+}
+
+export interface GaussianTapLayout {
+  centerWeight: number
+  pairs: GaussianTapPair[]
+  tailOffset: number
+  tailWeight: number
+}
+
+/**
+ * Combine adjacent symmetric Gaussian taps into bilinear-filtered samples.
+ * The offset is the weighted centroid of the pair, so the linear sample
+ * preserves the pair's first moment while replacing two fetches with one.
+ */
+export function createGaussianTapLayout(kernelRadius: number): GaussianTapLayout {
+  const safeRadius = Math.max(1, Math.floor(kernelRadius))
+  const sigma = safeRadius / 3
+  const coefficients = Array.from({ length: safeRadius }, (_, index) => (
     0.39894 * Math.exp(-0.5 * index * index / (sigma * sigma)) / sigma
   ))
+  const pairs: GaussianTapPair[] = []
+  let tailOffset = 0
+  let tailWeight = 0
+  for (let index = 1; index < safeRadius; index += 2) {
+    const next = index + 1
+    if (next >= safeRadius) {
+      tailOffset = index
+      tailWeight = coefficients[index]
+      break
+    }
+    const weight = coefficients[index] + coefficients[next]
+    pairs.push({
+      offset: (index * coefficients[index] + next * coefficients[next]) / weight,
+      weight,
+    })
+  }
+  return {
+    centerWeight: coefficients[0],
+    pairs,
+    tailOffset,
+    tailWeight,
+  }
+}
+
+function createBlurMaterial(kernelRadius: number): THREE.ShaderMaterial {
+  const layout = createGaussianTapLayout(kernelRadius)
 
   return createShaderMaterial(/* glsl */ `
     precision highp float;
-    #define KERNEL_RADIUS ${kernelRadius}
+    #define GAUSSIAN_PAIR_COUNT ${Math.max(1, layout.pairs.length)}
     uniform sampler2D colorTexture;
     uniform vec2 invSize;
     uniform vec2 direction;
-    uniform float gaussianCoefficients[KERNEL_RADIUS];
+    uniform vec2 gaussianPairs[GAUSSIAN_PAIR_COUNT];
+    uniform float gaussianCenterWeight;
+    uniform float gaussianTailOffset;
+    uniform float gaussianTailWeight;
     varying vec2 vUv;
 
     void main() {
-      vec3 diffuseSum = texture2D(colorTexture, vUv).rgb * gaussianCoefficients[0];
-      for (int i = 1; i < KERNEL_RADIUS; i++) {
-        float x = float(i);
-        float weight = gaussianCoefficients[i];
-        vec2 offset = direction * invSize * x;
+      vec3 diffuseSum = texture2D(colorTexture, vUv).rgb * gaussianCenterWeight;
+      for (int i = 0; i < GAUSSIAN_PAIR_COUNT; i++) {
+        vec2 pair = gaussianPairs[i];
+        vec2 offset = direction * invSize * pair.x;
         diffuseSum += (
           texture2D(colorTexture, vUv + offset).rgb
           + texture2D(colorTexture, vUv - offset).rgb
-        ) * weight;
+        ) * pair.y;
+      }
+      if (gaussianTailWeight > 0.0) {
+        vec2 offset = direction * invSize * gaussianTailOffset;
+        diffuseSum += (
+          texture2D(colorTexture, vUv + offset).rgb
+          + texture2D(colorTexture, vUv - offset).rgb
+        ) * gaussianTailWeight;
       }
       gl_FragColor = vec4(diffuseSum, 1.0);
     }
@@ -238,7 +291,10 @@ function createBlurMaterial(kernelRadius: number): THREE.ShaderMaterial {
     colorTexture: { value: null },
     invSize: { value: new THREE.Vector2(0.5, 0.5) },
     direction: { value: new THREE.Vector2(1, 0) },
-    gaussianCoefficients: { value: coefficients },
+    gaussianPairs: { value: layout.pairs.map((pair) => new THREE.Vector2(pair.offset, pair.weight)) },
+    gaussianCenterWeight: { value: layout.centerWeight },
+    gaussianTailOffset: { value: layout.tailOffset },
+    gaussianTailWeight: { value: layout.tailWeight },
   })
 }
 
@@ -339,6 +395,9 @@ class FilmicBloomPyramid {
     this.brightTarget.setSize(currentWidth, currentHeight)
     if (this.temporalTargets) {
       for (const target of this.temporalTargets) target.setSize(currentWidth, currentHeight)
+      // Reallocation invalidates the old frame's pixel correspondence even
+      // when the source remains visible through a resize.
+      this.temporalHistoryValid = false
     }
 
     for (let index = 0; index < this.blurMaterials.length; index += 1) {
@@ -464,6 +523,8 @@ export class LensFlarePass extends Pass {
   private cameraSubmerged = false
   private debugMode = 0
   private elapsedSeconds = 0
+  private opticalTargetsValid = false
+  private opticsWereActive = false
 
   constructor() {
     super()
@@ -545,6 +606,7 @@ export class LensFlarePass extends Pass {
     this.sourceBloom.setSize(safeWidth, safeHeight)
     this.haloBloom.setSize(safeWidth, safeHeight)
     this.flareBloom.setSize(safeWidth, safeHeight)
+    this.opticalTargetsValid = false
   }
 
   update(
@@ -653,8 +715,18 @@ export class LensFlarePass extends Pass {
 
         this.compositeMaterial.uniforms.sourceBloom.value = this.sourceBloom.texture
         this.compositeMaterial.uniforms.haloBloom.value = this.haloBloom.texture
+        this.opticalTargetsValid = true
+        this.opticsWereActive = true
       } else {
-        this.clearOpticalTargets(renderer)
+        // The composite pass remains in the graph even when the flare is
+        // hidden. Clear persistent optical history on the initial invalid
+        // frame and on the active -> inactive transition, then leave the
+        // neutral targets untouched while the source remains unavailable.
+        if (!this.opticalTargetsValid || this.opticsWereActive) {
+          this.clearOpticalTargets(renderer)
+          this.opticalTargetsValid = true
+        }
+        this.opticsWereActive = false
       }
 
       this.quad.material = this.compositeMaterial

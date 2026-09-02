@@ -33,6 +33,8 @@ The engine exposes two local validation hooks on `window`:
 
 The render diagnostics also report the forward-refraction target size, participating object count, `forward-fermat-snell` projection label, alpha-coverage ownership, and `source-world-rgb32f` receiver space. The target dimensions must match the drawing buffer after every resize. In an above-water orbit, submerged block faces must not develop coordinate-aligned dark bars, and a character shadow must keep a stable subpixel edge on the same receiver surface. Either symptom rejects the receiver representation or its refracted pixel-footprint reconstruction even if the unrefracted view remains clean.
 
+`renderStages` adds read-only frame accounting for the twelve named render stages. Each stage reports renderer draw calls and triangles for the current frame, plus the most recent available GPU elapsed sample when `EXT_disjoint_timer_query_webgl2` is present. A `null` GPU time means that no non-disjoint query has completed yet; it is not a zero-cost claim. Compare stage samples only after several stable frames at a fixed camera, resolution, time, and sun direction. The profiler must remain non-blocking: no `gl.finish()` or synchronous timer-result readback is part of the runtime path.
+
 They are observation hooks for local tooling, not player controls.
 
 ## Contract tests and checks
@@ -52,5 +54,8 @@ When changing rendering or startup, also inspect these invariants manually in th
 - startup cannot resolve before initial terrain meshes and the first frame;
 - dynamic-import, worker, shader, and first-frame errors reach the start UI;
 - resize commits are coalesced and zero-sized transient layouts do not resize GPU targets;
-- diagnostics still use the gameplay camera factory and the normal render path.
+- diagnostics still use the gameplay camera factory and the normal render path;
+- direct-sun-disabled frames keep voxel visibility white without repeatedly clearing either target;
+- the X/Z caster-height hierarchy remains conservative after block edits and seaweed replacement;
+- medium-separated terrain uses minimal source-world receiver draws and full terrain materials for forward color draws.
 - seaweed diagnostics show a fresh per-load distribution seed, ocean-only accepted anchors, submerged height caps, and the separate caster-field count.

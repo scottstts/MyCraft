@@ -7,6 +7,7 @@
  */
 import * as THREE from 'three'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
+import { Pass } from 'three/examples/jsm/postprocessing/Pass.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { BloomWrapperPass } from './passes/BloomPass'
@@ -23,6 +24,18 @@ import {
   ShadowSamplingMaterialRegistry,
   type ShadowSamplingUniformState,
 } from '../ShadowSamplingRegistry'
+import {
+  RenderStageProfiler,
+  type RenderStageName,
+} from '../RenderStageProfiler'
+
+function profilePass(pass: Pass, stage: RenderStageName, profiler: RenderStageProfiler): void {
+  const render = pass.render.bind(pass)
+  pass.render = (renderer, writeBuffer, readBuffer, deltaTime, maskActive) => profiler.measure(
+    stage,
+    () => render(renderer, writeBuffer, readBuffer, deltaTime, maskActive),
+  )
+}
 
 export class Composer {
   private composer: EffectComposer
@@ -39,6 +52,8 @@ export class Composer {
   private voxelSunShadow: VoxelSunShadowPass | null = null
   private readonly shadowSamplingMaterials = new ShadowSamplingMaterialRegistry()
   private readonly forwardRefractionParticipants: ForwardRefractionParticipantRegistry
+  private readonly stageProfiler: RenderStageProfiler
+  private readonly ownsStageProfiler: boolean
   private beforeOpaqueCapture: (() => void) | null = null
   private afterOpaqueCapture: (() => void) | null = null
   private underwaterEnabled = false
@@ -50,12 +65,15 @@ export class Composer {
     width: number,
     height: number,
     forwardRefractionParticipants?: ForwardRefractionParticipantRegistry,
+    stageProfiler?: RenderStageProfiler,
   ) {
-    // Use default internal ping-pong color buffers for composer
-    this.composer = new EffectComposer(renderer)
     this.renderer = renderer
     this.scene = scene
     this.forwardRefractionParticipants = forwardRefractionParticipants ?? new ForwardRefractionParticipantRegistry()
+    this.stageProfiler = stageProfiler ?? new RenderStageProfiler(renderer)
+    this.ownsStageProfiler = stageProfiler === undefined
+    // Use default internal ping-pong color buffers for composer
+    this.composer = new EffectComposer(renderer)
 
     const effective = this.getEffectiveSize(width, height)
 
@@ -79,30 +97,37 @@ export class Composer {
       effective.width,
       effective.height,
       this.forwardRefractionParticipants,
+      this.stageProfiler,
     )
 
     this.renderPass = new RenderPass(scene, camera)
+    profilePass(this.renderPass, 'normal-render-pass', this.stageProfiler)
     this.composer.addPass(this.renderPass)
 
     this.aerial = new AerialPerspectivePass()
+    profilePass(this.aerial, 'aerial-perspective', this.stageProfiler)
     this.aerial.setDepthTexture(this.depthTarget.depthTexture)
     this.aerial.setSize(effective.width, effective.height)
     this.composer.addPass(this.aerial)
 
     this.underwater = new UnderwaterPass()
+    profilePass(this.underwater, 'underwater', this.stageProfiler)
     this.underwater.setDepthTexture(this.depthTarget.depthTexture)
     this.composer.addPass(this.underwater)
 
     this.bloom = new BloomWrapperPass(width, height)
+    profilePass(this.bloom, 'bloom', this.stageProfiler)
     this.composer.addPass(this.bloom)
 
     // Lens flare is additive and remains scene-linear until OutputPass.
     this.lens = new LensFlarePass()
+    profilePass(this.lens, 'lens-flare', this.stageProfiler)
     this.lens.setDepthTexture(this.depthTarget.depthTexture)
     this.lens.setSize(effective.width, effective.height)
     this.composer.addPass(this.lens)
 
     this.output = new OutputPass()
+    profilePass(this.output, 'output', this.stageProfiler)
     this.composer.addPass(this.output)
   }
 
@@ -140,8 +165,20 @@ export class Composer {
   /** Attach the sole sun-visibility producer and share the depth prepass. */
   setVoxelSunShadowPass(pass: VoxelSunShadowPass | null): void {
     this.voxelSunShadow = pass
-    if (pass && this.depthTarget.depthTexture) pass.setDepthTexture(this.depthTarget.depthTexture)
+    if (pass) {
+      pass.setStageProfiler(this.stageProfiler)
+      if (this.depthTarget.depthTexture) pass.setDepthTexture(this.depthTarget.depthTexture)
+    }
   }
+
+  getRenderDiagnostics(): ReturnType<RenderStageProfiler['getDiagnostics']> {
+    return this.stageProfiler.getDiagnostics()
+  }
+
+  getStageProfiler(): RenderStageProfiler { return this.stageProfiler }
+
+  /** Begin one accounting frame before water/caustic work starts. */
+  beginFrame(): void { this.stageProfiler.beginFrame() }
 
   /**
    * The depth prepass owns `depthTarget.depthTexture` as its framebuffer
@@ -236,9 +273,11 @@ export class Composer {
     const prev = this.renderer.getRenderTarget()
     try {
       this.beforeOpaqueCapture?.()
-      this.renderer.setRenderTarget(this.depthTarget)
-      this.renderer.clear(true, true, true)
-      this.renderer.render(this.scene, camera)
+      this.stageProfiler.measure('water-free-scene-capture', () => {
+        this.renderer.setRenderTarget(this.depthTarget)
+        this.renderer.clear(true, true, true)
+        this.renderer.render(this.scene, camera)
+      })
     } finally {
       this.renderer.setRenderTarget(prev)
       this.afterOpaqueCapture?.()
@@ -247,6 +286,7 @@ export class Composer {
 
     // Resolve voxel visibility after depth is current and before the color
     // RenderPass samples its screen-space mask.
+    this.voxelSunShadow?.setSunIntensity(atmosphere?.sunIntensity ?? 1)
     this.voxelSunShadow?.update(camera, sunDirWorld)
 
     // Transport opposite-medium geometry through the interface before the
@@ -312,5 +352,6 @@ export class Composer {
     this.underwater.dispose()
     this.lens.dispose()
     this.composer.dispose()
+    if (this.ownsStageProfiler) this.stageProfiler.dispose()
   }
 }

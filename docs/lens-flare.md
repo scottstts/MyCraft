@@ -22,6 +22,8 @@ The implementation is the WebGL/GLSL translation of the filmic lens-flare refere
 
 All flare render targets use half-float linear color where appropriate. The final display transform remains owned by `OutputPass`; the renderer uses ACES filmic tone mapping at the reference exposure of `0.92`.
 
+Each of the three five-level bloom pyramids uses the authored Gaussian coefficients, but adjacent symmetric taps are paired at their weighted bilinear centroid. The center and any odd tail remain explicit; the paired layout reduces texture fetches in both blur directions without changing the pyramid count or thresholds.
+
 ## Sun projection and direct visibility
 
 The directional sun is projected into top-origin screen coordinates using the camera's forward, right, and up basis. Above water this is the atmosphere's direct sun direction. Underwater, `LensFlarePass` first refracts the incoming air ray through a flat air-to-water interface and projects the reversed water-side ray. This analytically constrains the apparent source to the canonical Snell window; the surface shader retains ownership of wave-normal deformation and the transmitted solar lobe. The resulting coordinate is shared by the direct disc, every ghost, source/halo seeds, and flare bloom. The flare fades when the sun turns behind the camera, leaves the frame, or falls below the shared atmosphere's solar-energy envelope. At the optical center, the previous finite-axis direction is retained to avoid unstable ghost orientation.
@@ -44,4 +46,4 @@ The resulting behavior is deliberately scene-dependent: blocker silhouette, scre
 
 `Composer.getLensDiagnostics()` exposes the current projected source, camera medium, direct source visibility, field deformation, intensity, and allocated flare targets for local inspection. `LensFlarePass.setLensDebugMode()` supports isolated final, plate, direct flare, source bloom, halo bloom, flare bloom, hot-mask, and visibility views.
 
-The pure regression coverage is in `tests/LensFlarePass.spec.ts`. It protects the reference camera/exposure contract, top-origin projection, behind-camera and off-frame suppression, the three five-level bloom graphs, the finite-disc occlusion shader, aperture-dependent bloom retention, and the complete ghost/film stage markers.
+The pure regression coverage is in `tests/LensFlarePass.spec.ts`. It protects the reference camera/exposure contract, top-origin projection, behind-camera and off-frame suppression, the three five-level bloom graphs and paired Gaussian layout, the finite-disc occlusion shader, aperture-dependent bloom retention, and the complete ghost/film stage markers.

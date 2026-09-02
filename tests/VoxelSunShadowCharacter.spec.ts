@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 import { VoxelSunShadowPass } from '../src/engine/render/lighting/VoxelSunShadowPass';
@@ -12,6 +12,48 @@ function createRendererStub(): THREE.WebGLRenderer {
 }
 
 describe('analytic character sun visibility', () => {
+  it('clears inactive visibility targets once and resumes rasterizing when sun returns', () => {
+    const volume = new VoxelOccupancyVolume({
+      minX: 0,
+      maxX: 16,
+      minY: 0,
+      maxY: 16,
+      minZ: 0,
+      maxZ: 16,
+    });
+    const renderer = {
+      capabilities: { isWebGL2: true },
+      getPixelRatio: () => 1,
+      getRenderTarget: () => null,
+      getClearColor: (color: THREE.Color) => color.set(0x102030),
+      getClearAlpha: () => 0.75,
+      setRenderTarget: vi.fn(),
+      setClearColor: vi.fn(),
+      clear: vi.fn(),
+      render: vi.fn(),
+    } as unknown as THREE.WebGLRenderer;
+    const pass = new VoxelSunShadowPass(renderer, 16, 16, volume);
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+
+    pass.setSunIntensity(0);
+    pass.update(camera, new THREE.Vector3(0, 1, 0));
+    pass.update(camera, new THREE.Vector3(0, 1, 0));
+    expect(renderer.clear).toHaveBeenCalledTimes(2);
+    expect(renderer.render).not.toHaveBeenCalled();
+
+    pass.setSunIntensity(1);
+    pass.update(camera, new THREE.Vector3(0, 1, 0));
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+    expect(renderer.clear).toHaveBeenCalledTimes(3);
+
+    pass.setSunIntensity(0);
+    pass.update(camera, new THREE.Vector3(0, 1, 0));
+    expect(renderer.clear).toHaveBeenCalledTimes(5);
+
+    pass.dispose();
+    volume.dispose();
+  });
+
   it('keeps the animated caster bound to the voxel pass and computes a conservative screen region', () => {
     const volume = new VoxelOccupancyVolume({
       minX: -16,

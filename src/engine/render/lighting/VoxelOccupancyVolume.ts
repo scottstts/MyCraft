@@ -7,9 +7,12 @@
  * and grass flags into bits 0..2, so the shader can fetch one discrete texel
  * for all three tests. A 32³ macro-brick hierarchy sits above the existing 8³
  * bricks and lets the shader skip four brick widths at a time before falling
- * back to individual-voxel DDA. Dense leaf-only bricks additionally carry a
- * density estimate so the shadow shader can integrate the whole porous brick
- * in one step instead of visiting every leaf voxel.
+ * back to individual-voxel DDA. An orthogonal 8/32/64-cell XZ hierarchy stores
+ * the maximum caster height in each tile; a grazing ray can skip an occupied
+ * terrain tile when its lowest crossing point is above that maximum. Dense
+ * leaf-only bricks additionally carry a density estimate so the shadow shader
+ * can integrate the whole porous brick in one step instead of visiting every
+ * leaf voxel.
  */
 
 import * as THREE from 'three';
@@ -45,6 +48,7 @@ export interface VoxelVolumeDiagnostics {
   brickDetailTextureBytes: number;
   leafBrickTextureBytes: number;
   macroBrickTextureBytes: number;
+  xzMaxCasterHeightTextureBytes: { level8: number; level32: number; level64: number };
   seaweedTextureBytes: number;
   /** Number of full brick reductions performed; runtime edits should not add to it. */
   fullBrickRebuilds: number;
@@ -52,6 +56,7 @@ export interface VoxelVolumeDiagnostics {
 
 export const VOXEL_SHADOW_BRICK_SIZE = 8;
 export const VOXEL_SHADOW_MACRO_BRICK_SIZE = 32;
+export const VOXEL_SHADOW_XZ_HEIGHT_LEVELS = [8, 32, 64] as const;
 export const VOXEL_CASTER_OPAQUE_BIT = 1;
 export const VOXEL_CASTER_LEAF_BIT = 2;
 export const VOXEL_CASTER_GRASS_BIT = 4;
@@ -100,6 +105,10 @@ export class VoxelOccupancyVolume {
   readonly brickDetailTexture: THREE.Data3DTexture;
   /** Leaf occupancy fraction per brick, encoded as an 8-bit value. */
   readonly leafBrickTexture: THREE.Data3DTexture;
+  /** XZ max-caster-height hierarchy, from fine to coarse tiles. */
+  readonly xzMaxCasterHeight8Texture: THREE.DataTexture;
+  readonly xzMaxCasterHeight32Texture: THREE.DataTexture;
+  readonly xzMaxCasterHeight64Texture: THREE.DataTexture;
   /** One RGBA texel per world XZ cell containing the seaweed shadow proxy. */
   readonly seaweedTexture: THREE.DataTexture;
 
@@ -123,6 +132,17 @@ export class VoxelOccupancyVolume {
   private readonly seaweedBrickCounts: Uint16Array;
   private readonly macroBrickOccupancy: Uint8Array;
   private readonly macroBrickCounts: Uint16Array;
+  private readonly xz8Width: number;
+  private readonly xz8Depth: number;
+  private readonly xz32Width: number;
+  private readonly xz32Depth: number;
+  private readonly xz64Width: number;
+  private readonly xz64Depth: number;
+  private readonly xzColumnMaxCasterY: Float32Array;
+  private readonly seaweedColumnMaxCasterY: Float32Array;
+  private readonly xzMaxCasterHeight8: Float32Array;
+  private readonly xzMaxCasterHeight32: Float32Array;
+  private readonly xzMaxCasterHeight64: Float32Array;
   private readonly seaweedOccupancy: Uint8Array;
   private readonly opaqueById = new Uint8Array(256);
   private readonly leafById = new Uint8Array(256);
@@ -175,6 +195,22 @@ export class VoxelOccupancyVolume {
     this.macroBrickOccupancy = new Uint8Array(this.macroBrickWidth * this.macroBrickHeight * this.macroBrickDepth);
     this.macroBrickCounts = new Uint16Array(this.macroBrickOccupancy.length);
     this.seaweedOccupancy = new Uint8Array(this.width * this.depth * 4);
+    this.xz8Width = Math.ceil(this.width / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0]);
+    this.xz8Depth = Math.ceil(this.depth / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0]);
+    this.xz32Width = Math.ceil(this.width / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1]);
+    this.xz32Depth = Math.ceil(this.depth / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1]);
+    this.xz64Width = Math.ceil(this.width / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2]);
+    this.xz64Depth = Math.ceil(this.depth / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2]);
+    this.xzColumnMaxCasterY = new Float32Array(this.width * this.depth);
+    this.seaweedColumnMaxCasterY = new Float32Array(this.width * this.depth);
+    this.xzMaxCasterHeight8 = new Float32Array(this.xz8Width * this.xz8Depth);
+    this.xzMaxCasterHeight32 = new Float32Array(this.xz32Width * this.xz32Depth);
+    this.xzMaxCasterHeight64 = new Float32Array(this.xz64Width * this.xz64Depth);
+    this.xzColumnMaxCasterY.fill(-1);
+    this.seaweedColumnMaxCasterY.fill(-1);
+    this.xzMaxCasterHeight8.fill(-1);
+    this.xzMaxCasterHeight32.fill(-1);
+    this.xzMaxCasterHeight64.fill(-1);
 
     const registry = getBlockRegistry();
     this.grassTuftId = (registry.getAllBlocks().find((block) => block.name === 'grass_tuft')?.id ?? 9) as BlockId;
@@ -218,6 +254,24 @@ export class VoxelOccupancyVolume {
     // from projecting their brick boundaries onto nearby receivers.
     this.leafBrickTexture.minFilter = THREE.LinearFilter;
     this.leafBrickTexture.magFilter = THREE.LinearFilter;
+    this.xzMaxCasterHeight8Texture = this.createHeightTexture(
+      this.xzMaxCasterHeight8,
+      this.xz8Width,
+      this.xz8Depth,
+      'VoxelShadowXZMaxHeight8',
+    );
+    this.xzMaxCasterHeight32Texture = this.createHeightTexture(
+      this.xzMaxCasterHeight32,
+      this.xz32Width,
+      this.xz32Depth,
+      'VoxelShadowXZMaxHeight32',
+    );
+    this.xzMaxCasterHeight64Texture = this.createHeightTexture(
+      this.xzMaxCasterHeight64,
+      this.xz64Width,
+      this.xz64Depth,
+      'VoxelShadowXZMaxHeight64',
+    );
     this.seaweedTexture = this.createSeaweedTexture();
 
     for (let brickZ = 0; brickZ < this.brickDepth; brickZ += 1) {
@@ -254,6 +308,25 @@ export class VoxelOccupancyVolume {
     return texture;
   }
 
+  private createHeightTexture(
+    data: Float32Array,
+    width: number,
+    depth: number,
+    name: string,
+  ): THREE.DataTexture {
+    const texture = new THREE.DataTexture(data, width, depth, THREE.RedFormat, THREE.FloatType);
+    texture.name = name;
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.unpackAlignment = 1;
+    texture.needsUpdate = true;
+    return texture;
+  }
+
   private createSeaweedTexture(): THREE.DataTexture {
     const texture = new THREE.DataTexture(
       this.seaweedOccupancy,
@@ -285,8 +358,134 @@ export class VoxelOccupancyVolume {
     return x + this.macroBrickWidth * (y + this.macroBrickHeight * z);
   }
 
+  private xzIndex(x: number, z: number, width: number): number {
+    return x + width * z;
+  }
+
   private inBounds(x: number, y: number, z: number): boolean {
     return x >= 0 && x < this.width && y >= 0 && y < this.height && z >= 0 && z < this.depth;
+  }
+
+  private maxCasterYInColumn(x: number, z: number): number {
+    const columnIndex = this.xzIndex(x, z, this.width);
+    let maximum = this.seaweedColumnMaxCasterY[columnIndex];
+    for (let y = this.height - 1; y >= 0; y -= 1) {
+      if (this.casterFlags[this.voxelIndex(x, y, z)] !== 0) {
+        maximum = Math.max(maximum, y + 1);
+        break;
+      }
+    }
+    return maximum;
+  }
+
+  private recomputeXZTile(
+    data: Float32Array,
+    tileWidth: number,
+    tileSize: number,
+    tileX: number,
+    tileZ: number,
+  ): void {
+    const minX = tileX * tileSize;
+    const minZ = tileZ * tileSize;
+    const maxX = Math.min(this.width, minX + tileSize);
+    const maxZ = Math.min(this.depth, minZ + tileSize);
+    let maximum = -1;
+    for (let z = minZ; z < maxZ; z += 1) {
+      for (let x = minX; x < maxX; x += 1) {
+        maximum = Math.max(maximum, this.xzColumnMaxCasterY[this.xzIndex(x, z, this.width)]);
+      }
+    }
+    data[this.xzIndex(tileX, tileZ, tileWidth)] = maximum;
+  }
+
+  private updateXZLevel(
+    data: Float32Array,
+    tileWidth: number,
+    tileSize: number,
+    x: number,
+    z: number,
+    previousColumnHeight: number,
+    nextColumnHeight: number,
+  ): void {
+    const tileX = Math.floor(x / tileSize);
+    const tileZ = Math.floor(z / tileSize);
+    const tileIndex = this.xzIndex(tileX, tileZ, tileWidth);
+    const currentTileHeight = data[tileIndex];
+    if (nextColumnHeight > currentTileHeight) {
+      data[tileIndex] = nextColumnHeight;
+    } else if (previousColumnHeight === currentTileHeight) {
+      this.recomputeXZTile(data, tileWidth, tileSize, tileX, tileZ);
+    }
+  }
+
+  private refreshXZColumn(x: number, z: number): void {
+    if (x < 0 || x >= this.width || z < 0 || z >= this.depth) return;
+    const columnIndex = this.xzIndex(x, z, this.width);
+    const previous = this.xzColumnMaxCasterY[columnIndex];
+    const next = this.maxCasterYInColumn(x, z);
+    if (previous === next) return;
+    this.xzColumnMaxCasterY[columnIndex] = next;
+    this.updateXZLevel(
+      this.xzMaxCasterHeight8,
+      this.xz8Width,
+      VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0],
+      x,
+      z,
+      previous,
+      next,
+    );
+    this.updateXZLevel(
+      this.xzMaxCasterHeight32,
+      this.xz32Width,
+      VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1],
+      x,
+      z,
+      previous,
+      next,
+    );
+    this.updateXZLevel(
+      this.xzMaxCasterHeight64,
+      this.xz64Width,
+      VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2],
+      x,
+      z,
+      previous,
+      next,
+    );
+  }
+
+  private rebuildXZHierarchy(): void {
+    for (let z = 0; z < this.depth; z += 1) {
+      for (let x = 0; x < this.width; x += 1) {
+        this.xzColumnMaxCasterY[this.xzIndex(x, z, this.width)] = this.maxCasterYInColumn(x, z);
+      }
+    }
+    this.xzMaxCasterHeight8.fill(-1);
+    this.xzMaxCasterHeight32.fill(-1);
+    this.xzMaxCasterHeight64.fill(-1);
+    for (let z = 0; z < this.depth; z += 1) {
+      for (let x = 0; x < this.width; x += 1) {
+        const columnHeight = this.xzColumnMaxCasterY[this.xzIndex(x, z, this.width)];
+        const tile8 = this.xzIndex(
+          Math.floor(x / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0]),
+          Math.floor(z / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0]),
+          this.xz8Width,
+        );
+        const tile32 = this.xzIndex(
+          Math.floor(x / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1]),
+          Math.floor(z / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1]),
+          this.xz32Width,
+        );
+        const tile64 = this.xzIndex(
+          Math.floor(x / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2]),
+          Math.floor(z / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2]),
+          this.xz64Width,
+        );
+        this.xzMaxCasterHeight8[tile8] = Math.max(this.xzMaxCasterHeight8[tile8], columnHeight);
+        this.xzMaxCasterHeight32[tile32] = Math.max(this.xzMaxCasterHeight32[tile32], columnHeight);
+        this.xzMaxCasterHeight64[tile64] = Math.max(this.xzMaxCasterHeight64[tile64], columnHeight);
+      }
+    }
   }
 
   private updateBrick(brickX: number, brickY: number, brickZ: number): void {
@@ -361,11 +560,14 @@ export class VoxelOccupancyVolume {
     }
     if (previousGrass === grass && previousGrass) nextFlags |= VOXEL_CASTER_GRASS_BIT;
     this.casterFlags[index] = nextFlags;
-    if (this.bulkUpdateDepth === 0) this.updateBrick(
-      Math.floor(x / VOXEL_SHADOW_BRICK_SIZE),
-      Math.floor(y / VOXEL_SHADOW_BRICK_SIZE),
-      Math.floor(z / VOXEL_SHADOW_BRICK_SIZE),
-    );
+    if (this.bulkUpdateDepth === 0) {
+      this.updateBrick(
+        Math.floor(x / VOXEL_SHADOW_BRICK_SIZE),
+        Math.floor(y / VOXEL_SHADOW_BRICK_SIZE),
+        Math.floor(z / VOXEL_SHADOW_BRICK_SIZE),
+      );
+      this.refreshXZColumn(x, z);
+    }
     return true;
   }
 
@@ -384,6 +586,7 @@ export class VoxelOccupancyVolume {
         Math.floor(index / (this.brickWidth * this.brickHeight)),
       );
     }
+    this.rebuildXZHierarchy();
     this.fullBrickRebuilds += 1;
   }
 
@@ -411,6 +614,9 @@ export class VoxelOccupancyVolume {
     this.macroBrickTexture.needsUpdate = true;
     this.brickDetailTexture.needsUpdate = true;
     this.leafBrickTexture.needsUpdate = true;
+    this.xzMaxCasterHeight8Texture.needsUpdate = true;
+    this.xzMaxCasterHeight32Texture.needsUpdate = true;
+    this.xzMaxCasterHeight64Texture.needsUpdate = true;
     if (includeSeaweed) this.seaweedTexture.needsUpdate = true;
   }
 
@@ -427,6 +633,7 @@ export class VoxelOccupancyVolume {
   setSeaweedAnchors(anchors: ReadonlyArray<SeaweedShadowAnchor>): void {
     this.seaweedTextureDirty = true;
     this.seaweedOccupancy.fill(0);
+    this.seaweedColumnMaxCasterY.fill(-1);
     this.seaweedShadowAnchors.length = 0;
     this.seaweedBrickCounts.fill(0);
     this.seaweedAnchorCount = 0;
@@ -455,6 +662,11 @@ export class VoxelOccupancyVolume {
       this.seaweedOccupancy[index + 2] = Math.round((rootY / Math.max(1, this.height)) * 255);
       this.seaweedOccupancy[index + 3] = Math.max(1, Math.round((height / SEAWEED_SHADOW_HEIGHT_MAX) * 255));
       this.seaweedShadowAnchors.push({ cellX, cellZ, rootY: anchor.rootY, height });
+      const columnIndex = this.xzIndex(cellX, cellZ, this.width);
+      this.seaweedColumnMaxCasterY[columnIndex] = Math.max(
+        this.seaweedColumnMaxCasterY[columnIndex],
+        Math.min(this.height, rootY + height),
+      );
       this.seaweedAnchorCount += 1;
 
     }
@@ -583,6 +795,11 @@ export class VoxelOccupancyVolume {
       brickDetailTextureBytes: this.brickDetailOccupancy.byteLength,
       leafBrickTextureBytes: this.leafBrickDensity.byteLength,
       macroBrickTextureBytes: this.macroBrickOccupancy.byteLength,
+      xzMaxCasterHeightTextureBytes: {
+        level8: this.xzMaxCasterHeight8.byteLength,
+        level32: this.xzMaxCasterHeight32.byteLength,
+        level64: this.xzMaxCasterHeight64.byteLength,
+      },
       seaweedTextureBytes: this.seaweedOccupancy.byteLength,
       fullBrickRebuilds: this.fullBrickRebuilds,
     };
@@ -594,6 +811,9 @@ export class VoxelOccupancyVolume {
     this.macroBrickTexture.dispose();
     this.brickDetailTexture.dispose();
     this.leafBrickTexture.dispose();
+    this.xzMaxCasterHeight8Texture.dispose();
+    this.xzMaxCasterHeight32Texture.dispose();
+    this.xzMaxCasterHeight64Texture.dispose();
     this.seaweedTexture.dispose();
   }
 }

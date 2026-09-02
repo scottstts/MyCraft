@@ -12,6 +12,7 @@ import {
 } from '../ProceduralVoxelTextures'
 import { setForwardRefractionWaterState } from './ForwardRefraction'
 import type { ForwardRefractionParticipantRegistry } from './ForwardRefraction'
+import type { RenderStageProfiler } from '../RenderStageProfiler.js'
 
 const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
 const SEABED_FLOOR_Y = 0
@@ -75,6 +76,7 @@ export interface WaterSystemOptions {
   blockWaterMaterial?: WaterSurfaceMaterial
   /** WebGL renderer used for the render-only differential-area caustic map. */
   renderer?: THREE.WebGLRenderer
+  stageProfiler?: RenderStageProfiler
   forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
   /** Registration hooks for the composer depth-prepass shadow sampler guard. */
   registerShadowSamplingMaterial?: (material: THREE.Material) => void
@@ -166,6 +168,7 @@ export class WaterSystem {
           extent: CAUSTIC_TILE_SIZE,
           patchExtent: CAUSTIC_TILE_SIZE * 1.5,
           projectDepth: 24,
+          stageProfiler: options.stageProfiler,
         })
       } catch (error) {
         console.warn('[WaterSystem] Differential-area caustics unavailable:', error)

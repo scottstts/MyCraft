@@ -19,12 +19,14 @@ import {
   VOXEL_CASTER_OPAQUE_BIT,
   VOXEL_SHADOW_MACRO_BRICK_SIZE,
   VOXEL_SHADOW_BRICK_SIZE,
+  VOXEL_SHADOW_XZ_HEIGHT_LEVELS,
 } from './VoxelOccupancyVolume.js';
 import type { CharacterShadowBox } from './CharacterShadowBox';
 import { RENDER_STYLE } from '../settings/RenderStyle';
 import {
   setForwardRefractionSunVisibility,
 } from '../water/ForwardRefraction';
+import type { RenderStageProfiler } from '../RenderStageProfiler';
 
 const MAX_SHADER_STEPS = 512;
 // The real sun's angular radius is ~0.00465 rad (0.266 degrees). A restrained
@@ -56,6 +58,8 @@ export interface VoxelSunShadowDiagnostics {
   characterShadowBoxes: number;
   characterShadowScreenBounds: { minX: number; minY: number; maxX: number; maxY: number };
   sunDirection: { x: number; y: number; z: number };
+  sunIntensity: number;
+  directSunActive: boolean;
   volume: ReturnType<VoxelOccupancyVolume['getDiagnostics']>;
 }
 
@@ -99,6 +103,11 @@ export class VoxelSunShadowPass {
   private readonly characterScreenBounds = new THREE.Vector4(0, 0, 0, 0);
   private characterBoxCount = 0;
   private characterShadowMaxDistance = RENDER_STYLE.shadows.character.maxDistance;
+  private stageProfiler: RenderStageProfiler | null = null;
+  private sunIntensity = 1;
+  private directSunActive = true;
+  private targetInitialized = false;
+  private forwardTargetInitialized = false;
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -161,6 +170,9 @@ export class VoxelSunShadowPass {
         uMacroBrickOccupancy: { value: volume.macroBrickTexture },
         uBrickDetailOccupancy: { value: volume.brickDetailTexture },
         uLeafBrickDensity: { value: volume.leafBrickTexture },
+        uXZMaxCasterHeight8: { value: volume.xzMaxCasterHeight8Texture },
+        uXZMaxCasterHeight32: { value: volume.xzMaxCasterHeight32Texture },
+        uXZMaxCasterHeight64: { value: volume.xzMaxCasterHeight64Texture },
         uSeaweedAnchors: { value: volume.seaweedTexture },
         uLeafAtlas: { value: leafAtlas?.texture ?? leafAtlasFallback },
         uLeafAtlasEnabled: { value: !!leafAtlas },
@@ -173,7 +185,20 @@ export class VoxelSunShadowPass {
         uVolumeSize: { value: volume.dimensions.clone() },
         uBrickGridSize: { value: volume.brickDimensions.clone() },
         uMacroBrickGridSize: { value: volume.macroBrickDimensions.clone() },
+        uXZMaxCasterGrid8: { value: new THREE.Vector2(
+          Math.ceil(volume.dimensions.x / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0]),
+          Math.ceil(volume.dimensions.z / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0]),
+        ) },
+        uXZMaxCasterGrid32: { value: new THREE.Vector2(
+          Math.ceil(volume.dimensions.x / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1]),
+          Math.ceil(volume.dimensions.z / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1]),
+        ) },
+        uXZMaxCasterGrid64: { value: new THREE.Vector2(
+          Math.ceil(volume.dimensions.x / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2]),
+          Math.ceil(volume.dimensions.z / VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2]),
+        ) },
         uSunDirection: { value: this.sunDirection.clone() },
+        uSunIntensity: { value: this.sunIntensity },
         uCameraNear: { value: 0.1 },
         uCameraFar: { value: 1024 },
         uInvProjectionMatrix: { value: new THREE.Matrix4() },
@@ -213,6 +238,9 @@ export class VoxelSunShadowPass {
         uniform highp usampler3D uMacroBrickOccupancy;
         uniform highp usampler3D uBrickDetailOccupancy;
         uniform sampler3D uLeafBrickDensity;
+        uniform sampler2D uXZMaxCasterHeight8;
+        uniform sampler2D uXZMaxCasterHeight32;
+        uniform sampler2D uXZMaxCasterHeight64;
         uniform sampler2D uSeaweedAnchors;
         uniform sampler2D uLeafAtlas;
         uniform bool uLeafAtlasEnabled;
@@ -225,7 +253,11 @@ export class VoxelSunShadowPass {
         uniform vec3 uVolumeSize;
         uniform vec3 uBrickGridSize;
         uniform vec3 uMacroBrickGridSize;
+        uniform vec2 uXZMaxCasterGrid8;
+        uniform vec2 uXZMaxCasterGrid32;
+        uniform vec2 uXZMaxCasterGrid64;
         uniform vec3 uSunDirection;
+        uniform float uSunIntensity;
         uniform float uCameraNear;
         uniform float uCameraFar;
         uniform mat4 uInvProjectionMatrix;
@@ -289,6 +321,64 @@ export class VoxelSunShadowPass {
           return texelFetch(uMacroBrickOccupancy, brick, 0).r != 0u;
         }
 
+        bool insideXZGrid(ivec2 tile, vec2 gridSize) {
+          return all(greaterThanEqual(tile, ivec2(0))) &&
+            all(lessThan(tile, ivec2(gridSize)));
+        }
+
+        float minimumPositive2(vec2 values) {
+          float result = 1e30;
+          if (values.x > 1e-5) result = min(result, values.x);
+          if (values.y > 1e-5) result = min(result, values.y);
+          return result;
+        }
+
+        float getXZTileExitDistance(
+          vec3 localPosition,
+          vec3 directionSafe,
+          ivec2 tile,
+          float tileSize
+        ) {
+          vec2 tileMin = vec2(tile) * tileSize;
+          vec2 tileMax = min(tileMin + vec2(tileSize), uVolumeSize.xz);
+          vec2 boundary = mix(tileMin, tileMax, greaterThan(directionSafe.xz, vec2(0.0)));
+          return minimumPositive2((boundary - localPosition.xz) / directionSafe.xz);
+        }
+
+        bool rayClearsXZTile(
+          vec3 localPosition,
+          vec3 direction,
+          vec3 directionSafe,
+          float tileMaxCasterY,
+          ivec2 tile,
+          float tileSize
+        ) {
+          float exitDistance = getXZTileExitDistance(
+            localPosition,
+            directionSafe,
+            tile,
+            tileSize
+          );
+          // The ray is linear over a tile. Its lowest Y is therefore at the
+          // entry for an upward ray and at the exit for a downward ray.
+          float lowestRayY = exitDistance >= 1e29
+            ? (direction.y >= 0.0 ? localPosition.y : -1e30)
+            : min(localPosition.y, localPosition.y + direction.y * exitDistance);
+          return lowestRayY > tileMaxCasterY + 0.001;
+        }
+
+        float maxCasterHeight8(ivec2 tile) {
+          return texelFetch(uXZMaxCasterHeight8, tile, 0).r;
+        }
+
+        float maxCasterHeight32(ivec2 tile) {
+          return texelFetch(uXZMaxCasterHeight32, tile, 0).r;
+        }
+
+        float maxCasterHeight64(ivec2 tile) {
+          return texelFetch(uXZMaxCasterHeight64, tile, 0).r;
+        }
+
         bool receiverIsLeaf(vec3 localPosition) {
           // Depth reconstructs an axis-aligned face exactly on a voxel
           // boundary. Select the nearest boundary axis and probe its two sides
@@ -312,6 +402,55 @@ export class VoxelSunShadowPass {
           // An opaque gameplay surface takes precedence when it shares a
           // boundary with foliage; terrain must retain detailed leaf dapple.
           return touchesLeaf && !touchesOpaque;
+        }
+
+        bool receiverTerrainNormal(vec3 localPosition, out vec3 normal) {
+          const float epsilon = 0.01;
+          vec3 withinCell = fract(localPosition);
+          vec3 boundaryDistance = min(withinCell, vec3(1.0) - withinCell);
+          float nearestBoundary = min(min(boundaryDistance.x, boundaryDistance.y), boundaryDistance.z);
+          if (nearestBoundary > epsilon) return false;
+          bool nearX = boundaryDistance.x <= epsilon;
+          bool nearY = boundaryDistance.y <= epsilon;
+          bool nearZ = boundaryDistance.z <= epsilon;
+          // At an edge or corner several face normals are possible. Keep the
+          // expensive path there instead of allowing one arbitrary tie-break
+          // to reject a face whose other incident normal receives sunlight.
+          if ((nearX && nearY) || (nearX && nearZ) || (nearY && nearZ)) return false;
+
+          vec3 axis;
+          if (nearX) {
+            axis = vec3(1.0, 0.0, 0.0);
+          } else if (nearY) {
+            axis = vec3(0.0, 1.0, 0.0);
+          } else {
+            axis = vec3(0.0, 0.0, 1.0);
+          }
+
+          ivec3 positiveCell = ivec3(floor(localPosition + axis * epsilon));
+          ivec3 negativeCell = ivec3(floor(localPosition - axis * epsilon));
+          // Foliage and grass are not solid planes. An ambiguous boundary is
+          // deliberately accepted so custom/dynamic receivers cannot lose a
+          // valid shadow because this conservative fast path guessed wrong.
+          if (safeCasterHasFlag(positiveCell, CASTER_LEAF_BIT) ||
+              safeCasterHasFlag(negativeCell, CASTER_LEAF_BIT) ||
+              safeCasterHasFlag(positiveCell, CASTER_GRASS_BIT) ||
+              safeCasterHasFlag(negativeCell, CASTER_GRASS_BIT)) return false;
+          bool positiveSolid = safeCasterHasFlag(positiveCell, CASTER_OPAQUE_BIT);
+          bool negativeSolid = safeCasterHasFlag(negativeCell, CASTER_OPAQUE_BIT);
+          if (positiveSolid == negativeSolid) return false;
+          normal = positiveSolid ? -axis : axis;
+          return true;
+        }
+
+        bool receiverNeedsVoxelTrace(vec3 receiver, vec3 sun) {
+          // Custom seabed, seaweed, water, and character surfaces that do not
+          // line up with a known opaque voxel fail open below. Known terrain
+          // faces, including submerged seabed blocks, can still take the
+          // direct-light back-face shortcut.
+          vec3 normal;
+          if (!receiverTerrainNormal(receiver - uVolumeOrigin, normal)) return true;
+          return dot(normal, sun) > 0.0;
         }
 
         bool cellTouchesReceiver(ivec3 cell, vec3 receiverLocal) {
@@ -711,11 +850,109 @@ export class VoxelSunShadowPass {
           float cachedLeafDensity = 0.0;
           bool cachedLeafOnly = false;
           int detailedLeafLayers = 0;
+          ivec2 cachedXZTile64 = ivec2(-1);
+          ivec2 cachedXZTile32 = ivec2(-1);
+          ivec2 cachedXZTile8 = ivec2(-1);
+          float cachedXZMax64 = -1.0;
+          float cachedXZMax32 = -1.0;
+          float cachedXZMax8 = -1.0;
 
           for (int iteration = 0; iteration < ${MAX_SHADER_STEPS}; iteration++) {
             if (iteration >= uMaxSteps) break;
 
             if (!insideVolume(cell)) return visibility;
+
+            // Reject a whole XZ horizon tile when the lowest point of the ray
+            // while crossing it is already above every caster in that tile.
+            // The cache avoids re-fetching the same max-height texel on each
+            // voxel step, while the comparison is still repeated so an upward
+            // ray can become clear before it reaches the tile edge.
+            ivec2 tile64 = ivec2(floor(local.xz / float(${VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2]})));
+            if (insideXZGrid(tile64, uXZMaxCasterGrid64)) {
+              if (any(notEqual(tile64, cachedXZTile64))) {
+                cachedXZTile64 = tile64;
+                cachedXZMax64 = maxCasterHeight64(tile64);
+              }
+              if (rayClearsXZTile(
+                local,
+                direction,
+                directionSafe,
+                cachedXZMax64,
+                tile64,
+                float(${VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2]})
+              )) {
+                float jump = getXZTileExitDistance(
+                  local,
+                  directionSafe,
+                  tile64,
+                  float(${VOXEL_SHADOW_XZ_HEIGHT_LEVELS[2]})
+                );
+                if (jump >= 1e29) return visibility;
+                travelled += jump;
+                if (travelled > uMaxDistance) return visibility;
+                local += directionSafe * (jump + 1e-3);
+                cell = ivec3(floor(local));
+                continue;
+              }
+            }
+
+            ivec2 tile32 = ivec2(floor(local.xz / float(${VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1]})));
+            if (insideXZGrid(tile32, uXZMaxCasterGrid32)) {
+              if (any(notEqual(tile32, cachedXZTile32))) {
+                cachedXZTile32 = tile32;
+                cachedXZMax32 = maxCasterHeight32(tile32);
+              }
+              if (rayClearsXZTile(
+                local,
+                direction,
+                directionSafe,
+                cachedXZMax32,
+                tile32,
+                float(${VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1]})
+              )) {
+                float jump = getXZTileExitDistance(
+                  local,
+                  directionSafe,
+                  tile32,
+                  float(${VOXEL_SHADOW_XZ_HEIGHT_LEVELS[1]})
+                );
+                if (jump >= 1e29) return visibility;
+                travelled += jump;
+                if (travelled > uMaxDistance) return visibility;
+                local += directionSafe * (jump + 1e-3);
+                cell = ivec3(floor(local));
+                continue;
+              }
+            }
+
+            ivec2 tile8 = ivec2(floor(local.xz / float(${VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0]})));
+            if (insideXZGrid(tile8, uXZMaxCasterGrid8)) {
+              if (any(notEqual(tile8, cachedXZTile8))) {
+                cachedXZTile8 = tile8;
+                cachedXZMax8 = maxCasterHeight8(tile8);
+              }
+              if (rayClearsXZTile(
+                local,
+                direction,
+                directionSafe,
+                cachedXZMax8,
+                tile8,
+                float(${VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0]})
+              )) {
+                float jump = getXZTileExitDistance(
+                  local,
+                  directionSafe,
+                  tile8,
+                  float(${VOXEL_SHADOW_XZ_HEIGHT_LEVELS[0]})
+                );
+                if (jump >= 1e29) return visibility;
+                travelled += jump;
+                if (travelled > uMaxDistance) return visibility;
+                local += directionSafe * (jump + 1e-3);
+                cell = ivec3(floor(local));
+                continue;
+              }
+            }
 
             ivec3 macroBrick = cell / MACRO_BRICK_SIZE;
             if (insideMacroBrickGrid(macroBrick) && !macroBrickAt(macroBrick)) {
@@ -892,7 +1129,7 @@ export class VoxelSunShadowPass {
         void main() {
           float viewDepth = readViewDepth(vUv);
           vec4 receiverSample = texture(tReceiverWorld, vUv);
-          if (!uEnabled || (uUseReceiverWorld
+          if (!uEnabled || uSunIntensity <= 0.0001 || (uUseReceiverWorld
               ? receiverSample.a <= 0.0
               : viewDepth >= uCameraFar * 0.999)) {
             outColor = vec4(1.0, 0.0, 0.0, 1.0);
@@ -902,6 +1139,14 @@ export class VoxelSunShadowPass {
             ? receiverSample.rgb
             : reconstructWorldPosition(vUv, viewDepth);
           vec3 sun = normalize(uSunDirection);
+          // A back-facing opaque terrain face receives no direct sunlight.
+          // Resolve it as fully visible without entering the expensive solar
+          // disc/DDA loop; foliage, water, characters, and ambiguous surfaces
+          // intentionally fail open to the detailed path.
+          if (!receiverNeedsVoxelTrace(receiver, sun)) {
+            outColor = vec4(1.0, 0.0, 0.0, 1.0);
+            return;
+          }
           // Project a fixed world-up vector onto the solar-disc tangent plane.
           // Only the singular straight-up case needs a fallback; there is no
           // arbitrary |sun.y| threshold that can rotate the kernel in flight.
@@ -971,17 +1216,34 @@ export class VoxelSunShadowPass {
     this.quadMaterial.uniforms.tDepth.value = texture;
   }
 
+  setStageProfiler(profiler: RenderStageProfiler | null): void {
+    this.stageProfiler = profiler;
+  }
+
   setSize(width: number, height: number): void {
     const effectiveWidth = Math.max(1, Math.floor(width * this.renderer.getPixelRatio()));
     const effectiveHeight = Math.max(1, Math.floor(height * this.renderer.getPixelRatio()));
     this.resolution.set(effectiveWidth, effectiveHeight);
     this.target.setSize(effectiveWidth, effectiveHeight);
     this.forwardTarget.setSize(effectiveWidth, effectiveHeight);
+    this.targetInitialized = false;
+    this.forwardTargetInitialized = false;
   }
 
   setSunDirection(direction: THREE.Vector3): void {
     this.sunDirection.copy(direction).normalize();
     (this.quadMaterial.uniforms.uSunDirection.value as THREE.Vector3).copy(this.sunDirection);
+  }
+
+  setSunIntensity(intensity: number): void {
+    const wasActive = this.directSunActive;
+    this.sunIntensity = Number.isFinite(intensity) ? Math.max(0, intensity) : 0;
+    this.directSunActive = this.sunIntensity > 0.0001;
+    this.quadMaterial.uniforms.uSunIntensity.value = this.sunIntensity;
+    if (wasActive && !this.directSunActive) {
+      this.targetInitialized = false;
+      this.forwardTargetInitialized = false;
+    }
   }
 
   setSeaweedWaterLevel(level: number): void {
@@ -1025,7 +1287,13 @@ export class VoxelSunShadowPass {
   }
 
   setSettings(settings: { enabled?: boolean; maxDistance?: number; maxSteps?: number }): void {
-    if (settings.enabled !== undefined) this.enabled = !!settings.enabled;
+    if (settings.enabled !== undefined) {
+      this.enabled = !!settings.enabled;
+      if (!this.enabled) {
+        this.targetInitialized = false;
+        this.forwardTargetInitialized = false;
+      }
+    }
     if (settings.maxDistance !== undefined) this.maxDistance = THREE.MathUtils.clamp(settings.maxDistance, 1, 2000);
     if (settings.maxSteps !== undefined) this.maxSteps = THREE.MathUtils.clamp(Math.floor(settings.maxSteps), 32, MAX_SHADER_STEPS);
     this.quadMaterial.uniforms.uEnabled.value = this.enabled;
@@ -1048,11 +1316,17 @@ export class VoxelSunShadowPass {
     if (this.depthTexture) this.quadMaterial.uniforms.tDepth.value = this.depthTexture;
 
     if (!this.supported) return;
+    if (!this.enabled || !this.directSunActive) {
+      if (!this.targetInitialized || !this.forwardTargetInitialized) this.clearVisibilityTargets();
+      return;
+    }
     const previousTarget = this.renderer.getRenderTarget();
-    this.renderer.setRenderTarget(this.target);
-    this.renderer.clear(true, false, false);
-    this.renderer.render(this.scene, this.camera);
-    this.renderer.setRenderTarget(previousTarget);
+    try {
+      this.renderVisibilityTarget(this.target, 'direct-voxel-shadow');
+      this.targetInitialized = true;
+    } finally {
+      this.renderer.setRenderTarget(previousTarget);
+    }
   }
 
   /**
@@ -1070,16 +1344,19 @@ export class VoxelSunShadowPass {
     this.quadMaterial.uniforms.uUseReceiverWorld.value = true;
 
     const previousTarget = this.renderer.getRenderTarget();
-    if (this.supported) {
-      this.renderer.setRenderTarget(this.forwardTarget);
-      this.renderer.clear(true, false, false);
-      this.renderer.render(this.scene, this.camera);
+    try {
+      if (this.supported && this.enabled && this.directSunActive) {
+        this.renderVisibilityTarget(this.forwardTarget, 'forward-voxel-shadow');
+        this.forwardTargetInitialized = true;
+      } else if (this.supported && (!this.targetInitialized || !this.forwardTargetInitialized)) {
+        this.clearVisibilityTargets();
+      }
+    } finally {
+      this.renderer.setRenderTarget(previousTarget);
+      this.quadMaterial.uniforms.uUseReceiverWorld.value = false;
+      this.quadMaterial.uniforms.tReceiverWorld.value = this.forwardTarget.texture;
+      this.quadMaterial.uniforms.tDepth.value = this.depthTexture;
     }
-    this.renderer.setRenderTarget(previousTarget);
-
-    this.quadMaterial.uniforms.uUseReceiverWorld.value = false;
-    this.quadMaterial.uniforms.tReceiverWorld.value = this.forwardTarget.texture;
-    this.quadMaterial.uniforms.tDepth.value = this.depthTexture;
   }
 
   getDiagnostics(): VoxelSunShadowDiagnostics {
@@ -1089,6 +1366,8 @@ export class VoxelSunShadowPass {
       resolution: { width: this.resolution.x, height: this.resolution.y },
       maxDistance: this.maxDistance,
       maxSteps: this.maxSteps,
+      sunIntensity: this.sunIntensity,
+      directSunActive: this.directSunActive,
       characterShadowBoxes: this.characterBoxCount,
       characterShadowScreenBounds: {
         minX: this.characterScreenBounds.x,
@@ -1099,6 +1378,38 @@ export class VoxelSunShadowPass {
       sunDirection: { x: this.sunDirection.x, y: this.sunDirection.y, z: this.sunDirection.z },
       volume: this.volume.getDiagnostics(),
     };
+  }
+
+  private renderVisibilityTarget(
+    target: THREE.WebGLRenderTarget,
+    stage: 'direct-voxel-shadow' | 'forward-voxel-shadow',
+  ): void {
+    const render = () => {
+      this.renderer.setRenderTarget(target);
+      this.renderer.clear(true, false, false);
+      this.renderer.render(this.scene, this.camera);
+    };
+    if (this.stageProfiler) this.stageProfiler.measure(stage, render);
+    else render();
+  }
+
+  private clearVisibilityTargets(): void {
+    const previousTarget = this.renderer.getRenderTarget();
+    const previousColor = new THREE.Color();
+    this.renderer.getClearColor(previousColor);
+    const previousAlpha = this.renderer.getClearAlpha();
+    try {
+      this.renderer.setClearColor(0xffffff, 1);
+      this.renderer.setRenderTarget(this.target);
+      this.renderer.clear(true, false, false);
+      this.renderer.setRenderTarget(this.forwardTarget);
+      this.renderer.clear(true, false, false);
+      this.targetInitialized = true;
+      this.forwardTargetInitialized = true;
+    } finally {
+      this.renderer.setRenderTarget(previousTarget);
+      this.renderer.setClearColor(previousColor, previousAlpha);
+    }
   }
 
   private includeCharacterWorldBounds(box: CharacterShadowBox): void {
@@ -1196,6 +1507,7 @@ export class VoxelSunShadowPass {
   }
 
   dispose(): void {
+    setForwardRefractionSunVisibility(null);
     this.target.dispose();
     this.forwardTarget.dispose();
     this.quadGeometry.dispose();

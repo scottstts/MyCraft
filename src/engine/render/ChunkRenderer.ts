@@ -9,7 +9,16 @@ import * as THREE from 'three'
 import { EventEmitter } from '../utils/EventEmitter.js'
 import type { ChunkKey, ChunkMeshResponse, MeshBuffers } from '../../types/workers.js'
 import { CHUNK_SIZE } from '../../config/constants.js'
-import type { ForwardRefractionParticipantRegistry } from './water/ForwardRefraction'
+import {
+  FORWARD_REFRACTION_LAYER,
+  type ForwardRefractionParticipantRegistry,
+  type ForwardRefractionReceiverMaterials,
+} from './water/ForwardRefraction'
+import {
+  FORWARD_REFRACTION_INDEX_BUCKETS,
+  getForwardRefractionMediumForBucket,
+  type ForwardRefractionIndexBucket,
+} from '../world/ForwardRefractionMeshing.js'
 
 export interface ChunkRendererEvents extends Record<string, unknown> {
   MESH_CREATED: { key: ChunkKey; mesh: THREE.Mesh }
@@ -63,11 +72,26 @@ function mergeBuffers(
   const colors = hasColors ? new Float32Array(vertexCount * 3) : new Float32Array(0)
   if (hasColors) colors.fill(1)
   const indices = new Uint32Array(indexCount)
+  const forwardIndexLengths = {} as Record<ForwardRefractionIndexBucket, number>
+  for (const bucket of FORWARD_REFRACTION_INDEX_BUCKETS) {
+    forwardIndexLengths[bucket] = nonEmpty.reduce(
+      (sum, { buffer }) => sum + (buffer.forwardIndices?.[bucket]?.length ?? 0),
+      0,
+    )
+  }
+  const forwardIndices = {} as Partial<Record<ForwardRefractionIndexBucket, Uint32Array>>
+  for (const bucket of FORWARD_REFRACTION_INDEX_BUCKETS) {
+    if (forwardIndexLengths[bucket] > 0) {
+      forwardIndices[bucket] = new Uint32Array(forwardIndexLengths[bucket])
+    }
+  }
 
   let vertexOffset = 0
   let positionOffset = 0
   let uvOffset = 0
   let indexOffset = 0
+  const forwardIndexOffsets = {} as Record<ForwardRefractionIndexBucket, number>
+  for (const bucket of FORWARD_REFRACTION_INDEX_BUCKETS) forwardIndexOffsets[bucket] = 0
   for (const { buffer, offsetX, offsetZ } of nonEmpty) {
     const localVertexCount = buffer.positions.length / 3
     for (let vertex = 0; vertex < localVertexCount; vertex += 1) {
@@ -84,13 +108,31 @@ function mergeBuffers(
     for (let index = 0; index < buffer.indices.length; index += 1) {
       indices[indexOffset + index] = buffer.indices[index] + vertexOffset
     }
+    for (const bucket of FORWARD_REFRACTION_INDEX_BUCKETS) {
+      const sourceIndices = buffer.forwardIndices?.[bucket]
+      const targetIndices = forwardIndices[bucket]
+      if (!sourceIndices || !targetIndices) continue
+      const targetOffset = forwardIndexOffsets[bucket]
+      for (let index = 0; index < sourceIndices.length; index += 1) {
+        targetIndices[targetOffset + index] = sourceIndices[index] + vertexOffset
+      }
+      forwardIndexOffsets[bucket] += sourceIndices.length
+    }
     vertexOffset += localVertexCount
     positionOffset += buffer.positions.length
     uvOffset += buffer.uvs.length
     indexOffset += buffer.indices.length
   }
 
-  return { positions, normals, uvs, ao, colors, indices }
+  return {
+    positions,
+    normals,
+    uvs,
+    ao,
+    colors,
+    indices,
+    ...(Object.keys(forwardIndices).length > 0 ? { forwardIndices } : {}),
+  }
 }
 
 /**
@@ -104,24 +146,31 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
   private readonly materialOpaque: THREE.Material
   private readonly materialTransparent: THREE.Material
   private readonly forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
+  private readonly forwardRefractionReceiverMaterials?: ForwardRefractionReceiverMaterials
   private readonly chunkBuffers = new Map<ChunkKey, { opaque: MeshBuffers; transparent: MeshBuffers }>()
   private readonly chunkMeshes = new Map<ChunkKey, THREE.Mesh>()
   private readonly chunkGroups = new Map<ChunkKey, THREE.Group>()
+  private readonly chunkForwardMeshes = new Map<ChunkKey, THREE.Mesh[]>()
   private readonly regionMembers = new Map<string, Set<ChunkKey>>()
   private readonly regionGroups = new Map<string, THREE.Group>()
   private readonly regionMeshes = new Map<string, RegionMeshes>()
+  private readonly regionForwardMeshes = new Map<string, THREE.Mesh[]>()
   private regionsFinalized = false
 
   constructor(
     scene: THREE.Scene,
     materials: { opaque: THREE.Material; transparent: THREE.Material },
-    options: { forwardRefractionParticipants?: ForwardRefractionParticipantRegistry } = {},
+    options: {
+      forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
+      forwardRefractionReceiverMaterials?: ForwardRefractionReceiverMaterials
+    } = {},
   ) {
     super()
     this.scene = scene
     this.materialOpaque = materials.opaque
     this.materialTransparent = materials.transparent
     this.forwardRefractionParticipants = options.forwardRefractionParticipants
+    this.forwardRefractionReceiverMaterials = options.forwardRefractionReceiverMaterials
   }
 
   /** Handle chunk mesh data from the mesher worker. */
@@ -160,6 +209,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     for (const [key, group] of this.chunkGroups) {
       this.scene.remove(group)
       this.disposeGroupMeshes(group)
+      this.chunkForwardMeshes.delete(key)
       this.chunkGroups.delete(key)
     }
     this.chunkMeshes.clear()
@@ -186,6 +236,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
       if (group) {
         this.scene.remove(group)
         this.disposeGroupMeshes(group)
+        this.chunkForwardMeshes.delete(key)
         this.chunkGroups.delete(key)
       }
     }
@@ -232,6 +283,10 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
           mesh.geometry.dispose()
         }
       }
+      const forwardMeshes = this.regionForwardMeshes.get(regionKey) ?? []
+      for (const mesh of forwardMeshes) this.disposeMesh(mesh)
+      group.clear()
+      this.regionForwardMeshes.delete(regionKey)
       this.regionGroups.delete(regionKey)
     }
     this.regionMeshes.clear()
@@ -258,6 +313,9 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     const existingTransparent = group.children.find(
       (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.material === this.materialTransparent,
     )
+    const previousForwardMeshes = this.chunkForwardMeshes.get(key) ?? []
+    this.chunkForwardMeshes.delete(key)
+    for (const mesh of previousForwardMeshes) this.disposeMesh(mesh)
     group.clear()
     const reused = new Set<THREE.Mesh>()
     const opaqueMesh = this.upsertMesh(payload.opaque, existingOpaque, this.materialOpaque, false, reused)
@@ -275,6 +333,9 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     group.position.set(cx * CHUNK_SIZE.x, cy * CHUNK_SIZE.y, cz * CHUNK_SIZE.z)
     if (opaqueMesh) group.add(opaqueMesh)
     if (transparentMesh) group.add(transparentMesh)
+    const forwardMeshes = this.createForwardMeshes(payload.opaque)
+    for (const mesh of forwardMeshes) group.add(mesh)
+    this.chunkForwardMeshes.set(key, forwardMeshes)
     this.chunkMeshes.set(key, opaqueMesh ?? transparentMesh!)
   }
 
@@ -316,17 +377,30 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     const previous = this.regionMeshes.get(regionKey)
     const previousOpaque = previous?.opaque ?? null
     const previousTransparent = previous?.transparent ?? null
+    const mergedOpaque = mergeBuffers(entries.map(({ buffers, offsetX, offsetZ }) => ({
+      buffer: buffers.opaque,
+      offsetX,
+      offsetZ,
+    })))
+    const mergedTransparent = mergeBuffers(entries.map(({ buffers, offsetX, offsetZ }) => ({
+      buffer: buffers.transparent,
+      offsetX,
+      offsetZ,
+    })))
+    const previousForwardMeshes = this.regionForwardMeshes.get(regionKey) ?? []
+    this.regionForwardMeshes.delete(regionKey)
+    for (const mesh of previousForwardMeshes) this.disposeMesh(mesh)
     group.clear()
     const reused = new Set<THREE.Mesh>()
     const opaque = this.upsertMesh(
-      mergeBuffers(entries.map(({ buffers, offsetX, offsetZ }) => ({ buffer: buffers.opaque, offsetX, offsetZ }))),
+      mergedOpaque,
       previousOpaque,
       this.materialOpaque,
       false,
       reused,
     )
     const transparent = this.upsertMesh(
-      mergeBuffers(entries.map(({ buffers, offsetX, offsetZ }) => ({ buffer: buffers.transparent, offsetX, offsetZ }))),
+      mergedTransparent,
       previousTransparent,
       this.materialTransparent,
       true,
@@ -344,6 +418,9 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     )
     if (opaque) group.add(opaque)
     if (transparent) group.add(transparent)
+    const forwardMeshes = this.createForwardMeshes(mergedOpaque)
+    for (const mesh of forwardMeshes) group.add(mesh)
+    this.regionForwardMeshes.set(regionKey, forwardMeshes)
     if (!opaque && !transparent) {
       this.removeRegion(regionKey)
       return
@@ -367,9 +444,11 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
         if (mesh) this.disposeMesh(mesh)
       }
     }
+    for (const mesh of this.regionForwardMeshes.get(regionKey) ?? []) this.disposeMesh(mesh)
     group?.clear()
     this.regionGroups.delete(regionKey)
     this.regionMeshes.delete(regionKey)
+    this.regionForwardMeshes.delete(regionKey)
     for (const key of this.regionMembers.get(regionKey) ?? []) this.chunkMeshes.delete(key)
   }
 
@@ -420,8 +499,68 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     mesh.castShadow = false
     mesh.receiveShadow = false
     if (transparent) mesh.renderOrder = 2
-    this.forwardRefractionParticipants?.register(mesh)
+    // Dedicated receiver meshes use geometry-only shaders below. Keep the
+    // visual terrain out of the forward registry so the expensive full
+    // material branch is not executed in either forward-refraction raster.
+    if (!this.forwardRefractionReceiverMaterials || !this.forwardRefractionParticipants) {
+      this.forwardRefractionParticipants?.register(mesh)
+    }
     return mesh
+  }
+
+  private createForwardMeshes(buffer: MeshBuffers | null): THREE.Mesh[] {
+    if (
+      !buffer ||
+      !this.forwardRefractionReceiverMaterials ||
+      !this.forwardRefractionParticipants
+    ) return []
+    const meshes: THREE.Mesh[] = []
+    for (const bucket of FORWARD_REFRACTION_INDEX_BUCKETS) {
+      const indices = buffer.forwardIndices?.[bucket]
+      if (!indices || indices.length === 0) continue
+      const cutout = bucket.endsWith('Cutout')
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.BufferAttribute(buffer.positions, 3))
+      // The receiver shader only consumes position (and UV for a cutout), but
+      // the same source mesh switches to the full BlockMaterial for the color
+      // draw. Keep that second material's required attributes on the shared
+      // geometry so the optimization cannot turn refracted terrain black or
+      // unlit when it reaches the radiance target.
+      geometry.setAttribute('normal', new THREE.BufferAttribute(buffer.normals, 3))
+      geometry.setAttribute('uv', new THREE.BufferAttribute(buffer.uvs, 2))
+      geometry.setAttribute('ao', new THREE.BufferAttribute(buffer.ao, 1))
+      if (buffer.colors.length > 0) {
+        geometry.setAttribute('color', new THREE.BufferAttribute(buffer.colors, 3))
+      } else {
+        const defaultColors = new Float32Array(buffer.positions.length)
+        defaultColors.fill(1)
+        geometry.setAttribute('color', new THREE.BufferAttribute(defaultColors, 3))
+      }
+      geometry.setIndex(new THREE.BufferAttribute(indices, 1))
+      geometry.computeBoundingBox()
+      geometry.computeBoundingSphere()
+      const mesh = new THREE.Mesh(
+        geometry,
+        cutout
+          ? this.forwardRefractionReceiverMaterials.cutout
+          : this.forwardRefractionReceiverMaterials.opaque,
+      )
+      mesh.name = `ForwardRefraction:${bucket}`
+      mesh.layers.set(FORWARD_REFRACTION_LAYER)
+      mesh.frustumCulled = true
+      mesh.castShadow = false
+      mesh.receiveShadow = false
+      this.forwardRefractionParticipants?.register(mesh, {
+        forwardOnly: true,
+        medium: getForwardRefractionMediumForBucket(bucket),
+        receiverMaterial: cutout
+          ? this.forwardRefractionReceiverMaterials.cutout
+          : this.forwardRefractionReceiverMaterials.opaque,
+        colorMaterial: this.materialOpaque,
+      })
+      meshes.push(mesh)
+    }
+    return meshes
   }
 
   private disposeMesh(mesh: THREE.Mesh): void {

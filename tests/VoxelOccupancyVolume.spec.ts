@@ -181,4 +181,68 @@ describe('VoxelOccupancyVolume', () => {
     expect(volume.getDiagnostics().fullBrickRebuilds).toBe(afterSeaweedRebuilds);
     volume.dispose();
   });
+
+  it('maintains incremental XZ maximum-caster heights at all three horizons', () => {
+    const volume = new VoxelOccupancyVolume({
+      minX: 0,
+      maxX: 64,
+      minY: 0,
+      maxY: 32,
+      minZ: 0,
+      maxZ: 64,
+    });
+
+    const level8 = volume.xzMaxCasterHeight8Texture.image.data as Float32Array;
+    const level32 = volume.xzMaxCasterHeight32Texture.image.data as Float32Array;
+    const level64 = volume.xzMaxCasterHeight64Texture.image.data as Float32Array;
+    expect(volume.xzMaxCasterHeight8Texture.image.width).toBe(8);
+    expect(volume.xzMaxCasterHeight8Texture.image.height).toBe(8);
+    expect(volume.xzMaxCasterHeight32Texture.image.width).toBe(2);
+    expect(volume.xzMaxCasterHeight32Texture.image.height).toBe(2);
+    expect(volume.xzMaxCasterHeight64Texture.image.width).toBe(1);
+    expect(volume.xzMaxCasterHeight64Texture.image.height).toBe(1);
+
+    volume.updateBlock(3, 4, 5, 1);
+    volume.updateBlock(40, 10, 40, 1);
+    expect(level8[0]).toBe(5);
+    expect(level8[5 + 8 * 5]).toBe(11);
+    expect(level32[1 + 2 * 1]).toBe(11);
+    expect(level64[0]).toBe(11);
+    expect(volume.getDiagnostics().xzMaxCasterHeightTextureBytes).toEqual({
+      level8: 8 * 8 * Float32Array.BYTES_PER_ELEMENT,
+      level32: 2 * 2 * Float32Array.BYTES_PER_ELEMENT,
+      level64: Float32Array.BYTES_PER_ELEMENT,
+    });
+
+    // Removing the tile's highest caster must rescan that tile rather than
+    // leaving a stale horizon that would disable a valid shadow traversal.
+    volume.updateBlock(41, 7, 41, 1);
+    volume.updateBlock(40, 10, 40, 0);
+    expect(level8[5 + 8 * 5]).toBe(8);
+    expect(level32[1 + 2 * 1]).toBe(8);
+    expect(level64[0]).toBe(8);
+
+    volume.updateBlock(41, 7, 41, 0);
+    expect(level8[5 + 8 * 5]).toBe(-1);
+    expect(level32[1 + 2 * 1]).toBe(-1);
+    expect(level64[0]).toBe(5);
+    volume.dispose();
+  });
+
+  it('includes seaweed proxy tops in the XZ horizon without adding voxel occupancy', () => {
+    const volume = new VoxelOccupancyVolume({
+      minX: 0,
+      maxX: 32,
+      minY: 0,
+      maxY: 32,
+      minZ: 0,
+      maxZ: 32,
+    });
+    volume.setSeaweedAnchors([{ x: 3.25, z: 4.75, rootY: 8, height: 4 }]);
+
+    const height = volume.xzMaxCasterHeight8Texture.image.data as Float32Array;
+    expect(height[0]).toBe(12);
+    expect((volume.texture.image.data as Uint8Array).some((value) => value !== 0)).toBe(false);
+    volume.dispose();
+  });
 });

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { OCEAN_WAVE_HALF_RANGE, OCEAN_WAVES, oceanWaveDeclarations } from './OceanWaveField'
+import type { ForwardRefractionMedium } from '../../world/ForwardRefractionMeshing.js'
 
 /** Refractive indices used by both the forward projection and water BRDF. */
 export const AIR_REFRACTIVE_INDEX = 1.0
@@ -46,6 +47,9 @@ export const forwardRefractionUniforms = {
 }
 
 export const FORWARD_REFRACTION_MATERIAL_FLAG = 'mycraftForwardRefraction'
+export const FORWARD_REFRACTION_MEDIUM = 'mycraftForwardRefractionMedium'
+export const FORWARD_REFRACTION_RECEIVER_MATERIAL = 'mycraftForwardRefractionReceiverMaterial'
+export const FORWARD_REFRACTION_COLOR_MATERIAL = 'mycraftForwardRefractionColorMaterial'
 
 export interface ForwardRefractionWaterState {
   waterLevel: number
@@ -155,9 +159,121 @@ export function isForwardRefractionMaterial(material: THREE.Material): boolean {
   return material.userData[FORWARD_REFRACTION_MATERIAL_FLAG] === true
 }
 
+export interface ForwardRefractionReceiverMaterials {
+  opaque: THREE.ShaderMaterial
+  cutout: THREE.ShaderMaterial
+}
+
+function forwardRefractionReceiverFragmentDeclarations(): string {
+  return /* glsl */ `
+    uniform float uForwardRefractionActive;
+    uniform float uForwardRefractionOutputReceiver;
+    uniform bool uForwardCameraUnderwater;
+    varying vec3 vForwardRefractionSourceWorld;
+    varying float vForwardRefractionSignedHeight;
+
+    void forwardRefractionDiscardCameraMedium() {
+      if (uForwardRefractionActive < 0.5) return;
+      if (
+        uForwardCameraUnderwater
+          ? vForwardRefractionSignedHeight <= 0.0
+          : vForwardRefractionSignedHeight >= 0.0
+      ) {
+        discard;
+      }
+    }
+  `
+}
+
+function createForwardRefractionReceiverMaterial(
+  map: THREE.Texture,
+  cutout: boolean,
+  alphaCutoff: number,
+): THREE.ShaderMaterial {
+  const uvVarying = cutout ? 'varying vec2 vForwardReceiverUv;' : ''
+  const uvAssignment = cutout ? 'vForwardReceiverUv = uv;' : ''
+  const cutoutUniforms: Record<string, THREE.IUniform> = {}
+  if (cutout) {
+    cutoutUniforms.uForwardReceiverMap = { value: map }
+    cutoutUniforms.uForwardReceiverAlphaCutoff = { value: alphaCutoff }
+  }
+  const cutoutDeclarations = cutout
+    ? /* glsl */ `
+      uniform sampler2D uForwardReceiverMap;
+      uniform float uForwardReceiverAlphaCutoff;
+      varying vec2 vForwardReceiverUv;
+    `
+    : ''
+  const cutoutTest = cutout
+    ? 'if (texture2D(uForwardReceiverMap, vForwardReceiverUv).a < uForwardReceiverAlphaCutoff) discard;'
+    : ''
+  const material = new THREE.ShaderMaterial({
+    name: cutout
+      ? 'MyCraftForwardRefractionReceiverCutout'
+      : 'MyCraftForwardRefractionReceiverOpaque',
+    uniforms: cutoutUniforms,
+    vertexShader: /* glsl */ `
+      ${forwardRefractionVertexDeclarations()}
+      ${uvVarying}
+      void main() {
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vec4 directClip = projectionMatrix * viewMatrix * worldPosition;
+        ${uvAssignment}
+        gl_Position = forwardRefractionProject(worldPosition.xyz, directClip);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+      ${forwardRefractionReceiverFragmentDeclarations()}
+      ${cutoutDeclarations}
+      void main() {
+        forwardRefractionDiscardCameraMedium();
+        if (uForwardRefractionOutputReceiver < 0.5) discard;
+        ${cutoutTest}
+        gl_FragColor = vec4(vForwardRefractionSourceWorld, 1.0);
+      }
+    `,
+    // Preserve the receiver target's nearest-surface selection from the old
+    // full terrain material. Without depth ordering, overlapping refracted
+    // faces would be resolved by draw order instead of projected depth.
+    depthTest: true,
+    depthWrite: true,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })
+  attachForwardRefractionUniforms(material)
+  material.userData[FORWARD_REFRACTION_MATERIAL_FLAG] = true
+  material.userData.mycraftForwardRefractionReceiver = true
+  material.needsUpdate = true
+  return material
+}
+
+/** Create the tiny geometry-only shaders used by the source-world receiver target. */
+export function createForwardRefractionReceiverMaterials(options: {
+  map: THREE.Texture
+  alphaCutoff?: number
+}): ForwardRefractionReceiverMaterials {
+  const alphaCutoff = THREE.MathUtils.clamp(options.alphaCutoff ?? 0.5, 0, 1)
+  return {
+    opaque: createForwardRefractionReceiverMaterial(options.map, false, alphaCutoff),
+    cutout: createForwardRefractionReceiverMaterial(options.map, true, alphaCutoff),
+  }
+}
+
 export const FORWARD_REFRACTION_LAYER = 1
 
 type ForwardRefractionRenderable = THREE.Mesh | THREE.Line | THREE.Points
+
+export interface ForwardRefractionRegistrationOptions {
+  /** Restrict the object to the private forward-refraction layer. */
+  forwardOnly?: boolean
+  /** Conservative source medium used to reject impossible camera-side draws. */
+  medium?: ForwardRefractionMedium
+  /** Minimal material used while writing the source-world receiver target. */
+  receiverMaterial?: THREE.Material
+  /** Full visual material used while writing the forward color target. */
+  colorMaterial?: THREE.Material
+}
 
 function getRenderableMaterials(object: THREE.Object3D): THREE.Material[] | null {
   if (
@@ -182,7 +298,10 @@ export class ForwardRefractionParticipantRegistry {
   private readonly participants = new Set<ForwardRefractionRenderable>()
   private readonly previousLayerMasks = new Map<ForwardRefractionRenderable, number>()
 
-  register(object: THREE.Object3D): boolean {
+  register(
+    object: THREE.Object3D,
+    options: ForwardRefractionRegistrationOptions = {},
+  ): boolean {
     const renderable = object as ForwardRefractionRenderable
     const materials = getRenderableMaterials(object)
     if (!materials || !materials.every((material) => isForwardRefractionMaterial(material))) {
@@ -191,7 +310,17 @@ export class ForwardRefractionParticipantRegistry {
     if (!this.previousLayerMasks.has(renderable)) {
       this.previousLayerMasks.set(renderable, renderable.layers.mask)
     }
-    renderable.layers.enable(FORWARD_REFRACTION_LAYER)
+    if (options.forwardOnly) renderable.layers.set(FORWARD_REFRACTION_LAYER)
+    else renderable.layers.enable(FORWARD_REFRACTION_LAYER)
+    if (options.medium) renderable.userData[FORWARD_REFRACTION_MEDIUM] = options.medium
+    else delete renderable.userData[FORWARD_REFRACTION_MEDIUM]
+    if (options.receiverMaterial && options.colorMaterial) {
+      renderable.userData[FORWARD_REFRACTION_RECEIVER_MATERIAL] = options.receiverMaterial
+      renderable.userData[FORWARD_REFRACTION_COLOR_MATERIAL] = options.colorMaterial
+    } else {
+      delete renderable.userData[FORWARD_REFRACTION_RECEIVER_MATERIAL]
+      delete renderable.userData[FORWARD_REFRACTION_COLOR_MATERIAL]
+    }
     this.participants.add(renderable)
     return true
   }
@@ -203,6 +332,9 @@ export class ForwardRefractionParticipantRegistry {
   unregister(object: THREE.Object3D): void {
     const renderable = object as ForwardRefractionRenderable
     this.participants.delete(renderable)
+    delete renderable.userData[FORWARD_REFRACTION_MEDIUM]
+    delete renderable.userData[FORWARD_REFRACTION_RECEIVER_MATERIAL]
+    delete renderable.userData[FORWARD_REFRACTION_COLOR_MATERIAL]
     const previousMask = this.previousLayerMasks.get(renderable)
     if (previousMask !== undefined) {
       renderable.layers.mask = previousMask
@@ -226,6 +358,9 @@ export class ForwardRefractionParticipantRegistry {
     for (const object of this.participants) {
       const previousMask = this.previousLayerMasks.get(object)
       if (previousMask !== undefined) object.layers.mask = previousMask
+      delete object.userData[FORWARD_REFRACTION_MEDIUM]
+      delete object.userData[FORWARD_REFRACTION_RECEIVER_MATERIAL]
+      delete object.userData[FORWARD_REFRACTION_COLOR_MATERIAL]
     }
     this.participants.clear()
     this.previousLayerMasks.clear()

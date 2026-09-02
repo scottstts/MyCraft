@@ -399,20 +399,18 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       // column instead of pinning it to a single world-height decal.
       float sampleWaterCausticPhase(
         vec2 causticCoord,
-        vec2 phaseOffset,
-        vec2 diagonalA,
-        vec2 diagonalB,
-        float footprintMix
+        vec2 phaseOffset
       ) {
-          vec2 uv = causticCoord + phaseOffset;
-          float center = texture2D(waterCausticMap, uv).r;
-          float footprintAverage = (
-            texture2D(waterCausticMap, uv + diagonalA).r
-            + texture2D(waterCausticMap, uv - diagonalA).r
-            + texture2D(waterCausticMap, uv + diagonalB).r
-            + texture2D(waterCausticMap, uv - diagonalB).r
-          ) * 0.25;
-          return clamp(mix(center, footprintAverage, footprintMix) * waterCausticFieldScale, 0.0, 8.0);
+          // WaterCaustics owns a linear irradiance mip chain. A single
+          // implicit-derivative lookup selects the appropriate level for the
+          // projected receiver footprint, avoiding the old 5-fetch manual
+          // footprint filter while retaining the four phase interleave.
+          return clamp(
+            texture2D(waterCausticMap, causticCoord + phaseOffset).r
+              * waterCausticFieldScale,
+            0.0,
+            8.0
+          );
       }
 
       float sampleWaterCaustics(vec3 worldPosition) {
@@ -431,18 +429,10 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           // field so a quiet strip in one phase is supplied by the same
           // physical concentration field from another phase instead of being
           // stamped into the world as a repeated cross-shaped dead zone.
-          vec2 footprintX = dFdx(causticCoord);
-          vec2 footprintY = dFdy(causticCoord);
-          vec2 diagonalA = (footprintX + footprintY) * 0.35;
-          vec2 diagonalB = (footprintX - footprintY) * 0.35;
-          float footprint = max(length(footprintX), length(footprintY))
-            * max(waterCausticResolution.x, waterCausticResolution.y);
-          float footprintMix = smoothstep(0.75, 3.0, footprint);
-
-          float f00 = sampleWaterCausticPhase(causticCoord, vec2(0.0, 0.0), diagonalA, diagonalB, footprintMix);
-          float f10 = sampleWaterCausticPhase(causticCoord, vec2(0.5, 0.0), diagonalA, diagonalB, footprintMix);
-          float f01 = sampleWaterCausticPhase(causticCoord, vec2(0.0, 0.5), diagonalA, diagonalB, footprintMix);
-          float f11 = sampleWaterCausticPhase(causticCoord, vec2(0.5, 0.5), diagonalA, diagonalB, footprintMix);
+          float f00 = sampleWaterCausticPhase(causticCoord, vec2(0.0, 0.0));
+          float f10 = sampleWaterCausticPhase(causticCoord, vec2(0.5, 0.0));
+          float f01 = sampleWaterCausticPhase(causticCoord, vec2(0.0, 0.5));
+          float f11 = sampleWaterCausticPhase(causticCoord, vec2(0.5, 0.5));
 
           // Interleave only focused energy. Keeping 1.0 as the floor avoids
           // manufacturing four overlapping dark defocus fields. Use full

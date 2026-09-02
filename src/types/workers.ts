@@ -5,6 +5,7 @@
 
 import type { ChunkData, BlockDef, BlockId } from './index.js';
 import type { AtlasConfig } from '../engine/render/Atlas.js';
+import type { ForwardRefractionIndexBucket } from '../engine/world/ForwardRefractionMeshing.js';
 
 // Re-export types needed by workers
 export type { BlockDef, BlockId };
@@ -71,6 +72,8 @@ export interface MeshBuffers {
   ao: Float32Array;
   colors: Float32Array;
   indices: Uint16Array | Uint32Array;
+  /** Optional static-terrain index ranges for the forward-refraction pass. */
+  forwardIndices?: Partial<Record<ForwardRefractionIndexBucket, Uint32Array>>;
 }
 
 export interface ChunkMeshResponse {
@@ -139,10 +142,14 @@ export function isChunkMeshResponse(msg: any): msg is ChunkMeshResponse {
          msg.payload.opaque.ao instanceof Float32Array &&
          msg.payload.opaque.colors instanceof Float32Array &&
          (msg.payload.opaque.indices instanceof Uint16Array || msg.payload.opaque.indices instanceof Uint32Array) &&
+         (!msg.payload.opaque.forwardIndices ||
+           Object.values(msg.payload.opaque.forwardIndices).every((indices: unknown) => indices instanceof Uint32Array)) &&
          msg.payload.transparent.positions instanceof Float32Array &&
          msg.payload.transparent.normals instanceof Float32Array &&
          msg.payload.transparent.uvs instanceof Float32Array &&
          msg.payload.transparent.ao instanceof Float32Array &&
          msg.payload.transparent.colors instanceof Float32Array &&
-         (msg.payload.transparent.indices instanceof Uint16Array || msg.payload.transparent.indices instanceof Uint32Array);
+         (msg.payload.transparent.indices instanceof Uint16Array || msg.payload.transparent.indices instanceof Uint32Array) &&
+         (!msg.payload.transparent.forwardIndices ||
+           Object.values(msg.payload.transparent.forwardIndices).every((indices: unknown) => indices instanceof Uint32Array));
 }

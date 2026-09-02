@@ -6,6 +6,7 @@ import {
 } from './OceanWaveField'
 import { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH, CAUSTIC_TILE_SIZE, WATER_IOR } from './WaterOptics'
 export { CAUSTIC_FIELD_SCALE, CAUSTIC_REFERENCE_DEPTH, CAUSTIC_TILE_SIZE } from './WaterOptics'
+import type { RenderStageProfiler } from '../RenderStageProfiler.js'
 
 
 export interface WaterCausticsOptions {
@@ -13,6 +14,7 @@ export interface WaterCausticsOptions {
   extent?: number
   patchExtent?: number
   projectDepth?: number
+  stageProfiler?: RenderStageProfiler
 }
 
 /**
@@ -38,6 +40,7 @@ export class WaterCaustics {
   private readonly segmentsPerPeriod: number
   private readonly sourceSegments: number
   private readonly referenceDepth: number
+  private readonly stageProfiler?: RenderStageProfiler
   private readonly origin = new THREE.Vector2()
   private readonly neutralClearColor = new THREE.Color(
     1 / CAUSTIC_FIELD_SCALE,
@@ -49,6 +52,7 @@ export class WaterCaustics {
 
   constructor(renderer: THREE.WebGLRenderer, options: WaterCausticsOptions = {}) {
     this.renderer = renderer
+    this.stageProfiler = options.stageProfiler
     this.resolution = Math.max(128, Math.min(512, Math.floor(options.resolution ?? 256)))
     // One broad, chunk-incommensurate periodic domain carries several optical
     // wavelength bands. The old 17 m realization repeated its one quiet
@@ -296,18 +300,22 @@ export class WaterCaustics {
     const previousClearAlpha = this.renderer.getClearAlpha()
 
     try {
-      this.renderer.setRenderTarget(this.target)
-      this.renderer.setViewport(0, 0, this.resolution, this.resolution)
-      this.renderer.setScissor(0, 0, this.resolution, this.resolution)
-      this.renderer.setScissorTest(false)
-      this.renderer.autoClear = false
-      // A forward-projected bundle can leave a texel untouched only at its
-      // conservative outer guard band. Neutral transmitted irradiance is the
-      // physically safe fallback there; black would manufacture a large
-      // zero-light island and make a valid receiver look unbound.
-      this.renderer.setClearColor(this.neutralClearColor, 1)
-      this.renderer.clear(true, false, false)
-      this.renderer.render(this.scene, this.camera)
+      const renderField = () => {
+        this.renderer.setRenderTarget(this.target)
+        this.renderer.setViewport(0, 0, this.resolution, this.resolution)
+        this.renderer.setScissor(0, 0, this.resolution, this.resolution)
+        this.renderer.setScissorTest(false)
+        this.renderer.autoClear = false
+        // A forward-projected bundle can leave a texel untouched only at its
+        // conservative outer guard band. Neutral transmitted irradiance is the
+        // physically safe fallback there; black would manufacture a large
+        // zero-light island and make a valid receiver look unbound.
+        this.renderer.setClearColor(this.neutralClearColor, 1)
+        this.renderer.clear(true, false, false)
+        this.renderer.render(this.scene, this.camera)
+      }
+      if (this.stageProfiler) this.stageProfiler.measure('caustic-field-update', renderField)
+      else renderField()
     } catch (error) {
       if (!this.warned) {
         this.warned = true
