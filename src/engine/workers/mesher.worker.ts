@@ -548,8 +548,11 @@ function getFaceUV(block: BlockDef, faceName: string, gx: number, gy: number, gz
         : faceName === 'back' ? 59
           : faceName === 'right' ? 71
             : 83;
+  const variantHash = isLeafBlock(block)
+    ? leafHash32(gx + variantSalt, gy + variantSalt * 3, gz + variantSalt * 7)
+    : hash32(gx + variantSalt, gy + variantSalt * 3, gz + variantSalt * 7)
   const variantIndex = variantKeys.length > 1
-    ? hash32(gx + variantSalt, gy + variantSalt * 3, gz + variantSalt * 7) % variantKeys.length
+    ? variantHash % variantKeys.length
     : 0;
   const tileCoords = atlasConfig.tiles[variantKeys[variantIndex]];
   if (!tileCoords) {
@@ -632,6 +635,15 @@ function hash32(x: number, y: number, z: number): number {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
+function leafHash32(x: number, y: number, z: number): number {
+  // Keep leaf atlas selection bit-identical with the GLSL shadow pass. The
+  // generic material hash predates leaf shadow matching and its second
+  // multiply is not Math.imul, so its low bits can diverge after rounding.
+  let h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(z, 2147483647)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
 function getUVRotation(blockName: string, faceName: string, gx: number, gy: number, gz: number): number {
   const faceSalt = faceName === 'top' ? 17
     : faceName === 'bottom' ? 31
@@ -639,7 +651,9 @@ function getUVRotation(blockName: string, faceName: string, gx: number, gy: numb
         : faceName === 'back' ? 59
           : faceName === 'right' ? 71
             : 83;
-  const h = hash32(gx + faceSalt, gy + faceSalt * 3, gz + faceSalt * 7);
+  const h = blockName === 'leaves' || blockName === 'leaves_maple'
+    ? leafHash32(gx + faceSalt, gy + faceSalt * 3, gz + faceSalt * 7)
+    : hash32(gx + faceSalt, gy + faceSalt * 3, gz + faceSalt * 7);
 
   // Directional materials keep their structural axis. Grass cap and wood
   // growth rings can rotate freely, while their vertical side grain only

@@ -819,7 +819,26 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     minZ: bounds.minZ,
     maxZ: bounds.maxZ,
   });
-  voxelSunShadowPass = new VoxelSunShadowPass(baseRenderer, canvasSize.width, canvasSize.height, voxelShadowVolume);
+  const leafAtlasConfig = atlas.getConfig();
+  const leafBaseTile: [number, number] = leafAtlasConfig.tiles.tree_leaves ?? [8, 0];
+  const leafVariantTiles: Array<readonly [number, number]> = [leafBaseTile];
+  for (let variant = 1; variant < 4; variant += 1) {
+    const tile = leafAtlasConfig.tiles[`tree_leaves_${variant}`];
+    if (!tile) break;
+    leafVariantTiles.push(tile);
+  }
+  voxelSunShadowPass = new VoxelSunShadowPass(
+    baseRenderer,
+    canvasSize.width,
+    canvasSize.height,
+    voxelShadowVolume,
+    {
+      texture: atlas.getTexture(),
+      atlasSize: leafAtlasConfig.atlasSize,
+      tileSize: leafAtlasConfig.tileSize,
+      variantTiles: leafVariantTiles,
+    },
+  );
   voxelSunShadowPass.setSeaweedWaterLevel(VISUAL_WATER_LEVEL);
   const shadowResolution = voxelSunShadowPass.getDiagnostics().resolution;
   blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), shadowResolution.width, shadowResolution.height, true);

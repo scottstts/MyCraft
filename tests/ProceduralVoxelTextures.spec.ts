@@ -46,6 +46,9 @@ describe('procedural voxel textures', () => {
     expect(greenData).not.toEqual(cherryData);
     expect(Array.from(greenData).some((value, index) => index % 4 === 3 && value === 0)).toBe(true);
     expect(Array.from(cherryData).some((value, index) => index % 4 === 3 && value === 0)).toBe(true);
+    for (let index = 3; index < greenData.length; index += 4) {
+      expect(greenData[index]).toBe(cherryData[index]);
+    }
 
     green.dispose();
     cherry.dispose();
@@ -84,13 +87,18 @@ describe('procedural voxel textures', () => {
     const first = createProceduralVoxelTileTexture('sand');
     const second = createProceduralVoxelTileTexture('sand_1');
     const repeat = createProceduralVoxelTileTexture('sand_1');
+    const leaf = createProceduralVoxelTileTexture('tree_leaves');
+    const leafVariant = createProceduralVoxelTileTexture('tree_leaves_1');
 
     expect(getTextureData(first)).not.toEqual(getTextureData(second));
     expect(getTextureData(second)).toEqual(getTextureData(repeat));
+    expect(getTextureData(leaf)).not.toEqual(getTextureData(leafVariant));
 
     first.dispose();
     second.dispose();
     repeat.dispose();
+    leaf.dispose();
+    leafVariant.dispose();
   });
 
   it('extracts generated sand without a canvas or image asset', () => {

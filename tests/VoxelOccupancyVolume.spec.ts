@@ -93,11 +93,14 @@ describe('VoxelOccupancyVolume', () => {
     expect(volume.getDiagnostics().opaqueVoxels).toBe(0);
     expect(volume.getDiagnostics().leafVoxels).toBe(2);
     expect((volume.brickTexture.image.data as Uint8Array)[0]).toBe(255);
+    expect((volume.brickDetailTexture.image.data as Uint8Array)[0]).toBe(0);
+    expect((volume.leafBrickTexture.image.data as Uint8Array)[0]).toBeGreaterThan(0);
 
     volume.updateBlock(7, 5, 7, 0);
     expect(leaf[greenIndex]).toBe(0);
     expect(volume.getDiagnostics().leafVoxels).toBe(1);
     expect((volume.brickTexture.image.data as Uint8Array)[1]).toBe(255);
+    expect((volume.leafBrickTexture.image.data as Uint8Array)[1]).toBeGreaterThan(0);
     volume.dispose();
   });
 });

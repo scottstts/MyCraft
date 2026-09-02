@@ -128,19 +128,77 @@ const WOOD_TOP_PALETTE: readonly RGB[] = [
 ]
 
 const TREE_LEAF_PALETTE: readonly RGB[] = [
-  [17, 55, 21],
-  [25, 82, 27],
-  [39, 111, 33],
-  [57, 139, 40],
-  [80, 164, 49],
+  [11, 52, 17],
+  [17, 65, 23],
+  [24, 80, 28],
+  [34, 96, 33],
+  [43, 113, 40],
+  [55, 130, 47],
 ]
 
 const CHERRY_LEAF_PALETTE: readonly RGB[] = [
-  [201, 151, 170],
-  [224, 178, 194],
-  [241, 201, 213],
-  [250, 224, 231],
-  [255, 244, 247],
+  [190, 157, 173],
+  [214, 184, 198],
+  [231, 207, 217],
+  [242, 224, 232],
+  [249, 238, 243],
+  [255, 249, 252],
+]
+
+const LEAF_REFERENCE_SIZE = 32
+const LEAF_REFERENCE_COUNT = 54
+const LEAF_REFERENCE_JITTER = 1
+const LEAF_REFERENCE_GAP_BIAS = 0.16
+const LEAF_REFERENCE_BRIGHTNESS_MIX = 0.52
+
+type LeafMask = readonly (readonly number[])[]
+type LeafShadeGrid = number[][]
+
+// This is intentionally kept as authored silhouettes. Randomness chooses a
+// leaf instance, transform, placement, and shade; it never decides alpha one
+// texel at a time. That preserves recognizable leaf shapes and broad gaps.
+const LEAF_SHAPES: readonly LeafMask[] = [
+  [
+    [0, 0, 1, 0, 0],
+    [0, 1, 1, 1, 0],
+    [1, 1, 1, 1, 1],
+    [0, 1, 1, 1, 0],
+    [0, 0, 1, 0, 0],
+  ],
+  [
+    [0, 1, 0, 0],
+    [1, 1, 1, 0],
+    [1, 1, 1, 1],
+    [0, 1, 1, 1],
+    [0, 0, 1, 0],
+  ],
+  [
+    [0, 0, 1, 0, 0],
+    [0, 1, 1, 1, 0],
+    [1, 1, 1, 1, 0],
+    [0, 1, 1, 1, 1],
+    [0, 0, 1, 0, 0],
+  ],
+  [
+    [0, 1, 1, 0],
+    [1, 1, 1, 1],
+    [0, 1, 1, 1],
+    [0, 0, 1, 0],
+  ],
+  [
+    [0, 0, 1, 0],
+    [0, 1, 1, 1],
+    [1, 1, 1, 1],
+    [0, 1, 1, 1],
+    [0, 0, 1, 0],
+  ],
+  [
+    [0, 1, 0, 0, 0],
+    [1, 1, 1, 0, 0],
+    [1, 1, 1, 1, 0],
+    [0, 1, 1, 1, 1],
+    [0, 0, 1, 0, 0],
+  ],
 ]
 
 function clamp01(value: number): number {
@@ -169,26 +227,6 @@ function hash2(seed: number, x: number, y: number): number {
   value = Math.imul(value, 0xc2b2ae35)
   value ^= value >>> 16
   return (value >>> 0) / 4294967295
-}
-
-function fract(value: number): number {
-  return value - Math.floor(value)
-}
-
-/**
- * Hash used by the leaf stamp mask. This mirrors the inexpensive float hash
- * in VoxelSunShadowPass so the shadow proxy can reproduce the same kind of
- * clustered shapes without sampling the atlas.
- */
-function leafHash(seed: number, x: number, y: number): number {
-  let px = fract((x + seed * 0.013) * 0.1031)
-  let py = fract((y + seed * 0.007) * 0.1030)
-  let pz = fract((x + seed * 0.019) * 0.0973)
-  const dot = px * (py + 33.33) + py * (pz + 33.33) + pz * (px + 33.33)
-  px += dot
-  py += dot
-  pz += dot
-  return fract((px + py) * pz)
 }
 
 function valueNoise(x: number, y: number, seed: number): number {
@@ -357,95 +395,203 @@ function generateWoodTopPixel(x: number, y: number, tileSize: number, seed: numb
   return opaque(paletteColor(WOOD_TOP_PALETTE, value, micro))
 }
 
-function leafStampPixel(shape: number, notch: number, dx: number, dy: number): boolean {
-  const ax = Math.abs(dx)
-  const ay = Math.abs(dy)
-  let filled = false
-
-  if (shape === 0) {
-    // Compact 3x3 clump with one deterministic corner clipped away.
-    filled = ax <= 1 && ay <= 1
-    if (filled && ax === 1 && ay === 1) {
-      const clipped = (notch === 0 && dx < 0 && dy < 0) ||
-        (notch === 1 && dx > 0 && dy < 0) ||
-        (notch === 2 && dx > 0 && dy > 0) ||
-        (notch === 3 && dx < 0 && dy > 0)
-      if (clipped) filled = false
-    }
-  } else if (shape === 1) {
-    // A broad, low pixel leaf with a notched end.
-    filled = ax <= 2 && ay <= 1
-    if (filled && ay === 1 && ((notch === 0 && dx < 0) || (notch === 1 && dx > 0))) {
-      filled = ax < 2
-    }
-  } else if (shape === 2) {
-    // The vertical counterpart gives the atlas useful orientation variety.
-    filled = ax <= 1 && ay <= 2
-    if (filled && ax === 1 && ((notch === 2 && dy < 0) || (notch === 3 && dy > 0))) {
-      filled = ay < 2
-    }
-  } else {
-    // An irregular stepped clump: the extension makes a recognizable leaf
-    // silhouette without adding independent per-texel noise.
-    filled = ax <= 1 && ay <= 1
-    if (notch === 0) filled = filled || (dx === 2 && dy === 0)
-    if (notch === 1) filled = filled || (dx === -2 && dy === 0)
-    if (notch === 2) filled = filled || (dx === 0 && dy === 2)
-    if (notch === 3) filled = filled || (dx === 0 && dy === -2)
-    if (filled && ax === 1 && ay === 1 && ((notch + dx + dy) & 1) === 0) filled = false
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state |= 0
+    state = (state + 0x6D2B79F5) | 0
+    let value = Math.imul(state ^ (state >>> 15), 1 | state)
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
   }
+}
 
-  return filled
+function rotateLeafMask(mask: LeafMask): number[][] {
+  const height = mask.length
+  const width = mask[0]?.length ?? 0
+  const rotated = Array.from({ length: width }, () => Array<number>(height).fill(0))
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      rotated[x][height - 1 - y] = mask[y][x] ?? 0
+    }
+  }
+  return rotated
+}
+
+function flipLeafMask(mask: LeafMask): number[][] {
+  return mask.map((row) => [...row].reverse())
+}
+
+function transformLeafMask(mask: LeafMask, rotation: number, flip: boolean): number[][] {
+  let transformed: LeafMask = mask.map((row) => [...row])
+  if (flip) transformed = flipLeafMask(transformed)
+  for (let index = 0; index < rotation; index += 1) transformed = rotateLeafMask(transformed)
+  return transformed.map((row) => [...row])
+}
+
+function computeLeafBoundary(mask: LeafMask, x: number, y: number): boolean {
+  if (!mask[y]?.[x]) return false
+  for (const [offsetX, offsetY] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const nextX = x + offsetX
+    const nextY = y + offsetY
+    if (
+      nextY < 0 || nextY >= mask.length ||
+      nextX < 0 || nextX >= (mask[0]?.length ?? 0) ||
+      !mask[nextY]?.[nextX]
+    ) return true
+  }
+  return false
+}
+
+function makeLeafGrid(size: number): LeafShadeGrid {
+  return Array.from({ length: size }, () => Array<number>(size).fill(-1))
+}
+
+function wrapLeafCoordinate(value: number, size: number): number {
+  return ((value % size) + size) % size
+}
+
+function stampLeafGrid(
+  grid: LeafShadeGrid,
+  leaf: { mask: LeafMask; px: number; py: number; baseShade: number; brightnessMix: number },
+): void {
+  const { mask, px, py, baseShade, brightnessMix } = leaf
+  const height = mask.length
+  const width = mask[0]?.length ?? 0
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (!mask[y]?.[x]) continue
+
+      const gridX = wrapLeafCoordinate(px + x, LEAF_REFERENCE_SIZE)
+      const gridY = wrapLeafCoordinate(py + y, LEAF_REFERENCE_SIZE)
+      const topness = 1 - y / Math.max(1, height - 1)
+      const centerness = 1 - Math.abs(x / Math.max(1, width - 1) - 0.5) * 2
+      let shade = baseShade
+      if (topness > 0.60 && brightnessMix > 0.15) shade += 1
+      if (centerness > 0.55 && topness > 0.35 && brightnessMix > 0.35) shade += 1
+      if (computeLeafBoundary(mask, x, y)) shade -= 1
+      if (y >= height - 1) shade -= 1
+      grid[gridY][gridX] = Math.max(0, Math.min(TREE_LEAF_PALETTE.length - 1, shade))
+    }
+  }
 }
 
 /**
- * Return a binary, pixel-art leaf silhouette made from deterministic stamps.
- * The active stamps are clustered on a coarse grid, so nearby opaque texels
- * form individual leaf clumps while the gaps remain intentional and broad
- * enough to read through a stacked canopy.
+ * Port of ref/procedural_leaves.html. The reference is authored at 32x32 so
+ * leaf silhouettes are built once at that resolution, then area-reduced to
+ * the atlas tile size. This keeps alpha coherent and avoids independent
+ * random transparent texels (the source of the old shimmering stripes).
  */
-function leafStampMask(sampleX: number, sampleY: number, seed: number): boolean {
-  const stampSize = 4
-  const cellX = Math.floor((sampleX + 0.5) / stampSize)
-  const cellY = Math.floor((sampleY + 0.5) / stampSize)
+function buildReferenceLeafGrid(seed: number): LeafShadeGrid {
+  const rand = mulberry32(seed)
+  const grid = makeLeafGrid(LEAF_REFERENCE_SIZE)
+  const columns = 7
+  const rows = 7
+  const cellWidth = LEAF_REFERENCE_SIZE / columns
+  const cellHeight = LEAF_REFERENCE_SIZE / rows
+  const leaves: Array<{
+    mask: LeafMask
+    px: number
+    py: number
+    baseShade: number
+    brightnessMix: number
+  }> = []
+  let placed = 0
 
-  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
-    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-      const clusterX = cellX + offsetX
-      const clusterY = cellY + offsetY
-      if (leafHash(seed + 211, clusterX, clusterY) < 0.46) continue
+  for (let gridY = 0; gridY < rows; gridY += 1) {
+    for (let gridX = 0; gridX < columns; gridX += 1) {
+      if (placed >= LEAF_REFERENCE_COUNT) break
+      if (rand() < LEAF_REFERENCE_GAP_BIAS) continue
 
-      const anchorX = clusterX * stampSize + 1 + Math.floor(leafHash(seed + 223, clusterX, clusterY) * 3)
-      const anchorY = clusterY * stampSize + 1 + Math.floor(leafHash(seed + 227, clusterX, clusterY) * 3)
-      const shape = Math.floor(leafHash(seed + 229, clusterX, clusterY) * 4)
-      const notch = Math.floor(leafHash(seed + 233, clusterX, clusterY) * 4)
-      if (leafStampPixel(shape, notch, sampleX - anchorX, sampleY - anchorY)) return true
+      const shape = LEAF_SHAPES[Math.floor(rand() * LEAF_SHAPES.length)] ?? LEAF_SHAPES[0]
+      const mask = transformLeafMask(shape, Math.floor(rand() * 4), rand() < 0.5)
+      const width = mask[0]?.length ?? 0
+      const height = mask.length
+      const anchorX = Math.floor(gridX * cellWidth + (cellWidth - width) * 0.5)
+      const anchorY = Math.floor(gridY * cellHeight + (cellHeight - height) * 0.5)
+      const jitterX = Math.floor((rand() * 2 - 1) * LEAF_REFERENCE_JITTER)
+      const jitterY = Math.floor((rand() * 2 - 1) * LEAF_REFERENCE_JITTER)
+      leaves.push({
+        mask,
+        px: anchorX + jitterX,
+        py: anchorY + jitterY,
+        baseShade: 1 + Math.floor(rand() * 4),
+        brightnessMix: LEAF_REFERENCE_BRIGHTNESS_MIX,
+      })
+      placed += 1
     }
   }
 
-  return false
+  while (leaves.length < LEAF_REFERENCE_COUNT) {
+    const shape = LEAF_SHAPES[Math.floor(rand() * LEAF_SHAPES.length)] ?? LEAF_SHAPES[0]
+    const mask = transformLeafMask(shape, Math.floor(rand() * 4), rand() < 0.5)
+    const width = mask[0]?.length ?? 0
+    const height = mask.length
+    leaves.push({
+      mask,
+      px: Math.floor(rand() * LEAF_REFERENCE_SIZE) - Math.floor(width / 2),
+      py: Math.floor(rand() * LEAF_REFERENCE_SIZE) - Math.floor(height / 2),
+      baseShade: 1 + Math.floor(rand() * 4),
+      brightnessMix: LEAF_REFERENCE_BRIGHTNESS_MIX,
+    })
+  }
+
+  for (const leaf of leaves) stampLeafGrid(grid, leaf)
+
+  const copy = grid.map((row) => [...row])
+  for (let y = 0; y < LEAF_REFERENCE_SIZE; y += 1) {
+    for (let x = 0; x < LEAF_REFERENCE_SIZE; x += 1) {
+      if (copy[y][x] < 0) continue
+      let neighbours = 0
+      for (const [offsetX, offsetY] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (copy[wrapLeafCoordinate(y + offsetY, LEAF_REFERENCE_SIZE)][wrapLeafCoordinate(x + offsetX, LEAF_REFERENCE_SIZE)] >= 0) {
+          neighbours += 1
+        }
+      }
+      if (neighbours === 0) grid[y][x] = -1
+    }
+  }
+  return grid
+}
+
+function buildLeafShadeGrid(tileSize: number, seed: number): LeafShadeGrid {
+  const source = buildReferenceLeafGrid(seed)
+  if (tileSize === LEAF_REFERENCE_SIZE) return source
+
+  const grid = makeLeafGrid(tileSize)
+  for (let y = 0; y < tileSize; y += 1) {
+    const sourceY0 = Math.floor(y * LEAF_REFERENCE_SIZE / tileSize)
+    const sourceY1 = Math.max(sourceY0, Math.ceil((y + 1) * LEAF_REFERENCE_SIZE / tileSize) - 1)
+    for (let x = 0; x < tileSize; x += 1) {
+      const sourceX0 = Math.floor(x * LEAF_REFERENCE_SIZE / tileSize)
+      const sourceX1 = Math.max(sourceX0, Math.ceil((x + 1) * LEAF_REFERENCE_SIZE / tileSize) - 1)
+      let occupied = 0
+      let shadeSum = 0
+      let sourcePixels = 0
+      for (let sourceY = sourceY0; sourceY <= Math.min(LEAF_REFERENCE_SIZE - 1, sourceY1); sourceY += 1) {
+        for (let sourceX = sourceX0; sourceX <= Math.min(LEAF_REFERENCE_SIZE - 1, sourceX1); sourceX += 1) {
+          sourcePixels += 1
+          const shade = source[sourceY][sourceX]
+          if (shade < 0) continue
+          occupied += 1
+          shadeSum += shade
+        }
+      }
+      if (occupied * 2 >= sourcePixels && occupied > 0) grid[y][x] = Math.round(shadeSum / occupied)
+    }
+  }
+  return grid
 }
 
 function generateLeafPixel(
   x: number,
   y: number,
-  tileSize: number,
-  seed: number,
+  grid: LeafShadeGrid | undefined,
   palette: readonly RGB[],
-  maskSeed: number,
 ): RGBA {
-  const scale = 16 / tileSize
-  const px = x * scale
-  const py = y * scale
-  const sampleX = Math.floor(px)
-  const sampleY = Math.floor(py)
-  if (!leafStampMask(sampleX, sampleY, maskSeed)) return [0, 0, 0, 0]
-
-  const fields = materialFields(px, py, seed + 137)
-  const clusterTone = leafHash(maskSeed + 241, Math.floor(sampleX / 4), Math.floor(sampleY / 4))
-  const micro = hash2(seed + 149, sampleX, sampleY)
-  const value = 0.04 + fields.structure * 0.70 + clusterTone * 0.18
-  return opaque(paletteColor(palette, value, micro))
+  const shade = grid?.[y]?.[x] ?? -1
+  if (shade < 0) return [0, 0, 0, 0]
+  return opaque(palette[Math.min(palette.length - 1, shade)] ?? palette[0])
 }
 
 function generatePixel(
@@ -454,6 +600,7 @@ function generatePixel(
   y: number,
   tileSize: number,
   seed: number,
+  leafGrid?: LeafShadeGrid,
 ): RGBA {
   const { baseName, variant } = resolveTextureVariant(name)
   const variantSeed = seed + variant * 1049
@@ -465,12 +612,8 @@ function generatePixel(
     case 'sand': return generateSandPixel(x, y, tileSize, variantSeed)
     case 'wood_top': return generateWoodTopPixel(x, y, tileSize, variantSeed)
     case 'wood_side': return generateWoodSidePixel(x, y, tileSize, variantSeed)
-    case 'tree_leaves': return generateLeafPixel(
-      x, y, tileSize, variantSeed + 163, TREE_LEAF_PALETTE, variantSeed + 191,
-    )
-    case 'cherry_leaves': return generateLeafPixel(
-      x, y, tileSize, variantSeed + 167, CHERRY_LEAF_PALETTE, variantSeed + 191,
-    )
+    case 'tree_leaves': return generateLeafPixel(x, y, leafGrid, TREE_LEAF_PALETTE)
+    case 'cherry_leaves': return generateLeafPixel(x, y, leafGrid, CHERRY_LEAF_PALETTE)
     case 'water':
     case 'air':
       return [0, 0, 0, 0]
@@ -519,14 +662,18 @@ function buildTile(
   debugMode: ProceduralTextureDebugMode,
 ): Uint8Array {
   const data = new Uint8Array(tileSize * tileSize * 4)
+  const resolved = resolveTextureVariant(name)
+  const leafGrid = resolved.baseName === 'tree_leaves' || resolved.baseName === 'cherry_leaves'
+    ? buildLeafShadeGrid(tileSize, seed + resolved.variant * 1049 + 191)
+    : undefined
   for (let y = 0; y < tileSize; y += 1) {
     for (let x = 0; x < tileSize; x += 1) {
       // The legacy atlas rotated grass_side after loading. Preserve that
       // authored orientation while no longer depending on an image asset.
-      const sourceName = resolveTextureVariant(name).baseName
+      const sourceName = resolved.baseName
       const sourceX = sourceName === 'grass_side' ? tileSize - 1 - x : x
       const sourceY = sourceName === 'grass_side' ? tileSize - 1 - y : y
-      const pixel = generatePixel(name, sourceX, sourceY, tileSize, seed)
+      const pixel = generatePixel(name, sourceX, sourceY, tileSize, seed, leafGrid)
       const scale = 16 / tileSize
       const fields = materialFields(sourceX * scale, sourceY * scale, seed + 191)
       writePixel(data, tileSize, x, y, applyDebugMode(pixel, debugMode, fields))

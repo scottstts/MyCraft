@@ -32,6 +32,16 @@ const SUN_ANGULAR_RADIUS = SOLAR_ANGULAR_RADIUS * 2.25;
 // caster budget aligned with the most detailed authored body so every visible
 // part remains registered as a shadow caster when the active appearance changes.
 const MAX_CHARACTER_SHADOW_BOXES = 48;
+const LEAF_VARIANT_SLOTS = 4;
+
+export interface VoxelLeafAtlasBinding {
+  texture: THREE.Texture;
+  atlasSize: number;
+  tileSize: number;
+  atlasHeight?: number;
+  /** Base leaf tile followed by the generated variant tiles. */
+  variantTiles?: ReadonlyArray<readonly [number, number]>;
+}
 
 export interface VoxelSunShadowDiagnostics {
   enabled: boolean;
@@ -53,6 +63,7 @@ export class VoxelSunShadowPass {
   private readonly quadGeometry: THREE.PlaneGeometry;
   private readonly quadMaterial: THREE.ShaderMaterial;
   private readonly quad: THREE.Mesh;
+  private readonly leafAtlasFallback: THREE.DataTexture | null;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private readonly resolution = new THREE.Vector2(1, 1);
@@ -85,10 +96,33 @@ export class VoxelSunShadowPass {
   private characterBoxCount = 0;
   private characterShadowMaxDistance = RENDER_STYLE.shadows.character.maxDistance;
 
-  constructor(renderer: THREE.WebGLRenderer, width: number, height: number, volume: VoxelOccupancyVolume) {
+  constructor(
+    renderer: THREE.WebGLRenderer,
+    width: number,
+    height: number,
+    volume: VoxelOccupancyVolume,
+    leafAtlas?: VoxelLeafAtlasBinding,
+  ) {
     this.renderer = renderer;
     this.volume = volume;
     this.supported = renderer.capabilities.isWebGL2;
+
+    const leafAtlasFallback = leafAtlas ? null : new THREE.DataTexture(
+      new Uint8Array([255, 255, 255, 255]),
+      1,
+      1,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    );
+    if (leafAtlasFallback) leafAtlasFallback.needsUpdate = true;
+    const leafVariantTiles = Array.from({ length: LEAF_VARIANT_SLOTS }, (_, index) => {
+      const tile = leafAtlas?.variantTiles?.[index] ?? leafAtlas?.variantTiles?.[0] ?? [8, 0];
+      return new THREE.Vector4(tile[0], tile[1], 0, 0);
+    });
+    const leafVariantCount = Math.max(1, Math.min(
+      LEAF_VARIANT_SLOTS,
+      leafAtlas?.variantTiles?.length ?? 1,
+    ));
 
     const effectiveWidth = Math.max(1, Math.floor(width * renderer.getPixelRatio()));
     const effectiveHeight = Math.max(1, Math.floor(height * renderer.getPixelRatio()));
@@ -120,9 +154,18 @@ export class VoxelSunShadowPass {
         uUseReceiverWorld: { value: false },
         uVoxelOccupancy: { value: volume.texture },
         uBrickOccupancy: { value: volume.brickTexture },
+        uBrickDetailOccupancy: { value: volume.brickDetailTexture },
+        uLeafBrickDensity: { value: volume.leafBrickTexture },
         uLeafOccupancy: { value: volume.leafTexture },
         uGrassOccupancy: { value: volume.grassTexture },
         uSeaweedAnchors: { value: volume.seaweedTexture },
+        uLeafAtlas: { value: leafAtlas?.texture ?? leafAtlasFallback },
+        uLeafAtlasEnabled: { value: !!leafAtlas },
+        uLeafAtlasSize: { value: Math.max(1, leafAtlas?.atlasSize ?? 1) },
+        uLeafAtlasHeight: { value: Math.max(1, leafAtlas?.atlasHeight ?? 1) },
+        uLeafAtlasTileSize: { value: Math.max(1, leafAtlas?.tileSize ?? 1) },
+        uLeafVariantCount: { value: leafVariantCount },
+        uLeafVariantTiles: { value: leafVariantTiles },
         uVolumeOrigin: { value: volume.origin.clone() },
         uVolumeSize: { value: volume.dimensions.clone() },
         uBrickGridSize: { value: volume.brickDimensions.clone() },
@@ -163,9 +206,18 @@ export class VoxelSunShadowPass {
         uniform bool uUseReceiverWorld;
         uniform sampler3D uVoxelOccupancy;
         uniform sampler3D uBrickOccupancy;
+        uniform sampler3D uBrickDetailOccupancy;
+        uniform sampler3D uLeafBrickDensity;
         uniform sampler3D uLeafOccupancy;
         uniform sampler3D uGrassOccupancy;
         uniform sampler2D uSeaweedAnchors;
+        uniform sampler2D uLeafAtlas;
+        uniform bool uLeafAtlasEnabled;
+        uniform float uLeafAtlasSize;
+        uniform float uLeafAtlasHeight;
+        uniform float uLeafAtlasTileSize;
+        uniform int uLeafVariantCount;
+        uniform vec4 uLeafVariantTiles[${LEAF_VARIANT_SLOTS}];
         uniform vec3 uVolumeOrigin;
         uniform vec3 uVolumeSize;
         uniform vec3 uBrickGridSize;
@@ -194,6 +246,7 @@ export class VoxelSunShadowPass {
         layout(location = 0) out vec4 outColor;
 
         const int BRICK_SIZE = ${VOXEL_SHADOW_BRICK_SIZE};
+        const float LEAF_BRICK_DENSITY_FAST_PATH_THRESHOLD = 0.18;
 
         bool insideVolume(ivec3 cell) {
           return all(greaterThanEqual(cell, ivec3(0))) &&
@@ -217,79 +270,105 @@ export class VoxelSunShadowPass {
           return texture(uBrickOccupancy, (vec3(brick) + vec3(0.5)) / uBrickGridSize).r;
         }
 
+        float brickDetailAt(ivec3 brick) {
+          return texture(uBrickDetailOccupancy, (vec3(brick) + vec3(0.5)) / uBrickGridSize).r;
+        }
+
+        float leafBrickDensityAt(ivec3 brick) {
+          return texture(uLeafBrickDensity, (vec3(brick) + vec3(0.5)) / uBrickGridSize).r;
+        }
+
+        vec3 getBrickBoundary(ivec3 brick, vec3 direction) {
+          vec3 brickMin = vec3(brick * BRICK_SIZE);
+          // Edge bricks can be smaller than BRICK_SIZE. Clamp their positive
+          // boundary to the actual volume so density integration never counts
+          // empty space beyond the authoritative occupancy field.
+          vec3 brickMax = min(brickMin + vec3(float(BRICK_SIZE)), uVolumeSize);
+          return mix(brickMin, brickMax, greaterThan(direction, vec3(0.0)));
+        }
+
         float grassAt(ivec3 cell) {
           return texture(uGrassOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
         }
 
-        // The visible leaf tile is a sparse 16x16 cutout. Reconstruct its
-        // coverage as the same clustered field in the shadow pass, then use
-        // that alpha as optical density instead of treating a leaf voxel as a
-        // solid blocker. The solar-disc probes turn this continuous coverage
-        // into the characteristic sieve pattern on receivers.
-        float leafHash(vec2 p, float salt) {
-          vec3 p3 = fract(vec3(
-            p.x + salt * 0.013,
-            p.y + salt * 0.007,
-            p.x + salt * 0.019
-          ) *
-            vec3(0.1031, 0.1030, 0.0973));
-          p3 += dot(p3, p3.yzx + 33.33);
-          return fract((p3.x + p3.y) * p3.z);
-        }
-
-        float leafNoise(vec2 p, float salt) {
-          vec2 i = floor(p);
-          vec2 f = fract(p);
-          vec2 u = f * f * (3.0 - 2.0 * f);
-          return mix(
-            mix(leafHash(i, salt), leafHash(i + vec2(1.0, 0.0), salt), u.x),
-            mix(leafHash(i + vec2(0.0, 1.0), salt), leafHash(i + vec2(1.0), salt), u.x),
-            u.y
-          );
-        }
-
-        float leafFbm(vec2 p, float salt) {
-          return (
-            leafNoise(p, salt) * 0.5 +
-            leafNoise(p * 2.03, salt + 977.0) * 0.25
-          ) / 0.75;
+        uint leafHash32(ivec3 point) {
+          uint h = (uint(point.x) * 374761393u)
+            ^ (uint(point.y) * 668265263u)
+            ^ (uint(point.z) * 2147483647u);
+          h = (h ^ (h >> 13u)) * 1274126177u;
+          return h ^ (h >> 16u);
         }
 
         vec2 rotateLeafUv(vec2 uv, float turn) {
           if (turn < 0.5) return uv;
-          if (turn < 1.5) return vec2(uv.y, 1.0 - uv.x);
+          if (turn < 1.5) return vec2(1.0 - uv.y, uv.x);
           if (turn < 2.5) return vec2(1.0 - uv.x, 1.0 - uv.y);
-          return vec2(1.0 - uv.y, uv.x);
+          return vec2(uv.y, 1.0 - uv.x);
         }
 
-        float leafAlphaAt(vec2 uv, ivec3 cell) {
-          float cellSalt = float(cell.x) * 17.0 + float(cell.y) * 53.0 + float(cell.z) * 97.0;
-          float turn = floor(leafHash(vec2(float(cell.x), float(cell.z)), float(cell.y) + 211.0) * 4.0);
-          vec2 orientedUv = rotateLeafUv(clamp(uv, vec2(0.0), vec2(1.0)), turn);
-          vec2 texel = orientedUv * 16.0;
-          vec2 clusterCell = floor(texel / 1.75);
-          float cluster = leafFbm(clusterCell * 0.67 + vec2(5.3, -2.1), cellSalt + 131.0);
-          float micro = leafHash(floor(texel), cellSalt + 149.0);
-          float edgePenalty = (
-            orientedUv.x < 0.0625 || orientedUv.x > 0.9375 ||
-            orientedUv.y < 0.0625 || orientedUv.y > 0.9375
-          ) ? 0.12 : 0.0;
-          float coverage = 0.53 + (cluster - 0.5) * 0.82 + (micro - 0.5) * 0.26 - edgePenalty;
-          return smoothstep(0.38, 0.48, coverage);
+        int leafFaceSalt(vec3 direction) {
+          vec3 absoluteDirection = abs(direction);
+          if (absoluteDirection.y >= absoluteDirection.x && absoluteDirection.y >= absoluteDirection.z) {
+            return direction.y > 0.0 ? 17 : 31;
+          }
+          if (absoluteDirection.x >= absoluteDirection.z) return direction.x > 0.0 ? 71 : 83;
+          return direction.z > 0.0 ? 43 : 59;
         }
 
         vec2 leafFaceUv(vec3 pointInCell, vec3 direction) {
           vec3 absoluteDirection = abs(direction);
           if (absoluteDirection.y >= absoluteDirection.x && absoluteDirection.y >= absoluteDirection.z) {
-            return pointInCell.xz;
+            return direction.y > 0.0
+              ? pointInCell.xz
+              : vec2(pointInCell.x, 1.0 - pointInCell.z);
           }
-          if (absoluteDirection.x >= absoluteDirection.z) return pointInCell.zy;
-          return pointInCell.xy;
+          if (absoluteDirection.x >= absoluteDirection.z) {
+            return direction.x > 0.0
+              ? vec2(1.0 - pointInCell.z, 1.0 - pointInCell.y)
+              : vec2(pointInCell.z, 1.0 - pointInCell.y);
+          }
+          return direction.z > 0.0
+            ? vec2(pointInCell.x, 1.0 - pointInCell.y)
+            : vec2(1.0 - pointInCell.x, 1.0 - pointInCell.y);
         }
 
-        float leafShadowTransmission(vec3 local, vec3 direction, ivec3 cell, float travel) {
+        float fallbackLeafAlpha(vec2 uv, ivec3 cell) {
+          // Runtime uses the generated atlas. Keep an explicitly clustered,
+          // stable fallback for diagnostic construction without an atlas; it
+          // must not reintroduce per-fragment FBM or scanline noise.
+          ivec2 cluster = ivec2(floor(clamp(uv, vec2(0.0), vec2(1.0)) * 8.0));
+          uint hash = leafHash32(cell + ivec3(cluster, cluster.x + cluster.y));
+          return (hash & 3u) == 0u ? 0.0 : 1.0;
+        }
+
+        float leafAlphaAt(vec2 uv, ivec3 cell, vec3 faceDirection) {
+          ivec3 worldCell = cell + ivec3(floor(uVolumeOrigin));
+          int salt = leafFaceSalt(faceDirection);
+          uint variantHash = leafHash32(ivec3(
+            worldCell.x + salt,
+            worldCell.y + salt * 3,
+            worldCell.z + salt * 7
+          ));
+          int variant = int(variantHash % uint(max(uLeafVariantCount, 1)));
+          float tileSize = max(uLeafAtlasTileSize, 1.0);
+          vec2 orientedUv = rotateLeafUv(clamp(uv, vec2(0.0), vec2(1.0)), float(variantHash & 3u));
+          vec2 texel = clamp(floor(orientedUv * tileSize), vec2(0.0), vec2(tileSize - 1.0));
+          if (!uLeafAtlasEnabled) return fallbackLeafAlpha(orientedUv, worldCell);
+          vec4 tile = uLeafVariantTiles[variant];
+          vec2 atlasTexel = tile.xy * tileSize + texel + vec2(0.5);
+          vec2 atlasResolution = vec2(uLeafAtlasSize * tileSize, uLeafAtlasHeight * tileSize);
+          return texture(uLeafAtlas, atlasTexel / atlasResolution).a;
+        }
+
+        float leafShadowTransmission(
+          vec3 local,
+          vec3 direction,
+          ivec3 cell,
+          float travel,
+          vec3 faceDirection
+        ) {
           vec3 exitPoint = clamp(local + direction * travel - vec3(cell), vec3(0.0), vec3(1.0));
-          float coverage = leafAlphaAt(leafFaceUv(exitPoint, direction), cell);
+          float coverage = leafAlphaAt(leafFaceUv(exitPoint, faceDirection), cell, faceDirection);
           // A fully covered cutout texel still transmits a small amount through
           // the leaf volume; neighboring leaf voxels then accumulate naturally
           // while isolated blocks remain visibly porous.
@@ -560,6 +639,9 @@ export class VoxelSunShadowPass {
           vec3 inverseDirection = 1.0 / abs(directionSafe);
           float travelled = 0.0;
           float visibility = 1.0;
+          ivec3 cachedLeafBrick = ivec3(-1);
+          float cachedLeafDensity = 0.0;
+          bool cachedLeafOnly = false;
 
           for (int iteration = 0; iteration < ${MAX_SHADER_STEPS}; iteration++) {
             if (iteration >= uMaxSteps) break;
@@ -574,10 +656,7 @@ export class VoxelSunShadowPass {
 
             ivec3 brick = cell / BRICK_SIZE;
             if (insideBrickGrid(brick) && brickAt(brick) < 0.5) {
-              vec3 brickMin = vec3(brick * BRICK_SIZE);
-              vec3 brickBoundary = brickMin + mix(
-                vec3(0.0), vec3(float(BRICK_SIZE)), greaterThan(direction, vec3(0.0))
-              );
+              vec3 brickBoundary = getBrickBoundary(brick, direction);
               vec3 brickDistance = (brickBoundary - local) / directionSafe;
               float jump = minimumPositive(brickDistance);
               if (jump < 1e29) {
@@ -589,6 +668,44 @@ export class VoxelSunShadowPass {
               }
             }
 
+            // A dense brick containing only leaves has no opaque voxel or
+            // billboard caster that requires per-cell detail. Integrate its
+            // measured leaf occupancy in one step. This is the main tree-cost
+            // reduction: a dense canopy no longer forces a full 8³ DDA walk
+            // for every sun probe, while sparse and mixed bricks retain the
+            // exact path below.
+            if (insideBrickGrid(brick)) {
+              if (any(notEqual(brick, cachedLeafBrick))) {
+                cachedLeafBrick = brick;
+                cachedLeafDensity = leafBrickDensityAt(brick);
+                cachedLeafOnly = cachedLeafDensity >= LEAF_BRICK_DENSITY_FAST_PATH_THRESHOLD &&
+                  brickDetailAt(brick) < 0.5;
+              }
+              if (cachedLeafOnly) {
+                float density = cachedLeafDensity;
+                vec3 brickBoundary = getBrickBoundary(brick, direction);
+                vec3 brickDistance = (brickBoundary - local) / directionSafe;
+                float jump = minimumPositive(brickDistance);
+                if (jump < 1e29) {
+                  bool receiverInBrick = all(equal(
+                    brick,
+                    ivec3(floor(vec3(receiverCell) / float(BRICK_SIZE)))
+                  ));
+                  // Preserve the per-cell self-hit suppression used by the
+                  // detailed path when the receiver itself is a leaf fragment.
+                  if (receiverInBrick && leafAt(receiverCell) > 0.5) {
+                    density = max(0.0, density - 1.0 / 512.0);
+                  }
+                  visibility *= exp(-0.78 * density * jump);
+                  travelled += jump;
+                  if (travelled > uMaxDistance) return visibility;
+                  local += directionSafe * (jump + 1e-3);
+                  cell = ivec3(floor(local));
+                  continue;
+                }
+              }
+            }
+
             vec3 voxelBoundary = vec3(cell) + mix(
               vec3(0.0), vec3(1.0), greaterThan(direction, vec3(0.0))
             );
@@ -597,9 +714,24 @@ export class VoxelSunShadowPass {
             travelled += travel;
             if (travelled > uMaxDistance || travel >= 1e29) return visibility;
 
+            vec3 exitFaceDirection = vec3(0.0);
+            if (voxelDistance.x <= voxelDistance.y && voxelDistance.x <= voxelDistance.z) {
+              exitFaceDirection.x = stepAxis.x;
+            } else if (voxelDistance.y <= voxelDistance.z) {
+              exitFaceDirection.y = stepAxis.y;
+            } else {
+              exitFaceDirection.z = stepAxis.z;
+            }
+
             bool differentDecorativeCell = any(notEqual(cell, receiverCell));
             if (differentDecorativeCell && leafAt(cell) > 0.5) {
-              visibility *= leafShadowTransmission(local, direction, cell, travel);
+              visibility *= leafShadowTransmission(
+                local,
+                direction,
+                cell,
+                travel,
+                exitFaceDirection
+              );
               if (visibility <= 0.01) return 0.0;
             }
             if (grassAt(cell) > 0.5 && grassBladeHit(local, direction, cell, travel)) return 0.0;
@@ -630,19 +762,13 @@ export class VoxelSunShadowPass {
           vec3 tangentB,
           bool includeSeaweed
         ) {
-          // Five cheap probes are used only as a boundary classifier.  If all
-          // agree, the receiver is in stable umbra/full light and no extra
-          // rays are needed.  Mixed probes trigger equal-area disc sampling.
-          float center = traceVisibility(receiver, sun, includeSeaweed);
-          float sideA = traceVisibility(receiver, normalize(sun + tangentA * uSunAngularRadius), includeSeaweed);
-          float sideB = traceVisibility(receiver, normalize(sun - tangentA * uSunAngularRadius), includeSeaweed);
-          float sideC = traceVisibility(receiver, normalize(sun + tangentB * uSunAngularRadius), includeSeaweed);
-          float sideD = traceVisibility(receiver, normalize(sun - tangentB * uSunAngularRadius), includeSeaweed);
-          if (center == sideA && center == sideB && center == sideC && center == sideD) return center;
-
-          const int DISC_SAMPLES = 16;
+          // Use one fixed, deterministic nine-ray kernel. The previous
+          // 5-or-21-ray boundary classifier made the cost and result change
+          // abruptly as a leaf edge crossed a pixel, which presented as both
+          // tree-adjacent FPS drops and flickering shadow stripes.
+          const int DISC_SAMPLES = 8;
           const float GOLDEN_ANGLE = 2.39996323;
-          float sum = center + sideA + sideB + sideC + sideD;
+          float sum = traceVisibility(receiver, sun, includeSeaweed);
           for (int i = 0; i < DISC_SAMPLES; i++) {
             float fraction = (float(i) + 0.5) / float(DISC_SAMPLES);
             float radius = sqrt(fraction) * uSunAngularRadius;
@@ -654,7 +780,7 @@ export class VoxelSunShadowPass {
               includeSeaweed
             );
           }
-          return sum / float(5 + DISC_SAMPLES);
+          return sum / float(1 + DISC_SAMPLES);
         }
 
         void main() {
@@ -712,6 +838,7 @@ export class VoxelSunShadowPass {
       depthWrite: false,
       blending: THREE.NoBlending,
     });
+    this.leafAtlasFallback = leafAtlasFallback;
     this.quad = new THREE.Mesh(this.quadGeometry, this.quadMaterial);
     this.quad.frustumCulled = false;
     this.scene.add(this.quad);
@@ -959,5 +1086,6 @@ export class VoxelSunShadowPass {
     this.forwardTarget.dispose();
     this.quadGeometry.dispose();
     this.quadMaterial.dispose();
+    this.leafAtlasFallback?.dispose();
   }
 }
