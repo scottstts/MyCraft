@@ -53,6 +53,26 @@ describe('player controller feet collision', () => {
     expect(jumpingController.getFeetPosition().y).toBeCloseTo(1, 3);
   });
 
+  it('clears a one-block wall at the maximum low-FPS simulation delta', () => {
+    let jumpRequested = true;
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(0.5, 1 + PLAYER.eyeHeight, 0.5);
+    const controller = new PlayerController(
+      camera,
+      createFlatWorldWithOneBlockWall(),
+      createInput(() => {
+        const requested = jumpRequested;
+        jumpRequested = false;
+        return requested;
+      }),
+    );
+
+    for (let frame = 0; frame < 40; frame += 1) controller.update(0.1);
+
+    expect(controller.getFeetPosition().x).toBeGreaterThan(2.3);
+    expect(controller.getFeetPosition().y).toBeCloseTo(1, 3);
+  });
+
   it('keeps a downward-swimming collider above a solid seabed', () => {
     const seabedTop = 21;
     const camera = new THREE.PerspectiveCamera();

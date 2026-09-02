@@ -194,9 +194,13 @@ export class PlayerController {
     const dx = normX * speed * deltaSeconds;
     const dz = normZ * speed * deltaSeconds;
 
-    // Apply gravity
+    // Integrate constant-gravity motion analytically for this frame. Applying
+    // gravity before multiplying by dt (semi-implicit Euler) makes the jump
+    // apex depend on frame cadence; at the engine's 100 ms low-FPS clamp that
+    // loses enough height to miss a one-block ledge.
+    const dy = this.velocityY * deltaSeconds
+      + 0.5 * this.gravity * deltaSeconds * deltaSeconds;
     this.velocityY += this.gravity * deltaSeconds;
-    const dy = this.velocityY * deltaSeconds;
 
     // Axis-separated sweep: resolve X, then Z, then Y
     const landHitX = this.resolveAxis('x', dx);
