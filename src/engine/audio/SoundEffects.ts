@@ -13,6 +13,8 @@ import oceanUrl from '../../assets/sounds/sound_effects/ocean.mp3'
 
 export const CAMERA_AUDIO_SUBMERSION_THRESHOLD = 0.5
 export const CAMERA_AUDIO_SAMPLE_HEIGHT = 0.4
+export const OCEAN_AUDIO_REFERENCE_DISTANCE = 12
+export const OCEAN_AUDIO_MAX_DISTANCE = 96
 
 /**
  * Treat a small vertical camera envelope as the audio listener volume. At the
@@ -29,6 +31,31 @@ export function getCameraWaterSubmersion(
     0,
     Math.min(1, (upperEdge - cameraY) / CAMERA_AUDIO_SAMPLE_HEIGHT),
   )
+}
+
+/**
+ * Convert the shortest sampled distance to an ocean shore into an audio gain.
+ * Sound intensity follows the inverse-square law, so a reference distance of
+ * 12 blocks is full-strength and the intensity falls as (r / d)^2. Real-world
+ * propagation never reaches mathematical zero, but a game needs a finite
+ * audibility boundary; the last quarter of the configured range is therefore
+ * a smooth cutoff that reaches exactly zero at the boundary.
+ */
+export function getInverseSquareSoundAttenuation(
+  distance: number,
+  referenceDistance: number = OCEAN_AUDIO_REFERENCE_DISTANCE,
+  maxDistance: number = OCEAN_AUDIO_MAX_DISTANCE,
+): number {
+  if (!Number.isFinite(distance) || !Number.isFinite(referenceDistance) || !Number.isFinite(maxDistance)) return 0
+  const reference = Math.max(0.001, referenceDistance)
+  const maximum = Math.max(reference, maxDistance)
+  if (distance >= maximum) return 0
+  const effectiveDistance = Math.max(0, distance)
+  const intensity = Math.min(1, (reference / Math.max(reference, effectiveDistance)) ** 2)
+  const fadeStart = maximum * 0.75
+  const fadeT = Math.max(0, Math.min(1, (distance - fadeStart) / Math.max(0.001, maximum - fadeStart)))
+  const cutoff = 1 - fadeT * fadeT
+  return Math.max(0, Math.min(1, intensity * cutoff))
 }
 
 function makeLoopingAudio(src: string, volume: number): HTMLAudioElement {
@@ -108,9 +135,11 @@ export class SoundEffects {
   private sfxVolume: number = 0.7
 
   private footLoop = new OneShotLooper(footstepUrl, this.sfxVolume)
-  private waterLoop = new OneShotLooper(waterStepUrl, this.sfxVolume)
   private underLoop = makeLoopingAudio(underwaterUrl, this.sfxVolume * 0.8)
   private oceanLoop = makeLoopingAudio(oceanUrl, this.sfxVolume * 0.6)
+
+  private waterStepClip: HTMLAudioElement | null = null
+  private lastTouchingWater = false
 
   // Ocean proximity sampling (to control ocean volume by distance to sea)
   private oceanSampleTimer = 0
@@ -127,13 +156,14 @@ export class SoundEffects {
     this.lastX = position.x
     this.lastY = position.y
     this.lastZ = position.z
+    this.lastTouchingWater = this.isTouchingWaterSurface() || (this.player.isUnderwater?.() ?? false)
   }
 
   setVolume(v: number) {
     const vol = Math.max(0, Math.min(1, v))
     this.sfxVolume = vol
     this.footLoop.setVolume(vol)
-    this.waterLoop.setVolume(vol)
+    if (this.waterStepClip) this.waterStepClip.volume = vol
     this.underLoop.volume = Math.max(0, Math.min(1, vol * 0.8))
     // Base ocean loudness scales with SFX volume; proximity is applied per-frame
     this.oceanLoop.volume = Math.max(0, Math.min(1, vol * 0.6))
@@ -181,15 +211,46 @@ export class SoundEffects {
     }
   }
 
+  /**
+   * Water steps are a serialized one-shot stream. A trigger that arrives while
+   * the current sample is playing is intentionally ignored rather than
+   * overlapping or restarting it. When cadence stops, the active sample is
+   * left alone but no replacement can be scheduled.
+   */
+  private startWaterStepIfIdle(): void {
+    const current = this.waterStepClip
+    if (current && !current.paused && !current.ended) return
+
+    try {
+      const audio = new Audio(waterStepUrl)
+      audio.preload = 'auto'
+      audio.loop = false
+      audio.volume = this.sfxVolume
+      audio.onended = () => {
+        if (this.waterStepClip !== audio) return
+        this.waterStepClip = null
+      }
+      this.waterStepClip = audio
+      void audio.play().catch(() => {
+        if (this.waterStepClip === audio) this.waterStepClip = null
+      })
+    } catch {
+      // Ignore unavailable audio devices and autoplay failures.
+    }
+  }
+
+  private setWaterStepCadenceActive(active: boolean): void {
+    if (active) this.startWaterStepIfIdle()
+  }
+
   // Public one-shots for interactions (both use the same block sound)
   playBreak(): void { this.playOneShot(blockUrl, this.sfxVolume) }
   playPlace(): void { this.playOneShot(blockUrl, this.sfxVolume) }
 
   update(dtSeconds: number, paused: boolean, inGame: boolean) {
     if (paused || !inGame) {
-      // Stop requesting new foot/water clips; let last ones finish.
+      // Stop requesting new footstep clips; let the current clip finish.
       this.footLoop.setDesired(false)
-      this.waterLoop.setDesired(false)
       // Underwater is allowed to terminate immediately
       this.setLoopPlaying(this.underLoop, false)
       // Ocean follows same pause logic as BG music: pause when game paused/not in game
@@ -200,6 +261,8 @@ export class SoundEffects {
       this.lastY = position.y
       this.lastZ = position.z
       this.lastGrounded = this.player.isGrounded()
+      this.lastTouchingWater = this.isTouchingWaterSurface() || (this.player.isUnderwater?.() ?? false)
+      this.setWaterStepCadenceActive(false)
       return
     }
 
@@ -212,8 +275,12 @@ export class SoundEffects {
 
     const grounded = this.player.isGrounded()
 
-    // Determine if touching water surface blocks
-    const touchingWater = this.isTouchingWaterSurface()
+    // Keep surface contact separate from the authoritative swim state. A
+    // player can pass below the one-block surface layer while still being in
+    // the same water body; combining both avoids a false "exit" splash.
+    const touchingWaterSurface = this.isTouchingWaterSurface()
+    const playerUnderWater = this.player.isUnderwater?.() ?? false
+    const touchingWater = touchingWaterSurface || playerUnderWater
 
     // The audio listener is the active gameplay camera. This intentionally
     // differs from the player's physics swim state so third-person audio
@@ -225,29 +292,31 @@ export class SoundEffects {
     const inputMoving = Math.hypot(inputVec.x, inputVec.z) > 0.05
     const movingOnGround = grounded && (speedXZ > 0.2 || inputMoving)
 
-    // Precedence: underwater > water step > footstep
+    const waterTransitioned = touchingWater !== this.lastTouchingWater
+    const movingThroughWater = speedXZ > 0.05 || inputMoving || Math.abs(dy) > 0.08
+    const waterStepCadence = touchingWaterSurface && !playerUnderWater && movingThroughWater
+    if (waterTransitioned) this.startWaterStepIfIdle()
+    this.setWaterStepCadenceActive(waterStepCadence)
+
+    // Precedence: underwater > water step > footstep. Water transitions are
+    // handled above so entering/leaving water also works while jumping.
     if (isUnderWater) {
-      // Start underwater loop immediately; stop requesting new foot/water clips (let last ones finish)
+      // Start underwater loop immediately; stop requesting new footstep clips.
       this.setLoopPlaying(this.underLoop, true)
-      this.waterLoop.setDesired(false)
       this.footLoop.setDesired(false)
-    } else if (touchingWater && (speedXZ > 0.1 || inputMoving)) {
+    } else if (touchingWaterSurface && !playerUnderWater && movingThroughWater) {
       this.setLoopPlaying(this.underLoop, false)
-      this.waterLoop.setDesired(true)
       this.footLoop.setDesired(false)
     } else if (movingOnGround) {
       this.setLoopPlaying(this.underLoop, false)
-      this.waterLoop.setDesired(false)
       this.footLoop.setDesired(true)
     } else {
       this.setLoopPlaying(this.underLoop, false)
-      this.waterLoop.setDesired(false)
       this.footLoop.setDesired(false)
     }
 
-    // Allow one-shot loopers to start the next clip if needed
+    // Allow the footstep looper to start the next clip if needed.
     this.footLoop.tick()
-    this.waterLoop.tick()
 
     // Continuous ocean ambience: always present while in-game and not paused.
     // Volume scales with proximity to water at surface level, and dims underwater.
@@ -263,6 +332,7 @@ export class SoundEffects {
     this.lastY = position.y
     this.lastZ = position.z
     this.lastGrounded = grounded
+    this.lastTouchingWater = touchingWater
   }
 
   // Compute and set ocean loop volume based on proximity to sea
@@ -282,7 +352,8 @@ export class SoundEffects {
 
     // Smooth for stability (simple critically-damped low-pass)
     const smooth = 1 - Math.pow(0.001, dtSeconds) // ~fast attack, smooth decay
-    this.oceanVolCurrent += (target - this.oceanVolCurrent) * smooth
+    if (target <= 0) this.oceanVolCurrent = 0
+    else this.oceanVolCurrent += (target - this.oceanVolCurrent) * smooth
     this.oceanLoop.volume = Math.max(0, Math.min(1, this.oceanVolCurrent))
   }
 
@@ -291,15 +362,14 @@ export class SoundEffects {
     const position = this.player.getEyePosition()
     const px = position.x
     const pz = position.z
-    const WATER_ID = 5
 
     // Cast rays in multiple directions, stepping outward until we find WATER at surface level
     // and verify it corresponds to the surrounding ocean (not an inland lake)
-    const maxDistance = 120 // blocks
-    const step = 2.0
-    const directions = 24
-    const oceanCheckRange = 60 // additional distance after first hit that should remain mostly water
-    const oceanCheckStep = 2.0
+    const maxDistance = OCEAN_AUDIO_MAX_DISTANCE
+    const step = 1.0
+    const directions = 36
+    const oceanCheckRange = 48 // additional distance after first hit that should remain mostly water
+    const oceanCheckStep = 1.0
     const oceanContinuityThreshold = 0.7 // fraction of samples that must be water to count as ocean
 
     let minOceanHit = maxDistance
@@ -314,7 +384,7 @@ export class SoundEffects {
         const x = Math.floor(px + dirx * d)
         const z = Math.floor(pz + dirz * d)
         const id = this.world.getBlock(x, WATER_LEVEL, z)
-        if (id === WATER_ID) { firstWaterDist = d; break }
+        if (id === this.waterId) { firstWaterDist = d; break }
       }
       if (firstWaterDist === null) continue
 
@@ -326,19 +396,15 @@ export class SoundEffects {
         const z = Math.floor(pz + dirz * d)
         const id = this.world.getBlock(x, WATER_LEVEL, z)
         samples++
-        if (id === WATER_ID) waterSamples++
+        if (id === this.waterId) waterSamples++
       }
       const frac = samples > 0 ? (waterSamples / samples) : 0
       const isOcean = frac >= oceanContinuityThreshold
       if (isOcean && firstWaterDist < minOceanHit) minOceanHit = firstWaterDist
     }
 
-    // Map distance to detected ocean to proximity value
-    const audibleRange = 80 // within this distance, volume ramps up to full
-    const proximity = 1 - Math.min(1, minOceanHit / audibleRange)
-    // Keep a faint floor so the world never feels dead silent
-    const floor = 0.05
-    return Math.max(floor, proximity)
+    if (!Number.isFinite(minOceanHit)) return 0
+    return getInverseSquareSoundAttenuation(minOceanHit)
   }
 
   private isTouchingWaterSurface(): boolean {
@@ -378,7 +444,8 @@ export class SoundEffects {
   dispose() {
     // Stop and release references
     try { this.footLoop.stopImmediate() } catch { /* Ignore stop errors */ }
-    try { this.waterLoop.stopImmediate() } catch { /* Ignore stop errors */ }
+    try { this.waterStepClip?.pause() } catch { /* Ignore stop errors */ }
+    this.waterStepClip = null
     try { this.underLoop.pause() } catch { /* Ignore pause errors */ }
     try { this.oceanLoop.pause() } catch { /* Ignore pause errors */ }
   }

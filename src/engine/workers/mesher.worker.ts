@@ -141,6 +141,7 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
         if (!block) continue;
         // Skip decorative billboards (e.g., grass tufts). They are rendered by a separate system.
         if (block.name === 'grass_tuft') continue;
+        const currentIsLeaf = isLeafBlock(block);
         
         // Compute world coords of this voxel for per-block hashing
         const gx = cx * CHUNK_SIZE.x + lx;
@@ -149,9 +150,10 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
 
         if (block.name === 'water' && gy === WATER_LEVEL) continue;
 
-        // Per-block UV rotation and tiny tint jitter to kill tiling (solid blocks only)
-        // Do NOT rotate grass or wood — their textures have a required orientation
-        const rot = (block.name === 'grass' || block.name === 'wood') ? 0 : getUVRotation(gx, gy, gz);
+        // Per-block variant/tint choices are deterministic in world space, so
+        // remeshing never makes a block visibly pop. Orientation is selected
+        // per face below because grass sides and wood grain have constraints
+        // that do not apply to their top faces.
         const tint = getTintJitter(gx, gy, gz);
 
         // Check each face
@@ -160,11 +162,15 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
           if (block.name === 'water' && face.name !== 'top') {
             continue;
           }
+          const rot = getUVRotation(block.name, face.name, gx, gy, gz);
           const neighborX = lx + face.dir[0];
           const neighborY = ly + face.dir[1];
           const neighborZ = lz + face.dir[2];
           
-          // Check if neighbor is outside chunk or is non-opaque
+          // Leaf blocks stay in the opaque/depth-writing mesh for stable
+          // cutouts, but they must not hide faces behind transparent texels.
+          // Emit every boundary involving a leaf so a cutout can reveal the
+          // next leaf layer, a trunk, or the terrain behind it.
           let shouldRenderFace = false;
           
           if (neighborX < 0 || neighborX >= CHUNK_SIZE.x ||
@@ -172,6 +178,7 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
               neighborZ < 0 || neighborZ >= CHUNK_SIZE.z) {
             // Outside chunk - consult neighbor data if provided
             let neighborOpaque = false;
+            let neighborIsLeaf = false;
             if (neighbors) {
               if (neighborX === -1 && neighbors.negX) {
                 const nLx = CHUNK_SIZE.x - 1;
@@ -179,48 +186,58 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
                 const nId = neighbors.negX.voxels[nIndex];
                 const nDef = blockRegistry.get(nId);
                 neighborOpaque = !!(nDef && nDef.opaque);
+                neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborX === CHUNK_SIZE.x && neighbors.posX) {
                 const nLx = 0;
                 const nIndex = localToIndex(nLx, ly, lz);
                 const nId = neighbors.posX.voxels[nIndex];
                 const nDef = blockRegistry.get(nId);
                 neighborOpaque = !!(nDef && nDef.opaque);
+                neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborZ === -1 && neighbors.negZ) {
                 const nLz = CHUNK_SIZE.z - 1;
                 const nIndex = localToIndex(lx, ly, nLz);
                 const nId = neighbors.negZ.voxels[nIndex];
                 const nDef = blockRegistry.get(nId);
                 neighborOpaque = !!(nDef && nDef.opaque);
+                neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborZ === CHUNK_SIZE.z && neighbors.posZ) {
                 const nLz = 0;
                 const nIndex = localToIndex(lx, ly, nLz);
                 const nId = neighbors.posZ.voxels[nIndex];
                 const nDef = blockRegistry.get(nId);
                 neighborOpaque = !!(nDef && nDef.opaque);
+                neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborY === -1 && neighbors.negY) {
                 const nLy = CHUNK_SIZE.y - 1;
                 const nIndex = localToIndex(lx, nLy, lz);
                 const nId = neighbors.negY.voxels[nIndex];
                 const nDef = blockRegistry.get(nId);
                 neighborOpaque = !!(nDef && nDef.opaque);
+                neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborY === CHUNK_SIZE.y && neighbors.posY) {
                 const nLy = 0;
                 const nIndex = localToIndex(lx, nLy, lz);
                 const nId = neighbors.posY.voxels[nIndex];
                 const nDef = blockRegistry.get(nId);
                 neighborOpaque = !!(nDef && nDef.opaque);
+                neighborIsLeaf = isLeafBlock(nDef);
               }
             }
-            // Render face only if no opaque neighbor present
-            shouldRenderFace = !neighborOpaque;
+            // A leaf boundary remains visible even when both blocks are
+            // nominally opaque to the voxel topology.
+            shouldRenderFace = !neighborOpaque || currentIsLeaf || neighborIsLeaf;
           } else {
             // Check neighbor block
             const neighborIndex = localToIndex(neighborX, neighborY, neighborZ);
             const neighborBlockId = chunkData.voxels[neighborIndex];
             const neighborBlock = blockRegistry.get(neighborBlockId);
             
-            // Render face if neighbor is not opaque
-            shouldRenderFace = !neighborBlock || !neighborBlock.opaque;
+            // With alpha discard and depth writes, the front layer still
+            // occludes covered texels while uncovered texels can continue
+            // through the emitted inner boundary faces.
+            shouldRenderFace = !neighborBlock || !neighborBlock.opaque ||
+              currentIsLeaf || isLeafBlock(neighborBlock);
           }
           
           if (shouldRenderFace) {
@@ -228,7 +245,7 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
             const isOpaque = !!block.opaque;
             if (isOpaque) {
               addFaceQuad(
-                lx, ly, lz, face, block,
+                lx, ly, lz, gx, gy, gz, face, block,
                 positionsO, normalsO, uvsO, aoO, colorsO, indicesO, vertexCountO,
                 chunkData, // for in-chunk AO sampling
                 neighbors, // for AO sampling across chunk borders
@@ -238,7 +255,7 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
               vertexCountO += 4;
             } else {
               addFaceQuad(
-                lx, ly, lz, face, block,
+                lx, ly, lz, gx, gy, gz, face, block,
                 positionsT, normalsT, uvsT, aoT, colorsT, indicesT, vertexCountT,
                 chunkData,
                 neighbors,
@@ -281,6 +298,7 @@ interface Face {
 
 function addFaceQuad(
   lx: number, ly: number, lz: number,
+  gx: number, gy: number, gz: number,
   face: Face,
   block: BlockDef,
   positions: number[], normals: number[], uvs: number[], ao: number[], colors: number[], indices: number[],
@@ -300,7 +318,7 @@ function addFaceQuad(
   const [nx, ny, nz] = face.normal;
   
   // Get UV coordinates for this face
-  const [tileU, tileV] = getFaceUV(block, face.name);
+  const [tileU, tileV] = getFaceUV(block, face.name, gx, gy, gz);
   
   // Define quad vertices based on face direction
   let quad: number[][];
@@ -490,7 +508,7 @@ function addFaceQuad(
   }
 }
 
-function getFaceUV(block: BlockDef, faceName: string): [number, number] {
+function getFaceUV(block: BlockDef, faceName: string, gx: number, gy: number, gz: number): [number, number] {
   if (!atlasConfig) {
     throw new Error('[MesherWorker] Atlas config required for UV lookup');
   }
@@ -515,8 +533,25 @@ function getFaceUV(block: BlockDef, faceName: string): [number, number] {
       break;
   }
 
-  // Look up tile coordinates from atlas config
-  const tileCoords = atlasConfig.tiles[tileKey];
+  // The base key remains the public material contract. Additional numbered
+  // keys are deterministic pattern variants emitted by the procedural atlas.
+  // Older atlas configurations with only the base key continue to work.
+  const variantKeys = [tileKey];
+  for (let variant = 1; variant < 16; variant += 1) {
+    const candidate = `${tileKey}_${variant}`;
+    if (!atlasConfig.tiles[candidate]) break;
+    variantKeys.push(candidate);
+  }
+  const variantSalt = faceName === 'top' ? 17
+    : faceName === 'bottom' ? 31
+      : faceName === 'front' ? 43
+        : faceName === 'back' ? 59
+          : faceName === 'right' ? 71
+            : 83;
+  const variantIndex = variantKeys.length > 1
+    ? hash32(gx + variantSalt, gy + variantSalt * 3, gz + variantSalt * 7) % variantKeys.length
+    : 0;
+  const tileCoords = atlasConfig.tiles[variantKeys[variantIndex]];
   if (!tileCoords) {
     console.warn(`[MesherWorker] Tile key '${tileKey}' not found in atlas config, using fallback`);
     return [0, 0];
@@ -529,6 +564,10 @@ function getFaceUV(block: BlockDef, faceName: string): [number, number] {
 
 function localInside(x: number, y: number, z: number): boolean {
   return x >= 0 && x < CHUNK_SIZE.x && y >= 0 && y < CHUNK_SIZE.y && z >= 0 && z < CHUNK_SIZE.z;
+}
+
+function isLeafBlock(block: BlockDef | undefined): boolean {
+  return block?.name === 'leaves' || block?.name === 'leaves_maple';
 }
 
 // (helpers removed if unused)
@@ -593,9 +632,21 @@ function hash32(x: number, y: number, z: number): number {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-function getUVRotation(gx: number, gy: number, gz: number): number {
-  const h = hash32(gx, gy, gz);
-  return h & 3; // 0..3
+function getUVRotation(blockName: string, faceName: string, gx: number, gy: number, gz: number): number {
+  const faceSalt = faceName === 'top' ? 17
+    : faceName === 'bottom' ? 31
+      : faceName === 'front' ? 43
+        : faceName === 'back' ? 59
+          : faceName === 'right' ? 71
+            : 83;
+  const h = hash32(gx + faceSalt, gy + faceSalt * 3, gz + faceSalt * 7);
+
+  // Directional materials keep their structural axis. Grass cap and wood
+  // growth rings can rotate freely, while their vertical side grain only
+  // mirrors by 180 degrees. Unconstrained materials use all quarter turns.
+  if (blockName === 'grass' && faceName !== 'top' && faceName !== 'bottom') return 0;
+  if (blockName === 'wood' && faceName !== 'top' && faceName !== 'bottom') return (h & 1) * 2;
+  return h & 3;
 }
 
 function getTintJitter(gx: number, gy: number, gz: number): number {

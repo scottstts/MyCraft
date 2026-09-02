@@ -10,12 +10,14 @@
 
 `SoundEffects` is an engine subsystem driven by the player, input, and authoritative world. It manages:
 
-- cadence-based footstep and water-step one-shot loopers;
+- cadence-based footstep looping plus serialized event/cadence water-step one-shots;
 - a continuous underwater loop;
 - ocean ambience whose volume is sampled from nearby surface water and smoothed over time;
 - break, place, and landing one-shots.
 
 Underwater ambience is gated by the active gameplay camera, not the player's physics head or swim state. A 0.4-block camera audio envelope uses a 50% submersion threshold, so first- and third-person views switch at the same waterline; the ocean loop uses the same camera result for its underwater dimming. Character switching plays the supplied `src/assets/sounds/sound_effects/switch_sound.mp3` one-shot at the shared SFX volume.
+
+Ocean distance is the shortest verified ray distance to continuous surface water. Its gain follows inverse-square sound intensity from a 12-block reference distance and reaches exactly zero at the 96-block audibility boundary, with a final smooth cutoff. Water-step audio is event-driven: entering water, leaving water, and cadence steps while moving through the surface layer each request `water_step.mp3`, including transitions caused by jumping. Only one clip may play at a time; an active clip is never restarted or overlapped, while stopping the movement trigger prevents any replacement from being scheduled.
 
 Audio playback failures are treated as optional browser capability failures. The game continues when autoplay is blocked and retries on a later user gesture.
 

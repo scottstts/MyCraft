@@ -6,6 +6,8 @@ import grassLeavesTexture from '../../assets/textures/grass_leaves.png'
 import { GrassMaterial } from './GrassMaterial'
 import { createXBillboardGeometry } from './BillboardGeometry'
 
+export const GRASS_TUFT_YAW_OFFSET = THREE.MathUtils.degToRad(45)
+
 /**
  * GrassBillboardSystem
  * Renders decorative grass tufts (non-cube) as crossed billboards using instancing.
@@ -38,6 +40,12 @@ export class GrassBillboardSystem {
     this.material.setMap(fb)
 
     this.geometry = createXBillboardGeometry(0.92, 0.90)
+    // Rotate around the voxel-cell center, not the chunk/group origin. This
+    // keeps every tuft rooted in its original block while putting the crossed
+    // planes at a 45-degree offset from the block axes.
+    this.geometry.translate(-0.5, 0, -0.5)
+    this.geometry.rotateY(GRASS_TUFT_YAW_OFFSET)
+    this.geometry.translate(0.5, 0, 0.5)
 
     // Wire listeners
     world.on('CHUNK_ADDED', ({ key, chunk, coords }) => {

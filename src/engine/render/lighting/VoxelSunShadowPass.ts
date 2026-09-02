@@ -5,10 +5,9 @@
  * traverses the authoritative occupancy volume with grid DDA toward the
  * current (continuous) sun direction and writes one visibility value per
  * screen pixel.  No light camera, shadow map, projection fitting, or texel
- * snapping participates in this path.  Opaque blocks are traced as voxels;
- * grass and render-only seaweed occupancy are traced as small analytic
- * crossed-blade proxies rather than point-sampling source PNGs as
- * micro-geometry.
+ * snapping participates in this path. Opaque blocks are traced as voxels;
+ * leaf, grass, and render-only seaweed occupancy are traced as porous
+ * analytic proxies rather than point-sampling source images as micro-geometry.
  */
 
 import * as THREE from 'three';
@@ -121,6 +120,7 @@ export class VoxelSunShadowPass {
         uUseReceiverWorld: { value: false },
         uVoxelOccupancy: { value: volume.texture },
         uBrickOccupancy: { value: volume.brickTexture },
+        uLeafOccupancy: { value: volume.leafTexture },
         uGrassOccupancy: { value: volume.grassTexture },
         uSeaweedAnchors: { value: volume.seaweedTexture },
         uVolumeOrigin: { value: volume.origin.clone() },
@@ -163,6 +163,7 @@ export class VoxelSunShadowPass {
         uniform bool uUseReceiverWorld;
         uniform sampler3D uVoxelOccupancy;
         uniform sampler3D uBrickOccupancy;
+        uniform sampler3D uLeafOccupancy;
         uniform sampler3D uGrassOccupancy;
         uniform sampler2D uSeaweedAnchors;
         uniform vec3 uVolumeOrigin;
@@ -208,12 +209,91 @@ export class VoxelSunShadowPass {
           return texture(uVoxelOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
         }
 
+        float leafAt(ivec3 cell) {
+          return texture(uLeafOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
+        }
+
         float brickAt(ivec3 brick) {
           return texture(uBrickOccupancy, (vec3(brick) + vec3(0.5)) / uBrickGridSize).r;
         }
 
         float grassAt(ivec3 cell) {
           return texture(uGrassOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
+        }
+
+        // The visible leaf tile is a sparse 16x16 cutout. Reconstruct its
+        // coverage as the same clustered field in the shadow pass, then use
+        // that alpha as optical density instead of treating a leaf voxel as a
+        // solid blocker. The solar-disc probes turn this continuous coverage
+        // into the characteristic sieve pattern on receivers.
+        float leafHash(vec2 p, float salt) {
+          vec3 p3 = fract(vec3(
+            p.x + salt * 0.013,
+            p.y + salt * 0.007,
+            p.x + salt * 0.019
+          ) *
+            vec3(0.1031, 0.1030, 0.0973));
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.x + p3.y) * p3.z);
+        }
+
+        float leafNoise(vec2 p, float salt) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(leafHash(i, salt), leafHash(i + vec2(1.0, 0.0), salt), u.x),
+            mix(leafHash(i + vec2(0.0, 1.0), salt), leafHash(i + vec2(1.0), salt), u.x),
+            u.y
+          );
+        }
+
+        float leafFbm(vec2 p, float salt) {
+          return (
+            leafNoise(p, salt) * 0.5 +
+            leafNoise(p * 2.03, salt + 977.0) * 0.25
+          ) / 0.75;
+        }
+
+        vec2 rotateLeafUv(vec2 uv, float turn) {
+          if (turn < 0.5) return uv;
+          if (turn < 1.5) return vec2(uv.y, 1.0 - uv.x);
+          if (turn < 2.5) return vec2(1.0 - uv.x, 1.0 - uv.y);
+          return vec2(1.0 - uv.y, uv.x);
+        }
+
+        float leafAlphaAt(vec2 uv, ivec3 cell) {
+          float cellSalt = float(cell.x) * 17.0 + float(cell.y) * 53.0 + float(cell.z) * 97.0;
+          float turn = floor(leafHash(vec2(float(cell.x), float(cell.z)), float(cell.y) + 211.0) * 4.0);
+          vec2 orientedUv = rotateLeafUv(clamp(uv, vec2(0.0), vec2(1.0)), turn);
+          vec2 texel = orientedUv * 16.0;
+          vec2 clusterCell = floor(texel / 1.75);
+          float cluster = leafFbm(clusterCell * 0.67 + vec2(5.3, -2.1), cellSalt + 131.0);
+          float micro = leafHash(floor(texel), cellSalt + 149.0);
+          float edgePenalty = (
+            orientedUv.x < 0.0625 || orientedUv.x > 0.9375 ||
+            orientedUv.y < 0.0625 || orientedUv.y > 0.9375
+          ) ? 0.12 : 0.0;
+          float coverage = 0.53 + (cluster - 0.5) * 0.82 + (micro - 0.5) * 0.26 - edgePenalty;
+          return smoothstep(0.38, 0.48, coverage);
+        }
+
+        vec2 leafFaceUv(vec3 pointInCell, vec3 direction) {
+          vec3 absoluteDirection = abs(direction);
+          if (absoluteDirection.y >= absoluteDirection.x && absoluteDirection.y >= absoluteDirection.z) {
+            return pointInCell.xz;
+          }
+          if (absoluteDirection.x >= absoluteDirection.z) return pointInCell.zy;
+          return pointInCell.xy;
+        }
+
+        float leafShadowTransmission(vec3 local, vec3 direction, ivec3 cell, float travel) {
+          vec3 exitPoint = clamp(local + direction * travel - vec3(cell), vec3(0.0), vec3(1.0));
+          float coverage = leafAlphaAt(leafFaceUv(exitPoint, direction), cell);
+          // A fully covered cutout texel still transmits a small amount through
+          // the leaf volume; neighboring leaf voxels then accumulate naturally
+          // while isolated blocks remain visibly porous.
+          return clamp(1.0 - coverage * 0.78, 0.18, 1.0);
         }
 
         vec4 seaweedAt(ivec3 cell) {
@@ -260,11 +340,32 @@ export class VoxelSunShadowPass {
           const float epsilon = 1e-4;
           const float selfHitEpsilon = 0.01;
 
+          // The visible tuft geometry is authored with a 45-degree yaw around
+          // its cell center. Transform the shadow ray into that local frame so
+          // the compact analytic caster remains aligned with the cards.
+          const float yawCos = 0.70710678118;
+          const float yawSin = 0.70710678118;
+          vec2 cellCenter = vec2(cellMin.x + 0.5, cellMin.z + 0.5);
+          vec2 localOffset = local.xz - cellCenter;
+          vec2 directionXZ = direction.xz;
+          vec2 rotatedLocalOffset = vec2(
+            yawCos * localOffset.x + yawSin * localOffset.y,
+            -yawSin * localOffset.x + yawCos * localOffset.y
+          );
+          vec2 rotatedDirectionXZ = vec2(
+            yawCos * directionXZ.x + yawSin * directionXZ.y,
+            -yawSin * directionXZ.x + yawCos * directionXZ.y
+          );
+          vec3 grassLocal = local;
+          grassLocal.xz = cellCenter + rotatedLocalOffset;
+          vec3 grassDirection = direction;
+          grassDirection.xz = rotatedDirectionXZ;
+
           // First billboard plane: z is fixed, x/y carry the silhouette UV.
-          if (abs(direction.z) > epsilon) {
-            float travelZ = (cellMin.z + 0.5 - local.z) / direction.z;
+          if (abs(grassDirection.z) > epsilon) {
+            float travelZ = (cellMin.z + 0.5 - grassLocal.z) / grassDirection.z;
             if (travelZ > selfHitEpsilon && travelZ <= maxTravel + epsilon) {
-              vec3 point = local + direction * travelZ;
+              vec3 point = grassLocal + grassDirection * travelZ;
               if (point.y >= cellMin.y - epsilon && point.y <= cellMin.y + height + epsilon &&
                   point.x >= cellMin.x + base - epsilon && point.x <= cellMin.x + base + extent + epsilon) {
                 vec2 uv = vec2((point.x - cellMin.x - base) / extent, (point.y - cellMin.y) / height);
@@ -274,10 +375,10 @@ export class VoxelSunShadowPass {
           }
 
           // Second billboard plane: x is fixed, z/y carry the same silhouette.
-          if (abs(direction.x) > epsilon) {
-            float travelX = (cellMin.x + 0.5 - local.x) / direction.x;
+          if (abs(grassDirection.x) > epsilon) {
+            float travelX = (cellMin.x + 0.5 - grassLocal.x) / grassDirection.x;
             if (travelX > selfHitEpsilon && travelX <= maxTravel + epsilon) {
-              vec3 point = local + direction * travelX;
+              vec3 point = grassLocal + grassDirection * travelX;
               if (point.y >= cellMin.y - epsilon && point.y <= cellMin.y + height + epsilon &&
                   point.z >= cellMin.z + base - epsilon && point.z <= cellMin.z + base + extent + epsilon) {
                 vec2 uv = vec2((point.z - cellMin.z - base) / extent, (point.y - cellMin.y) / height);
@@ -448,24 +549,26 @@ export class VoxelSunShadowPass {
             abs(direction.y) < 1e-5 ? (direction.y < 0.0 ? -1e-5 : 1e-5) : direction.y,
             abs(direction.z) < 1e-5 ? (direction.z < 0.0 ? -1e-5 : 1e-5) : direction.z
           );
-          // Start just outside the receiver.  Opaque self-intersection is
-          // suppressed by cell identity, while grass is tested independently
-          // below so a tuft rooted directly on a terrain face remains a valid
-          // caster even when it shares the receiver's integer cell.
+          // Start just outside the receiver. Opaque self-intersection is
+          // suppressed by cell identity, while porous grass and leaves are
+          // tested independently below so a caster rooted directly on a
+          // receiver face remains valid even when it shares the cell.
           vec3 local = receiverWorld + direction * 0.002 - uVolumeOrigin;
           ivec3 receiverCell = ivec3(floor(receiverWorld - uVolumeOrigin));
           ivec3 cell = ivec3(floor(local));
           vec3 stepAxis = sign(direction);
           vec3 inverseDirection = 1.0 / abs(directionSafe);
           float travelled = 0.0;
+          float visibility = 1.0;
 
           for (int iteration = 0; iteration < ${MAX_SHADER_STEPS}; iteration++) {
             if (iteration >= uMaxSteps) break;
 
-            if (!insideVolume(cell)) return 1.0;
+            if (!insideVolume(cell)) return visibility;
 
-            // Preserve the established opaque self-intersection rule.  Grass
-            // does not use this gate; it has its own minimum hit distance.
+            // Preserve the established opaque self-intersection rule. Grass
+            // and leaves do not use this gate as a solid blocker; each has its
+            // own porous test below and both may share the receiver cell.
             bool differentOpaqueCell = any(notEqual(cell, receiverCell));
             if (differentOpaqueCell && voxelAt(cell) > 0.5) return 0.0;
 
@@ -479,7 +582,7 @@ export class VoxelSunShadowPass {
               float jump = minimumPositive(brickDistance);
               if (jump < 1e29) {
                 travelled += jump;
-                if (travelled > uMaxDistance) return 1.0;
+                if (travelled > uMaxDistance) return visibility;
                 local += directionSafe * (jump + 1e-3);
                 cell = ivec3(floor(local));
                 continue;
@@ -492,8 +595,13 @@ export class VoxelSunShadowPass {
             vec3 voxelDistance = (voxelBoundary - local) / directionSafe;
             float travel = minimumPositive(voxelDistance);
             travelled += travel;
-            if (travelled > uMaxDistance || travel >= 1e29) return 1.0;
+            if (travelled > uMaxDistance || travel >= 1e29) return visibility;
 
+            bool differentDecorativeCell = any(notEqual(cell, receiverCell));
+            if (differentDecorativeCell && leafAt(cell) > 0.5) {
+              visibility *= leafShadowTransmission(local, direction, cell, travel);
+              if (visibility <= 0.01) return 0.0;
+            }
             if (grassAt(cell) > 0.5 && grassBladeHit(local, direction, cell, travel)) return 0.0;
             if (includeSeaweed) {
               // One nearest-filtered lookup per traversed root cell. Seaweed
@@ -512,7 +620,7 @@ export class VoxelSunShadowPass {
             }
             local += directionSafe * travel;
           }
-          return 1.0;
+          return visibility;
         }
 
         float traceSolarDisc(

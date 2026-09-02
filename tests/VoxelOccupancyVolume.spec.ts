@@ -68,4 +68,36 @@ describe('VoxelOccupancyVolume', () => {
     expect(bricks[4]).toBe(255)
     volume.dispose()
   });
+
+  it('keeps leaf blocks porous in the shadow caster while preserving the brick fast path', () => {
+    const volume = new VoxelOccupancyVolume({
+      minX: 0,
+      maxX: CHUNK_SIZE.x,
+      minY: 0,
+      maxY: CHUNK_SIZE.y,
+      minZ: 0,
+      maxZ: CHUNK_SIZE.z,
+    });
+    const chunk = new Chunk();
+    chunk.set(7, 5, 7, 7); // green leaf block
+    chunk.set(8, 5, 7, 8); // cherry leaf block, legacy id
+    volume.updateChunk('0,0,0', chunk);
+
+    const leaf = volume.leafTexture.image.data as Uint8Array;
+    const greenIndex = 7 + CHUNK_SIZE.x * (5 + CHUNK_SIZE.y * 7);
+    const cherryIndex = 8 + CHUNK_SIZE.x * (5 + CHUNK_SIZE.y * 7);
+    expect(leaf[greenIndex]).toBe(255);
+    expect(leaf[cherryIndex]).toBe(255);
+    expect((volume.texture.image.data as Uint8Array)[greenIndex]).toBe(0);
+    expect((volume.texture.image.data as Uint8Array)[cherryIndex]).toBe(0);
+    expect(volume.getDiagnostics().opaqueVoxels).toBe(0);
+    expect(volume.getDiagnostics().leafVoxels).toBe(2);
+    expect((volume.brickTexture.image.data as Uint8Array)[0]).toBe(255);
+
+    volume.updateBlock(7, 5, 7, 0);
+    expect(leaf[greenIndex]).toBe(0);
+    expect(volume.getDiagnostics().leafVoxels).toBe(1);
+    expect((volume.brickTexture.image.data as Uint8Array)[1]).toBe(255);
+    volume.dispose();
+  });
 });

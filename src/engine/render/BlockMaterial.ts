@@ -144,6 +144,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float metalness;
       uniform float envMapIntensity;
       uniform float alphaScale;
+      uniform float alphaCutoff;
       uniform float lightingMix;
 
       // Anti-aliasing controls
@@ -418,6 +419,12 @@ export class BlockMaterial extends THREE.ShaderMaterial {
 
       void main() {
           forwardRefractionDiscardCameraMedium();
+          vec4 texColor = texture2D_AA(map, vUv);
+          // Procedural tree and cherry leaf tiles use binary cutouts to keep
+          // the voxel topology opaque while exposing the sparse leaf gaps.
+          // Sample before the forward receiver early-return as well, so
+          // refraction preserves the same silhouette as the visible pass.
+          if (texColor.a < alphaCutoff) discard;
           if (uForwardRefractionOutputReceiver > 0.5) {
             gl_FragColor = vec4(
               forwardRefractionStoreReceiver(vForwardRefractionSourceWorld),
@@ -425,7 +432,6 @@ export class BlockMaterial extends THREE.ShaderMaterial {
             );
             return;
           }
-          vec4 texColor = texture2D_AA(map, vUv);
           // Atlas textures are uploaded as SRGBColorSpace; WebGL performs the
           // transfer-function decode during sampling, so this value is already
           // scene-linear and must not be decoded a second time.
@@ -500,6 +506,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           metalness: { value: 0.0 },
           envMapIntensity: { value: 0.3 },
           alphaScale: { value: 1.0 },
+          alphaCutoff: { value: 0.5 },
           lightingMix: { value: 1.0 },
 
           // Sun uniforms (updated by Engine via SunController)

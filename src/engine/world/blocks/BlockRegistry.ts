@@ -87,10 +87,12 @@ export class BlockRegistry {
       },
       {
         id: 8,
+        // Keep the legacy block name/id for save compatibility. Its visual
+        // palette is now cherry blossom pink rather than autumn maple.
         name: 'leaves_maple',
         opaque: true,
         solid: true,
-        faces: { all: 'maple_leaves' }
+        faces: { all: 'cherry_leaves' }
       },
       {
         id: 9,

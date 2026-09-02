@@ -239,7 +239,7 @@ function generateTerrain(
   const WATER = 5;
   const WOOD = 6;
   const LEAVES = 7;
-  const LEAVES_ALT = 8; // maple/autumn variant
+  const LEAVES_CHERRY = 8; // legacy alternate-leaves id; rendered as cherry blossom
   const GRASS_TUFT = 9; // decorative grass billboard
   
   // Process each column in the chunk
@@ -416,9 +416,9 @@ function generateTerrain(
       const trunkHeight = TREE_MIN_HEIGHT + Math.floor(hash2d(ax, az, 4242 ^ seed) * (TREE_MAX_HEIGHT - TREE_MIN_HEIGHT + 1));
       const maxRadius = Math.max(1, Math.min(3, Math.floor(trunkHeight * 0.5)));
 
-      // Choose leaf texture per-tree (80% default green, 20% maple/orange)
+      // Choose leaf palette per-tree (80% default green, 20% cherry blossom)
       const leafTypeRand = hash2d(ax, az, (0x1efc0ffe ^ seed) | 0);
-      const LEAF_BLOCK = leafTypeRand < 0.8 ? LEAVES : LEAVES_ALT;
+      const LEAF_BLOCK = leafTypeRand < 0.8 ? LEAVES : LEAVES_CHERRY;
 
       // Place trunk (only within this chunk)
       const lxTrunk = ax - wx0;

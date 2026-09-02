@@ -6,7 +6,10 @@ import { getHeightAtPosition } from '../../world/TerrainGenerator'
 import { getOceanMaxAmplitude, OCEAN_WATER_CENTER_OFFSET, OCEAN_WAVES, sampleOceanHeight } from './OceanWaveField'
 import { WaterSurfaceMaterial } from './WaterSurfaceMaterial'
 import { CAUSTIC_REFERENCE_DEPTH, CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
-import sandTextureUrl from '../../../assets/textures/sand.png'
+import {
+  createProceduralVoxelTileTexture,
+  extractProceduralAtlasTile,
+} from '../ProceduralVoxelTextures'
 import { setForwardRefractionWaterState } from './ForwardRefraction'
 
 const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
@@ -516,8 +519,8 @@ export class WaterSystem {
 
   private async buildSeabed(buildToken: number): Promise<void> {
     try {
-      const sand = this.createAtlasSandTexture() ?? await new Promise<THREE.Texture>((resolve, reject) => {
-        new THREE.TextureLoader().load(sandTextureUrl, resolve, undefined, reject)
+      const sand = this.createAtlasSandTexture() ?? createProceduralVoxelTileTexture('sand', {
+        tileSize: this.options.seabedAtlas?.tileSize ?? 16,
       })
       if (this.disposed || buildToken !== this.seabedBuildToken) {
         sand.dispose()
@@ -589,10 +592,14 @@ export class WaterSystem {
     const atlas = this.options.seabedAtlas
     const source = this.options.blockMaterialSource?.uniforms.map?.value as THREE.Texture | undefined
     const tile = atlas?.tiles.sand
-    const image = source?.image as (CanvasImageSource & { width?: number; height?: number }) | undefined
-    if (!atlas || !tile || !image || typeof document === 'undefined') return null
+    if (!atlas || !tile || !source) return null
 
     const tileSize = Math.max(1, Math.floor(atlas.tileSize))
+    const proceduralTile = extractProceduralAtlasTile(source, tile, tileSize)
+    if (proceduralTile) return proceduralTile
+
+    const image = source.image as (CanvasImageSource & { width?: number; height?: number }) | undefined
+    if (!image || typeof document === 'undefined') return null
     const imageWidth = Number(image.width ?? 0)
     const imageHeight = Number(image.height ?? 0)
     if (imageWidth < (tile[0] + 1) * tileSize || imageHeight < (tile[1] + 1) * tileSize) return null
