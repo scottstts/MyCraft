@@ -1,7 +1,9 @@
 import * as THREE from 'three'
 import {
+  ConservativeRefractionSourceCuller,
+  FORWARD_REFRACTION_LAYER,
+  ForwardRefractionParticipantRegistry,
   forwardRefractionUniforms,
-  isForwardRefractionMaterial,
   setForwardRefractionActive,
   setForwardRefractionCamera,
   setForwardRefractionOutputReceiver,
@@ -10,9 +12,10 @@ import {
 } from './ForwardRefraction'
 
 interface RenderableState {
-  object: THREE.Object3D
+  object: THREE.Mesh | THREE.Line | THREE.Points
   visible: boolean
   frustumCulled: boolean
+  bounds: THREE.Box3
 }
 
 /**
@@ -29,15 +32,24 @@ export class ForwardRefractionPass {
   private readonly size = new THREE.Vector2()
   private readonly clearColor = new THREE.Color()
   private readonly renderableStates: RenderableState[] = []
+  private activeRenderableStateCount = 0
+  private readonly participants: ForwardRefractionParticipantRegistry
+  private readonly sourceCuller = new ConservativeRefractionSourceCuller()
 
   constructor(
     renderer: THREE.WebGLRenderer,
     scene: THREE.Scene,
     width: number,
     height: number,
+    participants?: ForwardRefractionParticipantRegistry,
   ) {
     this.renderer = renderer
     this.scene = scene
+    this.participants = participants ?? new ForwardRefractionParticipantRegistry()
+    // The compatibility constructor remains useful to isolated callers. The
+    // game supplies a shared registry and registers each render system at its
+    // creation/rebuild boundary instead of paying this traversal per frame.
+    if (!participants) this.participants.registerTree(scene)
     const depthTexture = new THREE.DepthTexture(
       Math.max(1, width),
       Math.max(1, height),
@@ -129,40 +141,62 @@ export class ForwardRefractionPass {
     ) => void,
   ): void {
     setForwardRefractionCamera(camera)
-    this.renderableStates.length = 0
-
-    this.scene.traverse((object) => {
-      const renderable = object as THREE.Mesh | THREE.Line | THREE.Points
-      const material = renderable.material
-      if (!material) return
-      const materials = Array.isArray(material) ? material : [material]
-      const participates = materials.length > 0 &&
-        materials.every((entry) => isForwardRefractionMaterial(entry))
-      this.renderableStates.push({
-        object,
-        visible: object.visible,
-        frustumCulled: object.frustumCulled,
-      })
-      if (!participates) object.visible = false
-      // Water-to-air projection can pull an off-frustum source into the Snell
-      // window, so submerged cameras use conservative uncropped proxies. In
-      // air-to-water projection the apparent angle is larger than the source
-      // angle; an on-screen transmitted source is already inside the direct
-      // camera frustum, retaining chunk culling for the common above-water case.
-      else if (
-        object.visible &&
-        forwardRefractionUniforms.uForwardCameraUnderwater.value
-      ) {
-        object.frustumCulled = false
-      }
-    })
+    this.activeRenderableStateCount = 0
 
     const previousTarget = this.renderer.getRenderTarget()
     const previousAlpha = this.renderer.getClearAlpha()
     const previousBackground = this.scene.background
+    const previousCameraLayers = camera.layers.mask
     this.renderer.getClearColor(this.clearColor)
+
     try {
+      const cameraUnderwater = Boolean(forwardRefractionUniforms.uForwardCameraUnderwater.value)
+      if (cameraUnderwater) {
+        this.sourceCuller.update(
+          camera,
+          Number(forwardRefractionUniforms.uForwardWaterLevel.value),
+        )
+        // Water-to-air projection can pull an off-frustum source into the Snell
+        // window. Only registered participants are tested, and only their
+        // conservative source boxes have culling temporarily overridden.
+        for (const object of this.participants.getParticipants()) {
+          if (!object.visible) continue
+          const state = this.renderableStates[this.activeRenderableStateCount] ?? {
+            object,
+            visible: true,
+            frustumCulled: true,
+            bounds: new THREE.Box3(),
+          }
+          this.renderableStates[this.activeRenderableStateCount] = state
+          state.object = object
+          state.visible = object.visible
+          state.frustumCulled = object.frustumCulled
+          object.updateWorldMatrix(true, false)
+          const geometry = object.geometry as THREE.BufferGeometry
+          // InstancedMesh keeps its aggregate bounds on the object; using the
+          // shared base geometry bounds here would collapse every grass/seaweed
+          // source to the first cell and could reject a valid refracted source.
+          let localBounds: THREE.Box3 | null = null
+          if (object instanceof THREE.InstancedMesh) {
+            if (!object.boundingBox) object.computeBoundingBox()
+            localBounds = object.boundingBox
+          } else {
+            if (!geometry.boundingBox) geometry.computeBoundingBox()
+            localBounds = geometry.boundingBox
+          }
+          if (localBounds) {
+            state.bounds.copy(localBounds).applyMatrix4(object.matrixWorld)
+          } else {
+            state.bounds.makeEmpty()
+          }
+          object.visible = this.sourceCuller.intersectsBox(state.bounds)
+          object.frustumCulled = false
+          this.activeRenderableStateCount += 1
+        }
+      }
+
       this.scene.background = null
+      camera.layers.set(FORWARD_REFRACTION_LAYER)
       setForwardRefractionActive(true)
       setForwardRefractionOutputReceiver(true)
       // Do not leave the receiver sampler bound to the texture currently
@@ -192,25 +226,22 @@ export class ForwardRefractionPass {
       this.scene.background = previousBackground
       this.renderer.setRenderTarget(previousTarget)
       this.renderer.setClearColor(this.clearColor, previousAlpha)
-      for (const state of this.renderableStates) {
+      camera.layers.mask = previousCameraLayers
+      for (let index = 0; index < this.activeRenderableStateCount; index += 1) {
+        const state = this.renderableStates[index]
         state.object.visible = state.visible
         state.object.frustumCulled = state.frustumCulled
       }
-      this.renderableStates.length = 0
+      // Retain only the active prefix as a small state pool. This keeps stable
+      // frames allocation-free without retaining meshes after a chunk/group
+      // unregisters from the participant registry.
+      this.renderableStates.length = this.activeRenderableStateCount
+      this.activeRenderableStateCount = 0
     }
   }
 
   getDiagnostics(): Record<string, unknown> {
     this.renderer.getDrawingBufferSize(this.size)
-    let participatingObjects = 0
-    this.scene.traverse((object) => {
-      const material = (object as THREE.Mesh).material
-      if (!material) return
-      const materials = Array.isArray(material) ? material : [material]
-      if (materials.length > 0 && materials.every(isForwardRefractionMaterial)) {
-        participatingObjects += 1
-      }
-    })
     return {
       width: this.target.width,
       height: this.target.height,
@@ -219,12 +250,15 @@ export class ForwardRefractionPass {
       projection: 'forward-fermat-snell',
       coverage: 'target-alpha',
       receiverSpace: 'source-world-rgb32f',
-      participatingObjects,
+      participatingObjects: this.participants.size,
+      sourceCulling: this.sourceCuller.getDiagnostics(),
     }
   }
 
   dispose(): void {
     setForwardRefractionReceiverTexture(null)
+    this.participants.clear()
+    this.renderableStates.length = 0
     this.target.dispose()
     this.receiverTarget.dispose()
   }

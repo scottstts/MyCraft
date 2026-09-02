@@ -120,24 +120,11 @@ export class WaterCaustics {
     // bounded repeating target. The unresolved optical spectrum uses integer tile
     // cycles and remains a physical slope/Snell projection without exposing a
     // discontinuity every time the texture wraps.
-    const displacementTerms = Array.from(
+    const waveTerms = Array.from(
       { length: OCEAN_CAUSTIC_WAVES.length },
       (_, index) => ({ prefix: 'CAUSTIC_WAVE', index }),
     )
-    const displacement = displacementTerms.map(({ prefix, index }) => `
-      {
-        float wavelength = ${prefix}_LENGTH_${index}
-          * uExtent / ${CAUSTIC_TILE_SIZE.toFixed(1)};
-        float k = 6.28318530718 / wavelength;
-        float omega = oceanOmega(k, ${prefix}_SPEED_${index}) * uWaveSpeed;
-        float phase = k * dot(${prefix}_DIRECTION_${index}, xz) - omega * time + ${prefix}_PHASE_${index};
-        float amplitude = ${prefix}_AMPLITUDE_${index};
-        float c = cos(phase);
-        displaced.xz += ${prefix}_DIRECTION_${index} * ${prefix}_STEEPNESS_${index} * amplitude * uWaveChop * c;
-        displaced.y += amplitude * sin(phase);
-      }
-    `).join('\n')
-    const normal = displacementTerms.map(({ prefix, index }) => `
+    const fusedWaveTerms = waveTerms.map(({ prefix, index }) => `
       {
         float wavelength = ${prefix}_LENGTH_${index}
           * uExtent / ${CAUSTIC_TILE_SIZE.toFixed(1)};
@@ -152,6 +139,8 @@ export class WaterCaustics {
         float dz = ${prefix}_DIRECTION_${index}.y;
         float phaseDx = k * dx;
         float phaseDz = k * dz;
+        displaced.xz += ${prefix}_DIRECTION_${index} * q * amplitude * uWaveChop * c;
+        displaced.y += amplitude * s;
         tangentX += vec3(-q * amplitude * dx * phaseDx * s, amplitude * phaseDx * c, -q * amplitude * dz * phaseDx * s);
         tangentZ += vec3(-q * amplitude * dx * phaseDz * s, amplitude * phaseDz * c, -q * amplitude * dz * phaseDz * s);
       }
@@ -200,18 +189,18 @@ export class WaterCaustics {
           return sqrt(max(gravityTerm + capillaryTerm, 0.0)) * speed;
         }
 
-        vec3 oceanDisplacement(vec2 xz, float time) {
-          vec3 displaced = vec3(0.0);
-          ${displacement}
+        void oceanDisplacementAndTangents(
+          vec2 xz,
+          float time,
+          out vec3 displaced,
+          out vec3 tangentX,
+          out vec3 tangentZ
+        ) {
+          displaced = vec3(0.0);
+          tangentX = vec3(1.0, 0.0, 0.0);
+          tangentZ = vec3(0.0, 0.0, 1.0);
+          ${fusedWaveTerms}
           displaced.y = clamp(displaced.y, -OCEAN_WAVE_HALF_RANGE, OCEAN_WAVE_HALF_RANGE);
-          return displaced;
-        }
-
-        vec3 oceanNormal(vec2 xz, float time) {
-          vec3 tangentX = vec3(1.0, 0.0, 0.0);
-          vec3 tangentZ = vec3(0.0, 0.0, 1.0);
-          ${normal}
-          return normalize(cross(tangentZ, tangentX));
         }
 
         void main() {
@@ -225,8 +214,17 @@ export class WaterCaustics {
           // underwater volume.
           vec2 surfaceXZ = uOrigin - flatOffset + (uv - 0.5) * uPatchExtent;
 
-          vec3 displacement = oceanDisplacement(surfaceXZ, uTime);
-          vec3 surfaceNormal = oceanNormal(surfaceXZ, uTime);
+          vec3 displacement;
+          vec3 surfaceTangentX;
+          vec3 surfaceTangentZ;
+          oceanDisplacementAndTangents(
+            surfaceXZ,
+            uTime,
+            displacement,
+            surfaceTangentX,
+            surfaceTangentZ
+          );
+          vec3 surfaceNormal = normalize(cross(surfaceTangentZ, surfaceTangentX));
           vec3 waveRefract = refract(-sun, surfaceNormal, uEta);
           float waveTravel = (uProjectDepth + displacement.y) / max(abs(waveRefract.y), 0.12);
 

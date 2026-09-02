@@ -52,6 +52,7 @@ import {
 import { applyDiagnosticCameraPose, type DiagnosticCameraId } from '../../diagnostics/cameras';
 import { VoxelOccupancyVolume } from '../render/lighting/VoxelOccupancyVolume.js';
 import { VoxelSunShadowPass } from '../render/lighting/VoxelSunShadowPass.js';
+import { ForwardRefractionParticipantRegistry } from '../render/water/ForwardRefraction';
 import { ResizeCoordinator } from '../render/ResizeCoordinator';
 import {
   createStartupError,
@@ -697,6 +698,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
   blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80, 0, CAUSTIC_REFERENCE_DEPTH, 1.35);
+  const forwardRefractionParticipants = new ForwardRefractionParticipantRegistry();
 
   // Water material uses the same shader as far ocean, but uses vUv on block meshes
   waterMaterial = new WaterSurfaceMaterial({
@@ -716,17 +718,29 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   // Increase Fresnel-driven opacity at shallow (grazing) angles
   waterMaterial.setFresnelAlpha(0.65, 0.9);
 
-  chunkRenderer = new ChunkRenderer(scene, { opaque: blockMaterial, transparent: waterMaterial });
+  chunkRenderer = new ChunkRenderer(
+    scene,
+    { opaque: blockMaterial, transparent: waterMaterial },
+    { forwardRefractionParticipants },
+  );
   
   // Create player rig root and in-world first-person body
   playerRigRoot = new THREE.Group();
   playerRigRoot.name = 'PlayerRigRoot';
   scene.add(playerRigRoot);
-  playerBody = new PlayerCharacter(useUIStore.getState().playerCharacter);
+  playerBody = new PlayerCharacter(useUIStore.getState().playerCharacter, { forwardRefractionParticipants });
 
   // Initialize the single active post-processing pipeline.
   const canvasSize = renderer.getCanvasSize();
-  composer = new Composer(baseRenderer, scene, camera, canvasSize.width, canvasSize.height);
+  composer = new Composer(
+    baseRenderer,
+    scene,
+    camera,
+    canvasSize.width,
+    canvasSize.height,
+    forwardRefractionParticipants,
+  );
+  composer.registerShadowSamplingMaterial(blockMaterial);
   composer.setBloom(RENDER_STYLE.bloom.enabled, RENDER_STYLE.bloom.strength, RENDER_STYLE.bloom.threshold);
   composer.setLens(RENDER_STYLE.lens.enabled, RENDER_STYLE.lens.intensity);
   composer.setAerialPerspective(true, aerialPerspectiveDistance);
@@ -936,6 +950,9 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       blockWaterMaterial: waterMaterial ?? undefined,
       seabedAtlas: atlas.getConfig(),
       renderer: baseRenderer,
+      forwardRefractionParticipants,
+      registerShadowSamplingMaterial: (material) => composer?.registerShadowSamplingMaterial(material),
+      unregisterShadowSamplingMaterial: (material) => composer?.unregisterShadowSamplingMaterial(material),
     });
     waterSystem.setSceneInputs(
       composer?.getSceneColorTexture() ?? null,
@@ -960,8 +977,10 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       terrainSeed: world.getSeed(),
       worldRadius,
       waterLevel: WATER_LEVEL,
+      forwardRefractionParticipants,
     });
     seaweedSystem.shareVoxelShadowState(blockMaterial);
+    composer?.registerShadowSamplingMaterial(seaweedSystem.getMaterial());
     voxelShadowVolume.setSeaweedAnchors(seaweedSystem.getShadowAnchors());
     seaweedSystem.setWaterCausticTexture(
       waterSystem.getCausticTexture(),
@@ -1007,7 +1026,13 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   );
   // Decorative grass system (instanced billboards). Its direct sun visibility
   // uses the same combined screen-space voxel visibility result as terrain.
-  grassSystem = new GrassBillboardSystem(scene, world, getBlockIdByName('grass_tuft') ?? 9);
+  grassSystem = new GrassBillboardSystem(
+    scene,
+    world,
+    getBlockIdByName('grass_tuft') ?? 9,
+    forwardRefractionParticipants,
+  );
+  composer?.registerShadowSamplingMaterial(grassSystem.getMaterial());
   if (voxelSunShadowPass) {
     const resolution = voxelSunShadowPass.getDiagnostics().resolution;
     grassSystem.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
@@ -1138,6 +1163,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   if (!running) throw new Error('World startup stopped before readiness');
   voxelShadowVolume?.finishBulkUpdate();
   flushPendingChunkMeshes();
+  chunkRenderer?.finalizeStaticRegions();
   if (diagnosticMode) {
     // Diagnostics own the camera pose, but still need the character positioned
     // before their first capture.

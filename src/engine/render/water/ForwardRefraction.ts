@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { OCEAN_WAVES, oceanWaveDeclarations } from './OceanWaveField'
+import { OCEAN_WAVE_HALF_RANGE, OCEAN_WAVES, oceanWaveDeclarations } from './OceanWaveField'
 
 /** Refractive indices used by both the forward projection and water BRDF. */
 export const AIR_REFRACTIVE_INDEX = 1.0
@@ -153,6 +153,187 @@ export function attachForwardRefractionUniforms(material: THREE.ShaderMaterial):
 
 export function isForwardRefractionMaterial(material: THREE.Material): boolean {
   return material.userData[FORWARD_REFRACTION_MATERIAL_FLAG] === true
+}
+
+export const FORWARD_REFRACTION_LAYER = 1
+
+type ForwardRefractionRenderable = THREE.Mesh | THREE.Line | THREE.Points
+
+function getRenderableMaterials(object: THREE.Object3D): THREE.Material[] | null {
+  if (
+    !(object instanceof THREE.Mesh) &&
+    !(object instanceof THREE.Line) &&
+    !(object instanceof THREE.Points)
+  ) return null
+  const material = object.material
+  if (!material) return null
+  const materials = Array.isArray(material) ? material : [material]
+  return materials.length > 0 ? materials : null
+}
+
+/**
+ * Registration-time index of objects rendered by ForwardRefractionPass.
+ *
+ * Terrain, grass, seaweed, seabed, and the player all have known creation and
+ * replacement points. Recording those objects there keeps the two full-screen
+ * refraction draws from rediscovering every scene node every frame.
+ */
+export class ForwardRefractionParticipantRegistry {
+  private readonly participants = new Set<ForwardRefractionRenderable>()
+  private readonly previousLayerMasks = new Map<ForwardRefractionRenderable, number>()
+
+  register(object: THREE.Object3D): boolean {
+    const renderable = object as ForwardRefractionRenderable
+    const materials = getRenderableMaterials(object)
+    if (!materials || !materials.every((material) => isForwardRefractionMaterial(material))) {
+      return false
+    }
+    if (!this.previousLayerMasks.has(renderable)) {
+      this.previousLayerMasks.set(renderable, renderable.layers.mask)
+    }
+    renderable.layers.enable(FORWARD_REFRACTION_LAYER)
+    this.participants.add(renderable)
+    return true
+  }
+
+  registerTree(root: THREE.Object3D): void {
+    root.traverse((object) => { this.register(object) })
+  }
+
+  unregister(object: THREE.Object3D): void {
+    const renderable = object as ForwardRefractionRenderable
+    this.participants.delete(renderable)
+    const previousMask = this.previousLayerMasks.get(renderable)
+    if (previousMask !== undefined) {
+      renderable.layers.mask = previousMask
+      this.previousLayerMasks.delete(renderable)
+    }
+  }
+
+  unregisterTree(root: THREE.Object3D): void {
+    root.traverse((object) => { this.unregister(object) })
+  }
+
+  getParticipants(): ReadonlySet<ForwardRefractionRenderable> {
+    return this.participants
+  }
+
+  get size(): number {
+    return this.participants.size
+  }
+
+  clear(): void {
+    for (const object of this.participants) {
+      const previousMask = this.previousLayerMasks.get(object)
+      if (previousMask !== undefined) object.layers.mask = previousMask
+    }
+    this.participants.clear()
+    this.previousLayerMasks.clear()
+  }
+}
+
+/**
+ * Conservative CPU proxy for the water-to-air Snell window.
+ *
+ * A normal camera frustum is not sufficient underwater: refraction can pull a
+ * source that is outside that frustum into the apparent image. This proxy
+ * samples the camera cone, transports its upward rays through a flat
+ * water/air interface, and builds a spherical-cap perspective frustum around
+ * the resulting directions. A generous angular margin and the live wave range
+ * keep it a rejection-only optimization; uncertain cases accept the object.
+ */
+export class ConservativeRefractionSourceCuller {
+  private readonly frustum = new THREE.Frustum()
+  private readonly projectionView = new THREE.Matrix4()
+  private readonly sourceCamera = new THREE.PerspectiveCamera()
+  private readonly cameraWorld = new THREE.Vector3()
+  private readonly cameraForward = new THREE.Vector3()
+  private readonly ray = new THREE.Vector3()
+  private readonly tangent = new THREE.Vector3()
+  private readonly sourceDirection = new THREE.Vector3()
+  private readonly up = new THREE.Vector3(0, 1, 0)
+  private acceptsAll = true
+  private waterLevel = 0
+  private halfAngle = Math.PI * 0.5
+
+  update(camera: THREE.PerspectiveCamera, waterLevel: number): void {
+    this.waterLevel = waterLevel
+    camera.updateMatrixWorld()
+    camera.getWorldPosition(this.cameraWorld)
+    camera.getWorldDirection(this.cameraForward)
+
+    let maximumAngle = 0
+    let validSamples = 0
+    for (let y = -1; y <= 1; y += 1) {
+      for (let x = -1; x <= 1; x += 1) {
+        this.ray.set(x, y, -1).unproject(camera).sub(this.cameraWorld).normalize()
+        if (!this.transportUpwardRay(this.ray)) continue
+        validSamples += 1
+        maximumAngle = Math.max(
+          maximumAngle,
+          Math.acos(THREE.MathUtils.clamp(this.cameraForward.dot(this.sourceDirection), -1, 1)),
+        )
+      }
+    }
+
+    // Near-critical or nearly backward windows are too broad for a useful
+    // frustum. Accepting all is still correct and is uncommon in normal play.
+    const margin = THREE.MathUtils.degToRad(5)
+    this.halfAngle = maximumAngle + margin
+    this.acceptsAll = validSamples === 0 || this.halfAngle >= THREE.MathUtils.degToRad(89.5)
+    if (this.acceptsAll) return
+
+    this.halfAngle = Math.min(this.halfAngle, THREE.MathUtils.degToRad(89.25))
+    this.sourceCamera.fov = THREE.MathUtils.radToDeg(this.halfAngle * 2)
+    this.sourceCamera.aspect = 1
+    this.sourceCamera.near = Math.max(0.01, camera.near)
+    this.sourceCamera.far = Math.max(this.sourceCamera.near + 1, camera.far)
+    this.sourceCamera.updateProjectionMatrix()
+    this.projectionView.multiplyMatrices(
+      this.sourceCamera.projectionMatrix,
+      camera.matrixWorldInverse,
+    )
+    this.frustum.setFromProjectionMatrix(this.projectionView)
+  }
+
+  intersectsBox(box: THREE.Box3): boolean {
+    if (this.acceptsAll) return true
+    // A missing/invalid bound is an uncertainty, not proof that the source is
+    // absent. Fail open so malformed or not-yet-authored geometry cannot make
+    // a valid refracted silhouette disappear.
+    if (
+      box.isEmpty() ||
+      !Number.isFinite(box.min.x) || !Number.isFinite(box.min.y) || !Number.isFinite(box.min.z) ||
+      !Number.isFinite(box.max.x) || !Number.isFinite(box.max.y) || !Number.isFinite(box.max.z)
+    ) return true
+    // A source completely below the lowest possible live wave surface cannot
+    // participate in a water-to-air projection. The margin makes this test
+    // safe for the animated interface rather than using a nominal plane.
+    if (box.max.y <= this.waterLevel - OCEAN_WAVE_HALF_RANGE) return false
+    return this.frustum.intersectsBox(box)
+  }
+
+  getDiagnostics(): { acceptsAll: boolean; halfAngleDegrees: number; waterLevel: number } {
+    return {
+      acceptsAll: this.acceptsAll,
+      halfAngleDegrees: THREE.MathUtils.radToDeg(this.halfAngle),
+      waterLevel: this.waterLevel,
+    }
+  }
+
+  private transportUpwardRay(direction: THREE.Vector3): boolean {
+    const normalComponent = direction.y
+    if (normalComponent <= 1e-5) return false
+    this.tangent.copy(direction).addScaledVector(this.up, -normalComponent)
+    const incidentSine = this.tangent.length()
+    const transmittedSine = (WATER_REFRACTIVE_INDEX / AIR_REFRACTIVE_INDEX) * incidentSine
+    if (transmittedSine >= 1 - 1e-6) return false
+    this.tangent.multiplyScalar(transmittedSine / Math.max(incidentSine, 1e-6))
+    this.sourceDirection.copy(this.tangent)
+    this.sourceDirection.y = Math.sqrt(Math.max(0, 1 - transmittedSine * transmittedSine))
+    this.sourceDirection.normalize()
+    return true
+  }
 }
 
 const macroNormalTerms = OCEAN_WAVES.map((_, index) => `

@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { CHUNK_SIZE } from '../src/config/constants';
 import { Chunk } from '../src/engine/world/chunk/Chunk';
-import { VoxelOccupancyVolume } from '../src/engine/render/lighting/VoxelOccupancyVolume';
+import {
+  VoxelOccupancyVolume,
+  VOXEL_CASTER_GRASS_BIT,
+  VOXEL_CASTER_LEAF_BIT,
+  VOXEL_CASTER_OPAQUE_BIT,
+} from '../src/engine/render/lighting/VoxelOccupancyVolume';
 
 describe('VoxelOccupancyVolume', () => {
   it('encodes only opaque block IDs and mirrors brick occupancy', () => {
@@ -22,13 +27,15 @@ describe('VoxelOccupancyVolume', () => {
 
     const voxels = volume.texture.image.data as Uint8Array;
     const index = 2 + CHUNK_SIZE.x * (3 + CHUNK_SIZE.y * 4);
-    expect(voxels[index]).toBe(255);
+    expect(voxels[index]).toBe(VOXEL_CASTER_OPAQUE_BIT);
     const waterIndex = 5 + CHUNK_SIZE.x * (3 + CHUNK_SIZE.y * 4);
     expect(voxels[waterIndex]).toBe(0);
 
-    const grass = volume.grassTexture.image.data as Uint8Array;
+    const grass = volume.texture.image.data as Uint8Array;
     const grassIndex = 16 + CHUNK_SIZE.x * (3 + CHUNK_SIZE.y * 4);
-    expect(grass[grassIndex]).toBe(255);
+    expect(grass[grassIndex]).toBe(VOXEL_CASTER_GRASS_BIT);
+    expect(volume.texture.format).toBe(THREE.RedIntegerFormat);
+    expect(volume.casterFlagsTexture).toBe(volume.texture);
 
     const bricks = volume.brickTexture.image.data as Uint8Array;
     expect(bricks[0]).toBe(255);
@@ -67,6 +74,7 @@ describe('VoxelOccupancyVolume', () => {
 
     const bricks = volume.brickTexture.image.data as Uint8Array
     expect(bricks[4]).toBe(255)
+    expect((volume.macroBrickTexture.image.data as Uint8Array)[0]).toBe(255)
     volume.dispose()
   });
 
@@ -119,13 +127,13 @@ describe('VoxelOccupancyVolume', () => {
     chunk.set(8, 5, 7, 8); // cherry leaf block, legacy id
     volume.updateChunk('0,0,0', chunk);
 
-    const leaf = volume.leafTexture.image.data as Uint8Array;
+    const leaf = volume.texture.image.data as Uint8Array;
     const greenIndex = 7 + CHUNK_SIZE.x * (5 + CHUNK_SIZE.y * 7);
     const cherryIndex = 8 + CHUNK_SIZE.x * (5 + CHUNK_SIZE.y * 7);
-    expect(leaf[greenIndex]).toBe(255);
-    expect(leaf[cherryIndex]).toBe(255);
-    expect((volume.texture.image.data as Uint8Array)[greenIndex]).toBe(0);
-    expect((volume.texture.image.data as Uint8Array)[cherryIndex]).toBe(0);
+    expect(leaf[greenIndex]).toBe(VOXEL_CASTER_LEAF_BIT);
+    expect(leaf[cherryIndex]).toBe(VOXEL_CASTER_LEAF_BIT);
+    expect((volume.texture.image.data as Uint8Array)[greenIndex] & VOXEL_CASTER_OPAQUE_BIT).toBe(0);
+    expect((volume.texture.image.data as Uint8Array)[cherryIndex] & VOXEL_CASTER_OPAQUE_BIT).toBe(0);
     expect(volume.getDiagnostics().opaqueVoxels).toBe(0);
     expect(volume.getDiagnostics().leafVoxels).toBe(2);
     expect((volume.brickTexture.image.data as Uint8Array)[0]).toBe(255);
@@ -139,6 +147,38 @@ describe('VoxelOccupancyVolume', () => {
     expect(volume.getDiagnostics().leafVoxels).toBe(1);
     expect((volume.brickTexture.image.data as Uint8Array)[1]).toBe(255);
     expect((volume.leafBrickTexture.image.data as Uint8Array)[1]).toBeGreaterThan(0);
+    volume.dispose();
+  });
+
+  it('updates the 32-cell macro hierarchy incrementally above 8-cell bricks', () => {
+    const volume = new VoxelOccupancyVolume({
+      minX: 0,
+      maxX: 64,
+      minY: 0,
+      maxY: 32,
+      minZ: 0,
+      maxZ: 64,
+    });
+
+    volume.updateBlock(1, 1, 1, 1);
+    volume.updateBlock(33, 1, 1, 1);
+    const macros = volume.macroBrickTexture.image.data as Uint8Array;
+    expect(volume.getDiagnostics().macroBrickDimensions).toEqual({ x: 2, y: 1, z: 2 });
+    expect(macros[0]).toBe(255);
+    expect(macros[1]).toBe(255);
+    expect(volume.getDiagnostics().fullBrickRebuilds).toBe(0);
+
+    // A render-only seaweed replacement can force a brick reduction outside
+    // startup bulk mode; existing voxel occupancy must remain represented in
+    // the macro ancestor during that rebuild.
+    volume.setSeaweedAnchors([{ x: 40.5, z: 5.5, rootY: 8, height: 4 }]);
+    expect(macros[0]).toBe(255);
+    const afterSeaweedRebuilds = volume.getDiagnostics().fullBrickRebuilds;
+
+    volume.updateBlock(1, 1, 1, 0);
+    expect(macros[0]).toBe(0);
+    expect(macros[1]).toBe(255);
+    expect(volume.getDiagnostics().fullBrickRebuilds).toBe(afterSeaweedRebuilds);
     volume.dispose();
   });
 });

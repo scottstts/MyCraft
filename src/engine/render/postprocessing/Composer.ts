@@ -15,7 +15,14 @@ import { AerialPerspectivePass } from './passes/AerialPerspectivePass'
 import { UnderwaterPass } from './passes/UnderwaterPass'
 import type { AtmosphereState } from '../atmosphere/AtmosphereModel'
 import type { VoxelSunShadowPass } from '../lighting/VoxelSunShadowPass.js'
+import {
+  ForwardRefractionParticipantRegistry,
+} from '../water/ForwardRefraction'
 import { ForwardRefractionPass } from '../water/ForwardRefractionPass'
+import {
+  ShadowSamplingMaterialRegistry,
+  type ShadowSamplingUniformState,
+} from '../ShadowSamplingRegistry'
 
 export class Composer {
   private composer: EffectComposer
@@ -30,15 +37,25 @@ export class Composer {
   private renderer: THREE.WebGLRenderer
   private scene: THREE.Scene
   private voxelSunShadow: VoxelSunShadowPass | null = null
+  private readonly shadowSamplingMaterials = new ShadowSamplingMaterialRegistry()
+  private readonly forwardRefractionParticipants: ForwardRefractionParticipantRegistry
   private beforeOpaqueCapture: (() => void) | null = null
   private afterOpaqueCapture: (() => void) | null = null
   private underwaterEnabled = false
 
-  constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, width: number, height: number) {
+  constructor(
+    renderer: THREE.WebGLRenderer,
+    scene: THREE.Scene,
+    camera: THREE.PerspectiveCamera,
+    width: number,
+    height: number,
+    forwardRefractionParticipants?: ForwardRefractionParticipantRegistry,
+  ) {
     // Use default internal ping-pong color buffers for composer
     this.composer = new EffectComposer(renderer)
     this.renderer = renderer
     this.scene = scene
+    this.forwardRefractionParticipants = forwardRefractionParticipants ?? new ForwardRefractionParticipantRegistry()
 
     const effective = this.getEffectiveSize(width, height)
 
@@ -61,6 +78,7 @@ export class Composer {
       scene,
       effective.width,
       effective.height,
+      this.forwardRefractionParticipants,
     )
 
     this.renderPass = new RenderPass(scene, camera)
@@ -133,57 +151,20 @@ export class Composer {
    * the complete voxel-shadow lookup off while writing depth, then restore
    * each material's previous state before the visibility pass and final draw.
    */
-  private setShadowSamplingEnabled(enabled: boolean): Array<{
-    enabledUniform: { value: unknown };
-    enabledValue: unknown;
-    depthUniform: { value: unknown } | undefined;
-    depthValue: unknown;
-  }> {
-    const states: Array<{
-      enabledUniform: { value: unknown };
-      enabledValue: unknown;
-      depthUniform: { value: unknown } | undefined;
-      depthValue: unknown;
-    }> = [];
-    const seen = new Set<object>();
-    this.scene.traverse((object) => {
-      const material = (object as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
-      const materials = Array.isArray(material) ? material : material ? [material] : [];
-      for (const entry of materials) {
-        const uniforms = (entry as THREE.ShaderMaterial).uniforms as Record<string, { value: unknown }> | undefined;
-        const enabledUniform = uniforms?.voxelShadowEnabled;
-        if (!enabledUniform) continue;
-        // Chunk meshes share one BlockMaterial (and grass chunks share one
-        // GrassMaterial).  Save each uniform exactly once; otherwise later
-        // duplicate entries would restore the already-disabled value.
-        if (seen.has(enabledUniform)) continue;
-        seen.add(enabledUniform);
-        const depthUniform = uniforms?.voxelShadowDepth;
-        states.push({
-          enabledUniform,
-          enabledValue: enabledUniform.value,
-          depthUniform,
-          depthValue: depthUniform?.value,
-        });
-        enabledUniform.value = enabled;
-        // Detach the actual framebuffer texture. WebGL validates feedback
-        // loops from sampler bindings even when the voxel branch is false.
-        if (depthUniform) depthUniform.value = null;
-      }
-    });
-    return states;
+  registerShadowSamplingMaterial(material: THREE.Material): void {
+    this.shadowSamplingMaterials.register(material)
   }
 
-  private restoreShadowSampling(states: Array<{
-    enabledUniform: { value: unknown };
-    enabledValue: unknown;
-    depthUniform: { value: unknown } | undefined;
-    depthValue: unknown;
-  }>): void {
-    for (const state of states) {
-      state.enabledUniform.value = state.enabledValue;
-      if (state.depthUniform) state.depthUniform.value = state.depthValue;
-    }
+  unregisterShadowSamplingMaterial(material: THREE.Material): void {
+    this.shadowSamplingMaterials.unregister(material)
+  }
+
+  private setShadowSamplingEnabled(enabled: boolean): ShadowSamplingUniformState[] {
+    return this.shadowSamplingMaterials.toggle(enabled)
+  }
+
+  private restoreShadowSampling(states: ShadowSamplingUniformState[]): void {
+    this.shadowSamplingMaterials.restore(states)
   }
 
   getDepthTexture(): THREE.DepthTexture {
@@ -327,6 +308,7 @@ export class Composer {
     this.voxelSunShadow?.dispose()
     this.depthTarget.dispose()
     this.forwardRefraction.dispose()
+    this.shadowSamplingMaterials.clear()
     this.underwater.dispose()
     this.lens.dispose()
     this.composer.dispose()

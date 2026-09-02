@@ -11,6 +11,7 @@ import {
   extractProceduralAtlasTile,
 } from '../ProceduralVoxelTextures'
 import { setForwardRefractionWaterState } from './ForwardRefraction'
+import type { ForwardRefractionParticipantRegistry } from './ForwardRefraction'
 
 const TERRAIN_HEIGHT_TEXTURE_SCALE = 128
 const SEABED_FLOOR_Y = 0
@@ -74,6 +75,10 @@ export interface WaterSystemOptions {
   blockWaterMaterial?: WaterSurfaceMaterial
   /** WebGL renderer used for the render-only differential-area caustic map. */
   renderer?: THREE.WebGLRenderer
+  forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
+  /** Registration hooks for the composer depth-prepass shadow sampler guard. */
+  registerShadowSamplingMaterial?: (material: THREE.Material) => void
+  unregisterShadowSamplingMaterial?: (material: THREE.Material) => void
 }
 
 type Vec3Tuple = [number, number, number]
@@ -93,6 +98,7 @@ export class WaterSystem {
   private terrainSampler: TerrainSampler
   private readonly caustics: WaterCaustics | null
   private readonly blockWaterMaterial: WaterSurfaceMaterial | null
+  private readonly forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
   private seabedMaterial: BlockMaterial | null = null
   private seabedTexture: THREE.Texture | null = null
   private seabedGroup: THREE.Group | null = null
@@ -119,6 +125,7 @@ export class WaterSystem {
     this.scene = scene
     this.options = options
     this.blockWaterMaterial = options.blockWaterMaterial ?? null
+    this.forwardRefractionParticipants = options.forwardRefractionParticipants
     this.group = new THREE.Group()
     this.group.name = 'WaterSystem'
     this.oceanGroup = new THREE.Group()
@@ -262,7 +269,7 @@ export class WaterSystem {
       this.disposeGroup(this.seabedGroup)
       this.seabedGroup = null
     }
-    this.seabedMaterial?.dispose()
+    this.disposeSeabedMaterial()
     this.seabedMaterial = null
     this.seabedTexture?.dispose()
     this.seabedTexture = null
@@ -414,15 +421,20 @@ export class WaterSystem {
     this.seabedBuildToken += 1
     this.scene.remove(this.group)
     this.disposeGroup(this.group)
-    if (this.seabedGroup) this.disposeGroup(this.seabedGroup)
+    if (this.seabedGroup) {
+      this.scene.remove(this.seabedGroup)
+      this.disposeGroup(this.seabedGroup)
+      this.seabedGroup = null
+    }
     this.material.dispose()
     this.terrainHeightTexture.dispose()
-    this.seabedMaterial?.dispose()
+    this.disposeSeabedMaterial()
     this.seabedTexture?.dispose()
     this.caustics?.dispose()
   }
 
   private disposeGroup(group: THREE.Group): void {
+    this.forwardRefractionParticipants?.unregisterTree(group)
     group.traverse((object) => {
       const mesh = object as THREE.Mesh
       if (mesh.geometry) mesh.geometry.dispose()
@@ -589,6 +601,8 @@ export class WaterSystem {
       closure.frustumCulled = true
       this.seabedGroup.add(closure)
       this.scene.add(this.seabedGroup)
+      this.forwardRefractionParticipants?.registerTree(this.seabedGroup)
+      this.options.registerShadowSamplingMaterial?.(this.seabedMaterial)
     } catch (error) {
       console.warn('[WaterSystem] Failed to build visual seabed extension:', error)
     }
@@ -1060,6 +1074,14 @@ export class WaterSystem {
       this.seabedMaterial.shareVoxelShadowState(source)
     }
     this.seabedMaterial.setWaterCaustics(true, this.surfaceY, 0.80, this.time, this.getCausticReferenceDepth(), this.sunIntensity)
+  }
+
+  private disposeSeabedMaterial(): void {
+    const material = this.seabedMaterial
+    if (!material) return
+    this.seabedMaterial = null
+    this.options.unregisterShadowSamplingMaterial?.(material)
+    material.dispose()
   }
 
   private applyCaustics(): void {

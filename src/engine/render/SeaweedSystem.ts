@@ -11,6 +11,7 @@ import {
 import { SeaweedMaterial } from './SeaweedMaterial'
 import { createXBillboardGeometry } from './BillboardGeometry'
 import { CAUSTIC_REFERENCE_DEPTH } from './water/WaterOptics'
+import type { ForwardRefractionParticipantRegistry } from './water/ForwardRefraction'
 
 export interface SeaweedSystemOptions {
   bounds: SeaweedFieldBounds
@@ -19,6 +20,7 @@ export interface SeaweedSystemOptions {
   waterLevel: number
   /** Omit to create a fresh random field for this game load. */
   distributionSeed?: number
+  forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
 }
 
 const SEAWEED_BILLBOARD_SEGMENTS = 4
@@ -82,6 +84,7 @@ export class SeaweedSystem {
   private readonly scene: THREE.Scene
   private readonly options: SeaweedSystemOptions
   private readonly distributionSeed: number
+  private readonly forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
   private readonly material: SeaweedMaterial
   private baseGeometry: THREE.BufferGeometry | null = null
   private texture: THREE.Texture
@@ -108,6 +111,7 @@ export class SeaweedSystem {
   constructor(scene: THREE.Scene, options: SeaweedSystemOptions) {
     this.scene = scene
     this.distributionSeed = options.distributionSeed ?? createSeaweedSessionSeed()
+    this.forwardRefractionParticipants = options.forwardRefractionParticipants
     this.options = {
       ...options,
       distributionSeed: this.distributionSeed,
@@ -340,12 +344,14 @@ export class SeaweedSystem {
       mesh.instanceMatrix.needsUpdate = true
       ;(geometry.getAttribute('aSeed') as THREE.InstancedBufferAttribute).needsUpdate = true
       mesh.computeBoundingSphere()
+      mesh.computeBoundingBox()
 
       const group = new THREE.Group()
       group.name = `SeaweedChunk:${key}`
       group.position.set(cx * CHUNK_SIZE.x, 0, cz * CHUNK_SIZE.z)
       group.add(mesh)
       this.scene.add(group)
+      this.forwardRefractionParticipants?.register(mesh)
       this.groups.set(key, group)
     }
   }
@@ -369,6 +375,7 @@ export class SeaweedSystem {
   private disposeGroups(): void {
     for (const group of this.groups.values()) {
       this.scene.remove(group)
+      this.forwardRefractionParticipants?.unregisterTree(group)
       group.traverse((object) => {
         if (object instanceof THREE.Mesh) object.geometry.dispose()
       })

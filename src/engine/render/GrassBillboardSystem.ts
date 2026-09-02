@@ -5,8 +5,17 @@ import { CHUNK_SIZE } from '../../config/constants'
 import grassLeavesTexture from '../../assets/textures/grass_leaves.png'
 import { GrassMaterial } from './GrassMaterial'
 import { createXBillboardGeometry } from './BillboardGeometry'
+import type { ForwardRefractionParticipantRegistry } from './water/ForwardRefraction'
 
 export const GRASS_TUFT_YAW_OFFSET = THREE.MathUtils.degToRad(45)
+
+export function shouldRebuildGrassForBlockChange(
+  oldBlockId: number,
+  newBlockId: number,
+  grassTuftId: number,
+): boolean {
+  return oldBlockId === grassTuftId || newBlockId === grassTuftId
+}
 
 /**
  * GrassBillboardSystem
@@ -18,12 +27,19 @@ export class GrassBillboardSystem {
   private material: GrassMaterial
   private geometry: THREE.BufferGeometry
   private groups = new Map<ChunkKey, THREE.Group>()
+  private readonly forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
 
   private grassTuftId: number
 
-  constructor(scene: THREE.Scene, world: World, grassTuftId: number) {
+  constructor(
+    scene: THREE.Scene,
+    world: World,
+    grassTuftId: number,
+    forwardRefractionParticipants?: ForwardRefractionParticipantRegistry,
+  ) {
     this.scene = scene
     this.grassTuftId = grassTuftId
+    this.forwardRefractionParticipants = forwardRefractionParticipants
 
     // Create placeholder texture for material init
     const ph = document.createElement('canvas'); ph.width = 1; ph.height = 1; const phCtx = ph.getContext('2d')!; phCtx.fillStyle = '#ffffff'; phCtx.fillRect(0,0,1,1);
@@ -59,7 +75,8 @@ export class GrassBillboardSystem {
       )
     })
     world.on('CHUNK_REMOVED', ({ key }) => this.removeChunk(key))
-    world.on('BLOCK_CHANGED', ({ chunkKey }) => {
+    world.on('BLOCK_CHANGED', ({ chunkKey, oldBlockId, newBlockId }) => {
+      if (!shouldRebuildGrassForBlockChange(oldBlockId, newBlockId, this.grassTuftId)) return
       const chunk = world.getChunkByKey(chunkKey)
       if (!chunk) { this.removeChunk(chunkKey); return }
       this.rebuildForChunk(
@@ -82,12 +99,9 @@ export class GrassBillboardSystem {
     const g = this.groups.get(key)
     if (!g) return
     this.scene.remove(g)
-    g.traverse(obj => {
-      if (obj instanceof THREE.InstancedMesh) {
-        obj.geometry.dispose()
-        ;(obj.material as THREE.Material).dispose?.()
-      }
-    })
+    this.forwardRefractionParticipants?.unregisterTree(g)
+    // All chunk meshes use the one shared geometry and material owned by this
+    // system. Dispose those resources once in destroy(), never per chunk.
     this.groups.delete(key)
   }
 
@@ -142,15 +156,22 @@ export class GrassBillboardSystem {
       mesh.setMatrixAt(i, tmp)
     }
     mesh.instanceMatrix.needsUpdate = true
+    // ForwardRefractionPass uses the instanced geometry bounds for its
+    // conservative source culler. Compute the aggregate instance bounds once
+    // after the static matrices are authored.
+    mesh.computeBoundingBox()
 
     const group = new THREE.Group()
     group.add(mesh)
     group.position.set(cx * CHUNK_SIZE.x, cy * CHUNK_SIZE.y, cz * CHUNK_SIZE.z)
     this.scene.add(group)
+    this.forwardRefractionParticipants?.register(mesh)
     this.groups.set(key, group)
   }
 
   // Lighting sync API (called from Engine)
+  getMaterial(): GrassMaterial { return this.material }
+
   setSunUniforms(dir: THREE.Vector3, color: THREE.Color): void { this.material.setSun(dir, color) }
   setDayNight(day: number, star: number): void { this.material.setDayNight(day, star) }
   setSkyAmbient(color: THREE.Color): void { this.material.setSkyAmbient(color) }

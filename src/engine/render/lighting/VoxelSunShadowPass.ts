@@ -14,6 +14,10 @@ import * as THREE from 'three';
 import {
   SEAWEED_SHADOW_HEIGHT_MAX,
   VoxelOccupancyVolume,
+  VOXEL_CASTER_GRASS_BIT,
+  VOXEL_CASTER_LEAF_BIT,
+  VOXEL_CASTER_OPAQUE_BIT,
+  VOXEL_SHADOW_MACRO_BRICK_SIZE,
   VOXEL_SHADOW_BRICK_SIZE,
 } from './VoxelOccupancyVolume.js';
 import type { CharacterShadowBox } from './CharacterShadowBox';
@@ -152,12 +156,11 @@ export class VoxelSunShadowPass {
         tDepth: { value: null },
         tReceiverWorld: { value: this.forwardTarget.texture },
         uUseReceiverWorld: { value: false },
-        uVoxelOccupancy: { value: volume.texture },
+        uVoxelCasterFlags: { value: volume.casterFlagsTexture },
         uBrickOccupancy: { value: volume.brickTexture },
+        uMacroBrickOccupancy: { value: volume.macroBrickTexture },
         uBrickDetailOccupancy: { value: volume.brickDetailTexture },
         uLeafBrickDensity: { value: volume.leafBrickTexture },
-        uLeafOccupancy: { value: volume.leafTexture },
-        uGrassOccupancy: { value: volume.grassTexture },
         uSeaweedAnchors: { value: volume.seaweedTexture },
         uLeafAtlas: { value: leafAtlas?.texture ?? leafAtlasFallback },
         uLeafAtlasEnabled: { value: !!leafAtlas },
@@ -169,6 +172,7 @@ export class VoxelSunShadowPass {
         uVolumeOrigin: { value: volume.origin.clone() },
         uVolumeSize: { value: volume.dimensions.clone() },
         uBrickGridSize: { value: volume.brickDimensions.clone() },
+        uMacroBrickGridSize: { value: volume.macroBrickDimensions.clone() },
         uSunDirection: { value: this.sunDirection.clone() },
         uCameraNear: { value: 0.1 },
         uCameraFar: { value: 1024 },
@@ -204,12 +208,11 @@ export class VoxelSunShadowPass {
         uniform sampler2D tDepth;
         uniform sampler2D tReceiverWorld;
         uniform bool uUseReceiverWorld;
-        uniform sampler3D uVoxelOccupancy;
-        uniform sampler3D uBrickOccupancy;
-        uniform sampler3D uBrickDetailOccupancy;
+        uniform highp usampler3D uVoxelCasterFlags;
+        uniform highp usampler3D uBrickOccupancy;
+        uniform highp usampler3D uMacroBrickOccupancy;
+        uniform highp usampler3D uBrickDetailOccupancy;
         uniform sampler3D uLeafBrickDensity;
-        uniform sampler3D uLeafOccupancy;
-        uniform sampler3D uGrassOccupancy;
         uniform sampler2D uSeaweedAnchors;
         uniform sampler2D uLeafAtlas;
         uniform bool uLeafAtlasEnabled;
@@ -221,6 +224,7 @@ export class VoxelSunShadowPass {
         uniform vec3 uVolumeOrigin;
         uniform vec3 uVolumeSize;
         uniform vec3 uBrickGridSize;
+        uniform vec3 uMacroBrickGridSize;
         uniform vec3 uSunDirection;
         uniform float uCameraNear;
         uniform float uCameraFar;
@@ -246,6 +250,10 @@ export class VoxelSunShadowPass {
         layout(location = 0) out vec4 outColor;
 
         const int BRICK_SIZE = ${VOXEL_SHADOW_BRICK_SIZE};
+        const int MACRO_BRICK_SIZE = ${VOXEL_SHADOW_MACRO_BRICK_SIZE};
+        const uint CASTER_OPAQUE_BIT = ${VOXEL_CASTER_OPAQUE_BIT}u;
+        const uint CASTER_LEAF_BIT = ${VOXEL_CASTER_LEAF_BIT}u;
+        const uint CASTER_GRASS_BIT = ${VOXEL_CASTER_GRASS_BIT}u;
         const float LEAF_BRICK_DENSITY_FAST_PATH_THRESHOLD = 0.18;
         const int DETAILED_LEAF_LAYERS = 3;
         const float LEAF_RECEIVER_LAYER_TRANSMISSION = 0.62;
@@ -260,20 +268,25 @@ export class VoxelSunShadowPass {
             all(lessThan(cell, ivec3(uBrickGridSize)));
         }
 
-        float voxelAt(ivec3 cell) {
-          return texture(uVoxelOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
+        uint casterFlagsAt(ivec3 cell) {
+          return texelFetch(uVoxelCasterFlags, cell, 0).r;
         }
 
-        float leafAt(ivec3 cell) {
-          return texture(uLeafOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
+        bool casterHasFlag(ivec3 cell, uint flag) {
+          return (casterFlagsAt(cell) & flag) != 0u;
         }
 
-        float safeVoxelAt(ivec3 cell) {
-          return insideVolume(cell) ? voxelAt(cell) : 0.0;
+        bool safeCasterHasFlag(ivec3 cell, uint flag) {
+          return insideVolume(cell) && casterHasFlag(cell, flag);
         }
 
-        float safeLeafAt(ivec3 cell) {
-          return insideVolume(cell) ? leafAt(cell) : 0.0;
+        bool insideMacroBrickGrid(ivec3 cell) {
+          return all(greaterThanEqual(cell, ivec3(0))) &&
+            all(lessThan(cell, ivec3(uMacroBrickGridSize)));
+        }
+
+        bool macroBrickAt(ivec3 brick) {
+          return texelFetch(uMacroBrickOccupancy, brick, 0).r != 0u;
         }
 
         bool receiverIsLeaf(vec3 localPosition) {
@@ -292,10 +305,10 @@ export class VoxelSunShadowPass {
               : vec3(0.0, 0.0, 1.0);
           ivec3 positiveCell = ivec3(floor(localPosition + axis * epsilon));
           ivec3 negativeCell = ivec3(floor(localPosition - axis * epsilon));
-          bool touchesLeaf = safeLeafAt(positiveCell) > 0.5 ||
-            safeLeafAt(negativeCell) > 0.5;
-          bool touchesOpaque = safeVoxelAt(positiveCell) > 0.5 ||
-            safeVoxelAt(negativeCell) > 0.5;
+          bool touchesLeaf = safeCasterHasFlag(positiveCell, CASTER_LEAF_BIT) ||
+            safeCasterHasFlag(negativeCell, CASTER_LEAF_BIT);
+          bool touchesOpaque = safeCasterHasFlag(positiveCell, CASTER_OPAQUE_BIT) ||
+            safeCasterHasFlag(negativeCell, CASTER_OPAQUE_BIT);
           // An opaque gameplay surface takes precedence when it shares a
           // boundary with foliage; terrain must retain detailed leaf dapple.
           return touchesLeaf && !touchesOpaque;
@@ -309,12 +322,12 @@ export class VoxelSunShadowPass {
             all(lessThanEqual(receiverLocal, cellMax));
         }
 
-        float brickAt(ivec3 brick) {
-          return texture(uBrickOccupancy, (vec3(brick) + vec3(0.5)) / uBrickGridSize).r;
+        bool brickAt(ivec3 brick) {
+          return texelFetch(uBrickOccupancy, brick, 0).r != 0u;
         }
 
-        float brickDetailAt(ivec3 brick) {
-          return texture(uBrickDetailOccupancy, (vec3(brick) + vec3(0.5)) / uBrickGridSize).r;
+        bool brickDetailAt(ivec3 brick) {
+          return texelFetch(uBrickDetailOccupancy, brick, 0).r != 0u;
         }
 
         float leafBrickDensityAt(vec3 localPosition) {
@@ -333,8 +346,14 @@ export class VoxelSunShadowPass {
           return mix(brickMin, brickMax, greaterThan(direction, vec3(0.0)));
         }
 
-        float grassAt(ivec3 cell) {
-          return texture(uGrassOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
+        vec3 getMacroBrickBoundary(ivec3 brick, vec3 direction) {
+          vec3 brickMin = vec3(brick * MACRO_BRICK_SIZE);
+          vec3 brickMax = min(brickMin + vec3(float(MACRO_BRICK_SIZE)), uVolumeSize);
+          return mix(brickMin, brickMax, greaterThan(direction, vec3(0.0)));
+        }
+
+        bool grassAt(ivec3 cell) {
+          return casterHasFlag(cell, CASTER_GRASS_BIT);
         }
 
         uint leafHash32(ivec3 point) {
@@ -422,10 +441,7 @@ export class VoxelSunShadowPass {
         }
 
         vec4 seaweedAt(ivec3 cell) {
-          return texture(
-            uSeaweedAnchors,
-            (vec2(cell.x, cell.z) + vec2(0.5)) / vec2(uVolumeSize.x, uVolumeSize.z)
-          );
+          return texelFetch(uSeaweedAnchors, ivec2(cell.x, cell.z), 0);
         }
 
         // A grass tuft is rendered as two crossed billboard planes.  For
@@ -701,15 +717,22 @@ export class VoxelSunShadowPass {
 
             if (!insideVolume(cell)) return visibility;
 
-            // Preserve the established opaque self-intersection rule. Grass
-            // and leaves do not use this gate as a solid blocker; each has its
-            // own porous test below and both may share the receiver cell.
-            bool differentOpaqueCell = any(notEqual(cell, receiverCell));
-            if (differentOpaqueCell && voxelAt(cell) > 0.5) return 0.0;
+            ivec3 macroBrick = cell / MACRO_BRICK_SIZE;
+            if (insideMacroBrickGrid(macroBrick) && !macroBrickAt(macroBrick)) {
+              vec3 macroBoundary = getMacroBrickBoundary(macroBrick, direction);
+              vec3 macroDistance = (macroBoundary - local) / directionSafe;
+              float jump = minimumPositive(macroDistance);
+              if (jump < 1e29) {
+                travelled += jump;
+                if (travelled > uMaxDistance) return visibility;
+                local += directionSafe * (jump + 1e-3);
+                cell = ivec3(floor(local));
+                continue;
+              }
+            }
 
             ivec3 brick = cell / BRICK_SIZE;
-            bool receiverLeafCell = leafReceiver && cellTouchesReceiver(cell, receiverLocal);
-            if (insideBrickGrid(brick) && brickAt(brick) < 0.5) {
+            if (insideBrickGrid(brick) && !brickAt(brick)) {
               vec3 brickBoundary = getBrickBoundary(brick, direction);
               vec3 brickDistance = (brickBoundary - local) / directionSafe;
               float jump = minimumPositive(brickDistance);
@@ -721,6 +744,14 @@ export class VoxelSunShadowPass {
                 continue;
               }
             }
+
+            // Preserve the established opaque self-intersection rule. Grass
+            // and leaves do not use this gate as a solid blocker; each has its
+            // own porous test below and both may share the receiver cell.
+            bool differentOpaqueCell = any(notEqual(cell, receiverCell));
+            if (differentOpaqueCell && casterHasFlag(cell, CASTER_OPAQUE_BIT)) return 0.0;
+
+            bool receiverLeafCell = leafReceiver && cellTouchesReceiver(cell, receiverLocal);
 
             // A dense brick containing only leaves has no opaque voxel or
             // billboard caster that requires per-cell detail. After enough
@@ -734,7 +765,7 @@ export class VoxelSunShadowPass {
                   (vec3(brick) + vec3(0.5)) * float(BRICK_SIZE)
                 );
                 cachedLeafOnly = cachedLeafDensity >= LEAF_BRICK_DENSITY_FAST_PATH_THRESHOLD &&
-                  brickDetailAt(brick) < 0.5;
+                  !brickDetailAt(brick);
               }
               // Keep the first few intersected leaf voxels exact. Their
               // independently oriented atlas silhouettes create the readable
@@ -754,7 +785,7 @@ export class VoxelSunShadowPass {
                   ));
                   // Preserve the per-cell self-hit suppression used by the
                   // detailed path when the receiver itself is a leaf fragment.
-                  if (receiverInBrick && (leafReceiver || leafAt(receiverCell) > 0.5)) {
+                  if (receiverInBrick && (leafReceiver || casterHasFlag(receiverCell, CASTER_LEAF_BIT))) {
                     density = max(0.0, density - 1.0 / 512.0);
                   }
                   visibility *= exp(-0.78 * density * jump);
@@ -787,7 +818,7 @@ export class VoxelSunShadowPass {
             bool differentDecorativeCell = leafReceiver
               ? !receiverLeafCell
               : any(notEqual(cell, receiverCell));
-            if (differentDecorativeCell && leafAt(cell) > 0.5) {
+            if (differentDecorativeCell && casterHasFlag(cell, CASTER_LEAF_BIT)) {
               if (leafReceiver) {
                 // Projecting one binary leaf tile onto a parallel interior
                 // leaf face creates moire-like diagonal bands and unstable
@@ -807,7 +838,7 @@ export class VoxelSunShadowPass {
               }
               if (visibility <= 0.01) return 0.0;
             }
-            if (grassAt(cell) > 0.5 && grassBladeHit(local, direction, cell, travel)) return 0.0;
+            if (grassAt(cell) && grassBladeHit(local, direction, cell, travel)) return 0.0;
             if (includeSeaweed) {
               // One nearest-filtered lookup per traversed root cell. Seaweed
               // is a render-only caster and is deliberately absent from the

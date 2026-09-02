@@ -79,13 +79,18 @@ describe('WaterSurfaceMaterial', () => {
       });
     const scene = new THREE.Scene();
     const waterLevel = 42;
+    const registeredShadowMaterials: THREE.Material[] = [];
+    const unregisteredShadowMaterials: THREE.Material[] = [];
     const water = new WaterSystem(scene, {
       bounds: { minX: -16, maxX: 16, minZ: -16, maxZ: 16 },
       waterLevel,
       farDistance: 128,
       seed: 17,
       worldRadius: 32,
+      registerShadowSamplingMaterial: (material) => registeredShadowMaterials.push(material),
+      unregisterShadowSamplingMaterial: (material) => unregisteredShadowMaterials.push(material),
     });
+    expect(registeredShadowMaterials).toHaveLength(1);
     const camera = new THREE.PerspectiveCamera(70, 16 / 9, 0.1, 512);
     const displacedSurface = waterLevel + OCEAN_WATER_CENTER_OFFSET
       + sampleOceanHeight(0, 0, 0);
@@ -100,6 +105,7 @@ describe('WaterSurfaceMaterial', () => {
     expect(water.isCameraUnderwater()).toBe(false);
 
     water.dispose();
+    expect(unregisteredShadowMaterials).toEqual(registeredShadowMaterials);
     textureLoad.mockRestore();
   });
 

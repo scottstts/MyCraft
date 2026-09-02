@@ -280,6 +280,11 @@ describe('water compositing ownership', () => {
     expect(material.vertexShader).toContain('* uExtent / 53.0');
     expect(material.vertexShader).toContain('vec2 surfaceXZ = uOrigin - flatOffset');
     expect(material.vertexShader).toContain('vNewPosition = surfaceXZ + displacement.xz + waveRefract.xz * waveTravel');
+    expect(material.vertexShader).toContain('void oceanDisplacementAndTangents(');
+    expect(material.vertexShader).not.toContain('vec3 oceanDisplacement(');
+    expect(material.vertexShader).not.toContain('vec3 oceanNormal(');
+    expect((material.vertexShader.match(/float phase =/g) ?? []).length).toBe(OCEAN_CAUSTIC_WAVES.length);
+    expect((material.vertexShader.match(/float c = cos\(phase\)/g) ?? []).length).toBe(OCEAN_CAUSTIC_WAVES.length);
     expect(material.fragmentShader).toContain('float concentration = clamp(oldArea / newArea, 0.0, 8.0)');
     expect(material.fragmentShader).not.toContain('lineMask');
     expect(caustics.getReferenceDepth()).toBe(24);

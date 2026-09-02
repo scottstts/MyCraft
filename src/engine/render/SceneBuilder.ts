@@ -5,6 +5,7 @@
  */
 
 import * as THREE from 'three';
+import { FORWARD_REFRACTION_LAYER } from './water/ForwardRefraction';
 
 export function createScene(): THREE.Scene {
   const scene = new THREE.Scene();
@@ -12,6 +13,9 @@ export function createScene(): THREE.Scene {
   // Keep a faint ambient to ensure non-block debug meshes remain visible.
   // Sun/sky lighting is provided by SunController.
   const ambientLight = new THREE.AmbientLight(0x404866, 0.1);
+  // ForwardRefractionPass renders sources on its private layer; retain this
+  // baseline light for MeshStandard player/seabed materials in that pass.
+  ambientLight.layers.enable(FORWARD_REFRACTION_LAYER);
   scene.add(ambientLight);
   
   return scene;

@@ -7,7 +7,10 @@
  */
 
 import * as THREE from 'three';
-import { enableMeshStandardForwardRefraction } from './water/ForwardRefraction';
+import {
+  enableMeshStandardForwardRefraction,
+  type ForwardRefractionParticipantRegistry,
+} from './water/ForwardRefraction';
 import { PLAYER, SWING_CYCLE_SECONDS } from '../../config/constants';
 import type { InputSystem } from '../systems/Input';
 import type { PlayerController, PlayerMovementState } from '../systems/PlayerController';
@@ -101,6 +104,7 @@ export class PlayerCharacter {
   private readonly materialRecords: PlayerMaterialRecord[] = [];
   private readonly shadowMeshes: THREE.Mesh[] = [];
   private readonly shadowBoxes: CharacterShadowBox[] = [];
+  private readonly forwardRefractionParticipants?: ForwardRefractionParticipantRegistry;
 
   private isFirstPerson = false;
   private bodyYaw = PLAYER.initialYaw;
@@ -126,8 +130,12 @@ export class PlayerCharacter {
   private readonly scratchStarContribution = new THREE.Color();
   private readonly scratchStarAmbient = new THREE.Color(0.02, 0.025, 0.04);
 
-  constructor(characterId: PlayerCharacterId = DEFAULT_PLAYER_CHARACTER) {
+  constructor(
+    characterId: PlayerCharacterId = DEFAULT_PLAYER_CHARACTER,
+    options: { forwardRefractionParticipants?: ForwardRefractionParticipantRegistry } = {},
+  ) {
     this.character.name = 'PlayerCharacter.Root';
+    this.forwardRefractionParticipants = options.forwardRefractionParticipants;
     this.currentCharacter = normalizePlayerCharacter(characterId);
     this.buildRig(this.currentCharacter);
     this.attachSwitchVfxToBody();
@@ -165,6 +173,7 @@ export class PlayerCharacter {
       const bounds = object.geometry.boundingBox;
       if (!bounds) return;
       this.shadowMeshes.push(object);
+      this.forwardRefractionParticipants?.register(object);
       this.shadowBoxes.push({
         inverseMatrix: new THREE.Matrix4(),
         center: bounds.getCenter(new THREE.Vector3()),
@@ -347,6 +356,7 @@ export class PlayerCharacter {
   private disposeRig(): void {
     this.switchVfx.object.removeFromParent();
     this.character.remove(this.body);
+    for (const mesh of this.shadowMeshes) this.forwardRefractionParticipants?.unregister(mesh);
     const geometries = new Set<THREE.BufferGeometry>();
     this.body.traverse((object) => {
       if (object instanceof THREE.Mesh) geometries.add(object.geometry);

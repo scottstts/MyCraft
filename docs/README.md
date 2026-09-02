@@ -6,6 +6,7 @@ This directory documents the implemented runtime boundaries and the contracts be
 
 - [Application shell and boot](application-shell-and-boot.md) — React entry, lazy engine loading, staged startup, first-frame readiness, failure reporting, and cancellation.
 - [Rendering](rendering.md) — the WebGL renderer, drawing-buffer policy, resize coordination, post-processing, and GPU resource ownership.
+- [Runtime performance](runtime-performance.md) — FPS hot paths, registration indexes, voxel shadow hierarchy, static region batching, and edit invalidation.
 - [Procedural voxel materials](procedural-voxel-materials.md) — deterministic block-face fields, sparse green/cherry leaves, and the runtime atlas contract.
 - [Filmic lens flare](lens-flare.md) — the sun-linked optical graph, finite-disc visibility, blocker-breadth bloom response, and diagnostics.
 - [Atmosphere, lighting, and shadows](atmosphere-lighting-and-shadows.md) — time of day, sky radiance, aerial perspective, and the voxel visibility pass.

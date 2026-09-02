@@ -1,13 +1,18 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 import {
   AIR_REFRACTIVE_INDEX,
+  ConservativeRefractionSourceCuller,
+  FORWARD_REFRACTION_LAYER,
   FORWARD_REFRACTION_MATERIAL_FLAG,
   FORWARD_REFRACTION_SOLVE_STEPS,
   WATER_REFRACTIVE_INDEX,
+  forwardRefractionUniforms,
   forwardRefractionFragmentDeclarations,
   forwardRefractionVertexDeclarations,
+  ForwardRefractionParticipantRegistry,
+  setForwardRefractionWaterState,
   solveFlatRefractionInterface,
 } from '../src/engine/render/water/ForwardRefraction';
 import { ForwardRefractionPass } from '../src/engine/render/water/ForwardRefractionPass';
@@ -117,5 +122,110 @@ describe('forward water-interface projection', () => {
     expect(pass.getDiagnostics().receiverSpace).toBe('source-world-rgb32f');
 
     pass.dispose();
+  });
+
+  it('indexes forward participants without walking the scene during diagnostics', () => {
+    const scene = new THREE.Scene();
+    const material = new THREE.MeshBasicMaterial();
+    material.userData[FORWARD_REFRACTION_MATERIAL_FLAG] = true;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+    scene.add(mesh);
+    const registry = new ForwardRefractionParticipantRegistry();
+    registry.register(mesh);
+    expect(mesh.layers.mask).toBe(3);
+    const forwardLayers = new THREE.Layers();
+    forwardLayers.set(FORWARD_REFRACTION_LAYER);
+    expect(mesh.layers.test(forwardLayers)).toBe(true);
+
+    const traverse = vi.spyOn(scene, 'traverse');
+    const renderer = {
+      getDrawingBufferSize: (size: THREE.Vector2) => size.set(32, 24),
+    } as unknown as THREE.WebGLRenderer;
+    const pass = new ForwardRefractionPass(renderer, scene, 32, 24, registry);
+    expect(pass.getDiagnostics().participatingObjects).toBe(1);
+    expect(traverse).not.toHaveBeenCalled();
+
+    pass.dispose();
+    expect(mesh.layers.mask).toBe(1);
+    mesh.geometry.dispose();
+    material.dispose();
+  });
+
+  it('culls only sources that cannot cross the conservative underwater Snell window', () => {
+    const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
+    camera.position.set(0, -10, 0);
+    camera.lookAt(0, -8, -5);
+    camera.updateMatrixWorld(true);
+    const culler = new ConservativeRefractionSourceCuller();
+    culler.update(camera, 0);
+
+    expect(culler.intersectsBox(new THREE.Box3(
+      new THREE.Vector3(-1, -4, -2),
+      new THREE.Vector3(1, -2, 0),
+    ))).toBe(false);
+    expect(culler.intersectsBox(new THREE.Box3(
+      new THREE.Vector3(-1, 0, -12),
+      new THREE.Vector3(1, 2, -10),
+    ))).toBe(true);
+    expect(culler.intersectsBox(new THREE.Box3(
+      new THREE.Vector3(80, 0, -2),
+      new THREE.Vector3(82, 2, 0),
+    ))).toBe(false);
+  });
+
+  it('uses aggregate instance bounds when culling instanced sources', () => {
+    const scene = new THREE.Scene();
+    const material = new THREE.MeshBasicMaterial();
+    material.userData[FORWARD_REFRACTION_MATERIAL_FLAG] = true;
+    const geometry = new THREE.BoxGeometry(1, 1, 1).translate(0, 11, -11);
+    const mesh = new THREE.InstancedMesh(geometry, material, 1);
+    mesh.setMatrixAt(0, new THREE.Matrix4().makeTranslation(80, 0, 0));
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingBox();
+    scene.add(mesh);
+
+    const registry = new ForwardRefractionParticipantRegistry();
+    registry.register(mesh);
+    const renderedVisibility: boolean[] = [];
+    const renderer = {
+      getRenderTarget: () => null,
+      getClearAlpha: () => 1,
+      getClearColor: (color: THREE.Color) => color.set(0x000000),
+      getDrawingBufferSize: (size: THREE.Vector2) => size.set(32, 24),
+      setRenderTarget: vi.fn(),
+      setClearColor: vi.fn(),
+      clear: vi.fn(),
+      render: vi.fn(() => renderedVisibility.push(mesh.visible)),
+    } as unknown as THREE.WebGLRenderer;
+    const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
+    camera.position.set(0, -10, 0);
+    camera.lookAt(0, -8, -5);
+    camera.updateMatrixWorld(true);
+    const previousUnderwater = forwardRefractionUniforms.uForwardCameraUnderwater.value;
+    setForwardRefractionWaterState({
+      waterLevel: 0,
+      time: 0,
+      waveAmp: 1,
+      waveChop: 1,
+      waveSpeed: 1,
+      cameraUnderwater: true,
+    });
+
+    const pass = new ForwardRefractionPass(renderer, scene, 32, 24, registry);
+    pass.render(camera);
+
+    expect(renderedVisibility).toEqual([false, false]);
+    expect(mesh.visible).toBe(true);
+    setForwardRefractionWaterState({
+      waterLevel: 0,
+      time: 0,
+      waveAmp: 1,
+      waveChop: 1,
+      waveSpeed: 1,
+      cameraUnderwater: previousUnderwater,
+    });
+    pass.dispose();
+    mesh.geometry.dispose();
+    material.dispose();
   });
 });

@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { SunController } from '../src/engine/render/lighting/SunController';
 import { BlockMaterial } from '../src/engine/render/BlockMaterial';
 import { RENDER_STYLE } from '../src/engine/render/settings/RenderStyle';
+import { createScene } from '../src/engine/render/SceneBuilder';
+import { FORWARD_REFRACTION_LAYER } from '../src/engine/render/water/ForwardRefraction';
 
 describe('continuous voxel sun lighting', () => {
   it('defaults to a twenty-minute full cycle (ten minutes per half)', () => {
@@ -49,5 +51,12 @@ describe('continuous voxel sun lighting', () => {
     expect(material.fragmentShader).not.toContain('shadowmap_pars_fragment');
     expect(material.vertexShader).not.toContain('shadowmap_vertex');
     material.dispose();
+  });
+
+  it('keeps the baseline ambient light on the forward source layer', () => {
+    const scene = createScene();
+    const ambient = scene.children.find((child) => child instanceof THREE.AmbientLight);
+    expect(ambient).toBeDefined();
+    expect(ambient?.layers.isEnabled(FORWARD_REFRACTION_LAYER)).toBe(true);
   });
 });

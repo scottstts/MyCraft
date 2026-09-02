@@ -1,15 +1,15 @@
 /**
  * GPU occupancy representation for the voxel sun-shadow path.
  *
- * The renderer does not derive shadows from a rasterized light camera.  This
- * volume is the authoritative caster representation for opaque blocks, with
- * parallel leaf and grass-tuft occupancy textures for alpha-shaped caster
- * tests. Leaves stay opaque in the mesher for voxel topology, but are kept out
- * of this solid field so their generated cutout can sieve direct sunlight.
- * A coarse 8³ brick volume lets the shader skip large empty regions before
- * falling back to individual-voxel DDA. Dense leaf-only bricks additionally
- * carry a density estimate so the shadow shader can integrate the whole porous
- * brick in one step instead of visiting every leaf voxel.
+ * The renderer does not derive shadows from a rasterized light camera. This
+ * volume is the authoritative caster representation for opaque blocks and
+ * alpha-shaped casters. The world-sized R8 integer field packs opaque, leaf,
+ * and grass flags into bits 0..2, so the shader can fetch one discrete texel
+ * for all three tests. A 32³ macro-brick hierarchy sits above the existing 8³
+ * bricks and lets the shader skip four brick widths at a time before falling
+ * back to individual-voxel DDA. Dense leaf-only bricks additionally carry a
+ * density estimate so the shadow shader can integrate the whole porous brick
+ * in one step instead of visiting every leaf voxel.
  */
 
 import * as THREE from 'three';
@@ -32,7 +32,9 @@ export interface VoxelVolumeDiagnostics {
   origin: { x: number; y: number; z: number };
   dimensions: { x: number; y: number; z: number };
   brickDimensions: { x: number; y: number; z: number };
+  macroBrickDimensions: { x: number; y: number; z: number };
   brickSize: number;
+  macroBrickSize: number;
   loadedChunks: number;
   opaqueVoxels: number;
   leafVoxels: number;
@@ -42,12 +44,17 @@ export interface VoxelVolumeDiagnostics {
   brickTextureBytes: number;
   brickDetailTextureBytes: number;
   leafBrickTextureBytes: number;
+  macroBrickTextureBytes: number;
   seaweedTextureBytes: number;
   /** Number of full brick reductions performed; runtime edits should not add to it. */
   fullBrickRebuilds: number;
 }
 
 export const VOXEL_SHADOW_BRICK_SIZE = 8;
+export const VOXEL_SHADOW_MACRO_BRICK_SIZE = 32;
+export const VOXEL_CASTER_OPAQUE_BIT = 1;
+export const VOXEL_CASTER_LEAF_BIT = 2;
+export const VOXEL_CASTER_GRASS_BIT = 4;
 /** Maximum seaweed height representable by the compact shadow field. */
 export const SEAWEED_SHADOW_HEIGHT_MAX = 8;
 
@@ -83,14 +90,16 @@ export class VoxelOccupancyVolume {
   readonly origin: THREE.Vector3;
   readonly dimensions: THREE.Vector3;
   readonly brickDimensions: THREE.Vector3;
+  readonly macroBrickDimensions: THREE.Vector3;
+  /** Packed opaque/leaf/grass flags; bit 0/1/2 respectively. */
   readonly texture: THREE.Data3DTexture;
+  readonly casterFlagsTexture: THREE.Data3DTexture;
   readonly brickTexture: THREE.Data3DTexture;
+  readonly macroBrickTexture: THREE.Data3DTexture;
   /** Non-zero when a brick contains a solid or analytic non-leaf caster. */
   readonly brickDetailTexture: THREE.Data3DTexture;
   /** Leaf occupancy fraction per brick, encoded as an 8-bit value. */
   readonly leafBrickTexture: THREE.Data3DTexture;
-  readonly leafTexture: THREE.Data3DTexture;
-  readonly grassTexture: THREE.Data3DTexture;
   /** One RGBA texel per world XZ cell containing the seaweed shadow proxy. */
   readonly seaweedTexture: THREE.DataTexture;
 
@@ -100,7 +109,10 @@ export class VoxelOccupancyVolume {
   private readonly brickWidth: number;
   private readonly brickHeight: number;
   private readonly brickDepth: number;
-  private readonly occupancy: Uint8Array;
+  private readonly macroBrickWidth: number;
+  private readonly macroBrickHeight: number;
+  private readonly macroBrickDepth: number;
+  private readonly casterFlags: Uint8Array;
   private readonly brickOccupancy: Uint8Array;
   private readonly brickDetailOccupancy: Uint8Array;
   private readonly leafBrickDensity: Uint8Array;
@@ -109,8 +121,8 @@ export class VoxelOccupancyVolume {
   private readonly leafBrickCounts: Uint16Array;
   private readonly grassBrickCounts: Uint16Array;
   private readonly seaweedBrickCounts: Uint16Array;
-  private readonly leafOccupancy: Uint8Array;
-  private readonly grassOccupancy: Uint8Array;
+  private readonly macroBrickOccupancy: Uint8Array;
+  private readonly macroBrickCounts: Uint16Array;
   private readonly seaweedOccupancy: Uint8Array;
   private readonly opaqueById = new Uint8Array(256);
   private readonly leafById = new Uint8Array(256);
@@ -142,7 +154,16 @@ export class VoxelOccupancyVolume {
     this.brickDepth = Math.ceil(this.depth / VOXEL_SHADOW_BRICK_SIZE);
     this.brickDimensions = new THREE.Vector3(this.brickWidth, this.brickHeight, this.brickDepth);
 
-    this.occupancy = new Uint8Array(this.width * this.height * this.depth);
+    this.macroBrickWidth = Math.ceil(this.width / VOXEL_SHADOW_MACRO_BRICK_SIZE);
+    this.macroBrickHeight = Math.ceil(this.height / VOXEL_SHADOW_MACRO_BRICK_SIZE);
+    this.macroBrickDepth = Math.ceil(this.depth / VOXEL_SHADOW_MACRO_BRICK_SIZE);
+    this.macroBrickDimensions = new THREE.Vector3(
+      this.macroBrickWidth,
+      this.macroBrickHeight,
+      this.macroBrickDepth,
+    );
+
+    this.casterFlags = new Uint8Array(this.width * this.height * this.depth);
     this.brickOccupancy = new Uint8Array(this.brickWidth * this.brickHeight * this.brickDepth);
     this.brickDetailOccupancy = new Uint8Array(this.brickWidth * this.brickHeight * this.brickDepth);
     this.leafBrickDensity = new Uint8Array(this.brickWidth * this.brickHeight * this.brickDepth);
@@ -151,8 +172,8 @@ export class VoxelOccupancyVolume {
     this.leafBrickCounts = new Uint16Array(this.brickOccupancy.length);
     this.grassBrickCounts = new Uint16Array(this.brickOccupancy.length);
     this.seaweedBrickCounts = new Uint16Array(this.brickOccupancy.length);
-    this.leafOccupancy = new Uint8Array(this.width * this.height * this.depth);
-    this.grassOccupancy = new Uint8Array(this.width * this.height * this.depth);
+    this.macroBrickOccupancy = new Uint8Array(this.macroBrickWidth * this.macroBrickHeight * this.macroBrickDepth);
+    this.macroBrickCounts = new Uint16Array(this.macroBrickOccupancy.length);
     this.seaweedOccupancy = new Uint8Array(this.width * this.depth * 4);
 
     const registry = getBlockRegistry();
@@ -162,27 +183,41 @@ export class VoxelOccupancyVolume {
       this.leafById[block.id as number] = block.name === 'leaves' || block.name === 'leaves_maple' ? 255 : 0;
     }
 
-    this.texture = this.createTexture(this.occupancy, this.width, this.height, this.depth);
-    this.brickTexture = this.createTexture(this.brickOccupancy, this.brickWidth, this.brickHeight, this.brickDepth);
+    this.texture = this.createTexture(this.casterFlags, this.width, this.height, this.depth, true);
+    this.casterFlagsTexture = this.texture;
+    this.brickTexture = this.createTexture(
+      this.brickOccupancy,
+      this.brickWidth,
+      this.brickHeight,
+      this.brickDepth,
+      true,
+    );
+    this.macroBrickTexture = this.createTexture(
+      this.macroBrickOccupancy,
+      this.macroBrickWidth,
+      this.macroBrickHeight,
+      this.macroBrickDepth,
+      true,
+    );
     this.brickDetailTexture = this.createTexture(
       this.brickDetailOccupancy,
       this.brickWidth,
       this.brickHeight,
       this.brickDepth,
+      true,
     );
     this.leafBrickTexture = this.createTexture(
       this.leafBrickDensity,
       this.brickWidth,
       this.brickHeight,
       this.brickDepth,
+      false,
     );
     // Density is a low-frequency integration field, not categorical
     // occupancy. Trilinear sampling prevents adjacent 8³ canopy summaries
     // from projecting their brick boundaries onto nearby receivers.
     this.leafBrickTexture.minFilter = THREE.LinearFilter;
     this.leafBrickTexture.magFilter = THREE.LinearFilter;
-    this.leafTexture = this.createTexture(this.leafOccupancy, this.width, this.height, this.depth);
-    this.grassTexture = this.createTexture(this.grassOccupancy, this.width, this.height, this.depth);
     this.seaweedTexture = this.createSeaweedTexture();
 
     for (let brickZ = 0; brickZ < this.brickDepth; brickZ += 1) {
@@ -197,9 +232,15 @@ export class VoxelOccupancyVolume {
     }
   }
 
-  private createTexture(data: Uint8Array, width: number, height: number, depth: number): THREE.Data3DTexture {
+  private createTexture(
+    data: Uint8Array,
+    width: number,
+    height: number,
+    depth: number,
+    integer = false,
+  ): THREE.Data3DTexture {
     const texture = new THREE.Data3DTexture(data, width, height, depth);
-    texture.format = THREE.RedFormat;
+    texture.format = integer ? THREE.RedIntegerFormat : THREE.RedFormat;
     texture.type = THREE.UnsignedByteType;
     texture.minFilter = THREE.NearestFilter;
     texture.magFilter = THREE.NearestFilter;
@@ -240,6 +281,10 @@ export class VoxelOccupancyVolume {
     return x + this.brickWidth * (y + this.brickHeight * z);
   }
 
+  private macroBrickIndex(x: number, y: number, z: number): number {
+    return x + this.macroBrickWidth * (y + this.macroBrickHeight * z);
+  }
+
   private inBounds(x: number, y: number, z: number): boolean {
     return x >= 0 && x < this.width && y >= 0 && y < this.height && z >= 0 && z < this.depth;
   }
@@ -250,12 +295,14 @@ export class VoxelOccupancyVolume {
         brickZ < 0 || brickZ >= this.brickDepth) return;
     const index = this.brickIndex(brickX, brickY, brickZ);
     const hasSeaweed = this.seaweedBrickCounts[index] !== 0;
-    this.brickOccupancy[index] = (
+    const occupied = (
       this.opaqueBrickCounts[index] !== 0 ||
       this.leafBrickCounts[index] !== 0 ||
       this.grassBrickCounts[index] !== 0 ||
       hasSeaweed
-    ) ? 255 : 0;
+    );
+    const wasOccupied = this.brickOccupancy[index] !== 0;
+    this.brickOccupancy[index] = occupied ? 255 : 0;
     this.brickDetailOccupancy[index] = (
       this.opaqueBrickCounts[index] !== 0 ||
       this.grassBrickCounts[index] !== 0 ||
@@ -268,14 +315,25 @@ export class VoxelOccupancyVolume {
         1,
         Math.min(255, Math.round((leafCount / Math.max(1, this.brickCellCounts[index])) * 255)),
       );
+
+    if (wasOccupied !== occupied) {
+      const macroIndex = this.macroBrickIndex(
+        Math.floor(brickX * VOXEL_SHADOW_BRICK_SIZE / VOXEL_SHADOW_MACRO_BRICK_SIZE),
+        Math.floor(brickY * VOXEL_SHADOW_BRICK_SIZE / VOXEL_SHADOW_MACRO_BRICK_SIZE),
+        Math.floor(brickZ * VOXEL_SHADOW_BRICK_SIZE / VOXEL_SHADOW_MACRO_BRICK_SIZE),
+      );
+      this.macroBrickCounts[macroIndex] += occupied ? 1 : -1;
+      this.macroBrickOccupancy[macroIndex] = this.macroBrickCounts[macroIndex] !== 0 ? 255 : 0;
+    }
   }
 
   private setCell(x: number, y: number, z: number, opaque: boolean, leaf: boolean, grass: boolean): boolean {
     if (!this.inBounds(x, y, z)) return false;
     const index = this.voxelIndex(x, y, z);
-    const previousOpaque = this.occupancy[index] !== 0;
-    const previousLeaf = this.leafOccupancy[index] !== 0;
-    const previousGrass = this.grassOccupancy[index] !== 0;
+    const previousFlags = this.casterFlags[index];
+    const previousOpaque = (previousFlags & VOXEL_CASTER_OPAQUE_BIT) !== 0;
+    const previousLeaf = (previousFlags & VOXEL_CASTER_LEAF_BIT) !== 0;
+    const previousGrass = (previousFlags & VOXEL_CASTER_GRASS_BIT) !== 0;
     if (previousOpaque === opaque && previousLeaf === leaf && previousGrass === grass) return false;
 
     const brickIndex = this.brickIndex(
@@ -283,21 +341,26 @@ export class VoxelOccupancyVolume {
       Math.floor(y / VOXEL_SHADOW_BRICK_SIZE),
       Math.floor(z / VOXEL_SHADOW_BRICK_SIZE),
     );
+    let nextFlags = 0;
     if (previousOpaque !== opaque) {
-      this.occupancy[index] = opaque ? 255 : 0;
+      if (opaque) nextFlags |= VOXEL_CASTER_OPAQUE_BIT;
       this.opaqueBrickCounts[brickIndex] += opaque ? 1 : -1;
       this.opaqueVoxelCount += opaque ? 1 : -1;
     }
+    if (previousOpaque === opaque && previousOpaque) nextFlags |= VOXEL_CASTER_OPAQUE_BIT;
     if (previousLeaf !== leaf) {
-      this.leafOccupancy[index] = leaf ? 255 : 0;
+      if (leaf) nextFlags |= VOXEL_CASTER_LEAF_BIT;
       this.leafBrickCounts[brickIndex] += leaf ? 1 : -1;
       this.leafVoxelCount += leaf ? 1 : -1;
     }
+    if (previousLeaf === leaf && previousLeaf) nextFlags |= VOXEL_CASTER_LEAF_BIT;
     if (previousGrass !== grass) {
-      this.grassOccupancy[index] = grass ? 255 : 0;
+      if (grass) nextFlags |= VOXEL_CASTER_GRASS_BIT;
       this.grassBrickCounts[brickIndex] += grass ? 1 : -1;
       this.grassTuftCount += grass ? 1 : -1;
     }
+    if (previousGrass === grass && previousGrass) nextFlags |= VOXEL_CASTER_GRASS_BIT;
+    this.casterFlags[index] = nextFlags;
     if (this.bulkUpdateDepth === 0) this.updateBrick(
       Math.floor(x / VOXEL_SHADOW_BRICK_SIZE),
       Math.floor(y / VOXEL_SHADOW_BRICK_SIZE),
@@ -307,6 +370,13 @@ export class VoxelOccupancyVolume {
   }
 
   private rebuildBricks(): void {
+    // Recompute the brick state from authoritative counts. Clearing the old
+    // occupancy first is important because macro counts are rebuilt from the
+    // occupied-brick transitions below; otherwise a brick that stayed
+    // occupied across a seaweed-only rebuild would not increment its macro.
+    this.brickOccupancy.fill(0);
+    this.macroBrickOccupancy.fill(0);
+    this.macroBrickCounts.fill(0);
     for (let index = 0; index < this.brickOccupancy.length; index += 1) {
       this.updateBrick(
         index % this.brickWidth,
@@ -338,10 +408,9 @@ export class VoxelOccupancyVolume {
   private markTexturesDirty(includeSeaweed = false): void {
     this.texture.needsUpdate = true;
     this.brickTexture.needsUpdate = true;
+    this.macroBrickTexture.needsUpdate = true;
     this.brickDetailTexture.needsUpdate = true;
     this.leafBrickTexture.needsUpdate = true;
-    this.leafTexture.needsUpdate = true;
-    this.grassTexture.needsUpdate = true;
     if (includeSeaweed) this.seaweedTexture.needsUpdate = true;
   }
 
@@ -469,16 +538,16 @@ export class VoxelOccupancyVolume {
 
   /** Rebuild from all currently loaded chunks (used by diagnostics/tests). */
   rebuild(chunks: Iterable<{ key: ChunkKey; chunk: Chunk }>): void {
-    this.occupancy.fill(0);
+    this.casterFlags.fill(0);
     this.brickOccupancy.fill(0);
+    this.macroBrickOccupancy.fill(0);
+    this.macroBrickCounts.fill(0);
     this.brickDetailOccupancy.fill(0);
     this.leafBrickDensity.fill(0);
     this.opaqueBrickCounts.fill(0);
     this.leafBrickCounts.fill(0);
     this.grassBrickCounts.fill(0);
     this.seaweedBrickCounts.fill(0);
-    this.leafOccupancy.fill(0);
-    this.grassOccupancy.fill(0);
     this.loadedChunkKeys.clear();
     this.opaqueVoxelCount = 0;
     this.leafVoxelCount = 0;
@@ -497,16 +566,23 @@ export class VoxelOccupancyVolume {
       origin: { x: this.origin.x, y: this.origin.y, z: this.origin.z },
       dimensions: { x: this.width, y: this.height, z: this.depth },
       brickDimensions: { x: this.brickWidth, y: this.brickHeight, z: this.brickDepth },
+      macroBrickDimensions: {
+        x: this.macroBrickWidth,
+        y: this.macroBrickHeight,
+        z: this.macroBrickDepth,
+      },
       brickSize: VOXEL_SHADOW_BRICK_SIZE,
+      macroBrickSize: VOXEL_SHADOW_MACRO_BRICK_SIZE,
       loadedChunks: this.loadedChunkKeys.size,
       opaqueVoxels: this.opaqueVoxelCount,
       leafVoxels: this.leafVoxelCount,
       grassTufts: this.grassTuftCount,
       seaweedAnchors: this.seaweedAnchorCount,
-      textureBytes: this.occupancy.byteLength,
+      textureBytes: this.casterFlags.byteLength,
       brickTextureBytes: this.brickOccupancy.byteLength,
       brickDetailTextureBytes: this.brickDetailOccupancy.byteLength,
       leafBrickTextureBytes: this.leafBrickDensity.byteLength,
+      macroBrickTextureBytes: this.macroBrickOccupancy.byteLength,
       seaweedTextureBytes: this.seaweedOccupancy.byteLength,
       fullBrickRebuilds: this.fullBrickRebuilds,
     };
@@ -515,10 +591,9 @@ export class VoxelOccupancyVolume {
   dispose(): void {
     this.texture.dispose();
     this.brickTexture.dispose();
+    this.macroBrickTexture.dispose();
     this.brickDetailTexture.dispose();
     this.leafBrickTexture.dispose();
-    this.leafTexture.dispose();
-    this.grassTexture.dispose();
     this.seaweedTexture.dispose();
   }
 }

@@ -9,6 +9,7 @@
  */
 import * as THREE from 'three';
 import { RENDER_STYLE } from '../settings/RenderStyle';
+import { FORWARD_REFRACTION_LAYER } from '../water/ForwardRefraction';
 
 export interface SunControllerOptions {
   cycleSeconds?: number;
@@ -70,11 +71,17 @@ export class SunController {
     // native shadow map. The custom voxel pass owns direct-sun visibility.
     this.sun = new THREE.DirectionalLight(0xffffff, 1.0);
     this.sun.castShadow = false;
+    // ForwardRefractionPass renders registered sources on a private camera
+    // layer. Lights participate in that layer as well, preserving the
+    // MeshStandard illumination of the player and seabed in the optical pass.
+    this.sun.layers.enable(FORWARD_REFRACTION_LAYER);
+    this.sun.target.layers.enable(FORWARD_REFRACTION_LAYER);
     scene.add(this.sun);
     scene.add(this.sun.target);
 
     this.hemi = new THREE.HemisphereLight(0x223344, 0x101010, 0.05);
     this.hemi.position.set(0, 1, 0);
+    this.hemi.layers.enable(FORWARD_REFRACTION_LAYER);
     scene.add(this.hemi);
 
     this.recomputeLighting();
