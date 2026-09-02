@@ -76,27 +76,11 @@
 }
 
 .world-size-picker__name {
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 750;
   line-height: 1.15;
   letter-spacing: 0.1px;
-}
-
-.world-size-picker__dimension {
-  flex: 0 0 auto;
-  padding: 3px 5px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 5px;
-  color: #94a3b8;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: 0.25px;
-}
-
-.world-size-picker__option--selected .world-size-picker__dimension {
-  border-color: rgba(94, 234, 212, 0.3);
-  color: #99f6e4;
 }
 
 .world-size-picker__map {

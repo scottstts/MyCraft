@@ -63,7 +63,6 @@ export function WorldSizePicker({ value, onChange, disabled = false }: WorldSize
           >
             <span className="world-size-picker__topline">
               <span className="world-size-picker__name">{option.label}</span>
-              <span className="world-size-picker__dimension">{option.side}×{option.side}</span>
             </span>
             <span
               className="world-size-picker__map"
