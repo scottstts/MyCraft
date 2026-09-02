@@ -161,6 +161,11 @@ export class VoxelOccupancyVolume {
       this.brickHeight,
       this.brickDepth,
     );
+    // Density is a low-frequency integration field, not categorical
+    // occupancy. Trilinear sampling prevents adjacent 8³ canopy summaries
+    // from projecting their brick boundaries onto nearby receivers.
+    this.leafBrickTexture.minFilter = THREE.LinearFilter;
+    this.leafBrickTexture.magFilter = THREE.LinearFilter;
     this.leafTexture = this.createTexture(this.leafOccupancy, this.width, this.height, this.depth);
     this.grassTexture = this.createTexture(this.grassOccupancy, this.width, this.height, this.depth);
     this.seaweedTexture = this.createSeaweedTexture();

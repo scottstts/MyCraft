@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { CHUNK_SIZE } from '../src/config/constants';
 import { Chunk } from '../src/engine/world/chunk/Chunk';
 import { VoxelOccupancyVolume } from '../src/engine/render/lighting/VoxelOccupancyVolume';
@@ -95,6 +96,8 @@ describe('VoxelOccupancyVolume', () => {
     expect((volume.brickTexture.image.data as Uint8Array)[0]).toBe(255);
     expect((volume.brickDetailTexture.image.data as Uint8Array)[0]).toBe(0);
     expect((volume.leafBrickTexture.image.data as Uint8Array)[0]).toBeGreaterThan(0);
+    expect(volume.leafBrickTexture.minFilter).toBe(THREE.LinearFilter);
+    expect(volume.leafBrickTexture.magFilter).toBe(THREE.LinearFilter);
 
     volume.updateBlock(7, 5, 7, 0);
     expect(leaf[greenIndex]).toBe(0);

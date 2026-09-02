@@ -669,12 +669,27 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   // Load atlas and initialize chunk renderer with custom material
   setBootStage('assets', onBootStage);
   const atlas = await loadFullAtlas();
+  const atlasConfig = atlas.getConfig();
+  const leafAtlasTiles = [
+    'tree_leaves',
+    'tree_leaves_1',
+    'tree_leaves_2',
+    'tree_leaves_3',
+    'cherry_leaves',
+    'cherry_leaves_1',
+    'cherry_leaves_2',
+    'cherry_leaves_3',
+  ].flatMap((name) => atlasConfig.tiles[name] ? [atlasConfig.tiles[name]] : []);
   setBootStage('render-pipeline', onBootStage);
   blockMaterial = new BlockMaterial(
     atlas.getTexture(),
     null,
     undefined,
-    { tileSize: atlas.getConfig().tileSize, atlasSize: atlas.getConfig().atlasSize }
+    {
+      tileSize: atlasConfig.tileSize,
+      atlasSize: atlasConfig.atlasSize,
+      leafTiles: leafAtlasTiles,
+    }
   );
   // Mild in-shader AA to reduce texture shimmer on distant blocks
   blockMaterial.setAntialiasing(true, 0.9);

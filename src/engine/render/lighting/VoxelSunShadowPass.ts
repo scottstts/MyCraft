@@ -6,8 +6,8 @@
  * current (continuous) sun direction and writes one visibility value per
  * screen pixel.  No light camera, shadow map, projection fitting, or texel
  * snapping participates in this path. Opaque blocks are traced as voxels;
- * leaf, grass, and render-only seaweed occupancy are traced as porous
- * analytic proxies rather than point-sampling source images as micro-geometry.
+ * leaf occupancy is traced through the generated atlas cutout, while grass
+ * and render-only seaweed use porous analytic proxies.
  */
 
 import * as THREE from 'three';
@@ -247,6 +247,8 @@ export class VoxelSunShadowPass {
 
         const int BRICK_SIZE = ${VOXEL_SHADOW_BRICK_SIZE};
         const float LEAF_BRICK_DENSITY_FAST_PATH_THRESHOLD = 0.18;
+        const int DETAILED_LEAF_LAYERS = 3;
+        const float LEAF_RECEIVER_LAYER_TRANSMISSION = 0.62;
 
         bool insideVolume(ivec3 cell) {
           return all(greaterThanEqual(cell, ivec3(0))) &&
@@ -266,6 +268,47 @@ export class VoxelSunShadowPass {
           return texture(uLeafOccupancy, (vec3(cell) + vec3(0.5)) / uVolumeSize).r;
         }
 
+        float safeVoxelAt(ivec3 cell) {
+          return insideVolume(cell) ? voxelAt(cell) : 0.0;
+        }
+
+        float safeLeafAt(ivec3 cell) {
+          return insideVolume(cell) ? leafAt(cell) : 0.0;
+        }
+
+        bool receiverIsLeaf(vec3 localPosition) {
+          // Depth reconstructs an axis-aligned face exactly on a voxel
+          // boundary. Select the nearest boundary axis and probe its two sides
+          // rather than trusting floor(), which can choose a different side
+          // as the camera moves by a sub-pixel amount.
+          const float epsilon = 0.003;
+          vec3 withinCell = fract(localPosition);
+          vec3 boundaryDistance = min(withinCell, vec3(1.0) - withinCell);
+          vec3 axis = boundaryDistance.x <= boundaryDistance.y &&
+              boundaryDistance.x <= boundaryDistance.z
+            ? vec3(1.0, 0.0, 0.0)
+            : boundaryDistance.y <= boundaryDistance.z
+              ? vec3(0.0, 1.0, 0.0)
+              : vec3(0.0, 0.0, 1.0);
+          ivec3 positiveCell = ivec3(floor(localPosition + axis * epsilon));
+          ivec3 negativeCell = ivec3(floor(localPosition - axis * epsilon));
+          bool touchesLeaf = safeLeafAt(positiveCell) > 0.5 ||
+            safeLeafAt(negativeCell) > 0.5;
+          bool touchesOpaque = safeVoxelAt(positiveCell) > 0.5 ||
+            safeVoxelAt(negativeCell) > 0.5;
+          // An opaque gameplay surface takes precedence when it shares a
+          // boundary with foliage; terrain must retain detailed leaf dapple.
+          return touchesLeaf && !touchesOpaque;
+        }
+
+        bool cellTouchesReceiver(ivec3 cell, vec3 receiverLocal) {
+          const float epsilon = 0.004;
+          vec3 cellMin = vec3(cell) - vec3(epsilon);
+          vec3 cellMax = vec3(cell + ivec3(1)) + vec3(epsilon);
+          return all(greaterThanEqual(receiverLocal, cellMin)) &&
+            all(lessThanEqual(receiverLocal, cellMax));
+        }
+
         float brickAt(ivec3 brick) {
           return texture(uBrickOccupancy, (vec3(brick) + vec3(0.5)) / uBrickGridSize).r;
         }
@@ -274,8 +317,11 @@ export class VoxelSunShadowPass {
           return texture(uBrickDetailOccupancy, (vec3(brick) + vec3(0.5)) / uBrickGridSize).r;
         }
 
-        float leafBrickDensityAt(ivec3 brick) {
-          return texture(uLeafBrickDensity, (vec3(brick) + vec3(0.5)) / uBrickGridSize).r;
+        float leafBrickDensityAt(vec3 localPosition) {
+          return texture(
+            uLeafBrickDensity,
+            (localPosition / float(BRICK_SIZE)) / uBrickGridSize
+          ).r;
         }
 
         vec3 getBrickBoundary(ivec3 brick, vec3 direction) {
@@ -621,7 +667,12 @@ export class VoxelSunShadowPass {
           return 1.0 - shadowCoverage;
         }
 
-        float traceVisibility(vec3 receiverWorld, vec3 rayDirection, bool includeSeaweed) {
+        float traceVisibility(
+          vec3 receiverWorld,
+          vec3 rayDirection,
+          bool includeSeaweed,
+          bool leafReceiver
+        ) {
           vec3 direction = normalize(rayDirection);
           vec3 directionSafe = vec3(
             abs(direction.x) < 1e-5 ? (direction.x < 0.0 ? -1e-5 : 1e-5) : direction.x,
@@ -633,6 +684,7 @@ export class VoxelSunShadowPass {
           // tested independently below so a caster rooted directly on a
           // receiver face remains valid even when it shares the cell.
           vec3 local = receiverWorld + direction * 0.002 - uVolumeOrigin;
+          vec3 receiverLocal = receiverWorld - uVolumeOrigin;
           ivec3 receiverCell = ivec3(floor(receiverWorld - uVolumeOrigin));
           ivec3 cell = ivec3(floor(local));
           vec3 stepAxis = sign(direction);
@@ -642,6 +694,7 @@ export class VoxelSunShadowPass {
           ivec3 cachedLeafBrick = ivec3(-1);
           float cachedLeafDensity = 0.0;
           bool cachedLeafOnly = false;
+          int detailedLeafLayers = 0;
 
           for (int iteration = 0; iteration < ${MAX_SHADER_STEPS}; iteration++) {
             if (iteration >= uMaxSteps) break;
@@ -655,6 +708,7 @@ export class VoxelSunShadowPass {
             if (differentOpaqueCell && voxelAt(cell) > 0.5) return 0.0;
 
             ivec3 brick = cell / BRICK_SIZE;
+            bool receiverLeafCell = leafReceiver && cellTouchesReceiver(cell, receiverLocal);
             if (insideBrickGrid(brick) && brickAt(brick) < 0.5) {
               vec3 brickBoundary = getBrickBoundary(brick, direction);
               vec3 brickDistance = (brickBoundary - local) / directionSafe;
@@ -669,31 +723,38 @@ export class VoxelSunShadowPass {
             }
 
             // A dense brick containing only leaves has no opaque voxel or
-            // billboard caster that requires per-cell detail. Integrate its
-            // measured leaf occupancy in one step. This is the main tree-cost
-            // reduction: a dense canopy no longer forces a full 8³ DDA walk
-            // for every sun probe, while sparse and mixed bricks retain the
-            // exact path below.
+            // billboard caster that requires per-cell detail. After enough
+            // exact front layers establish the visible dapple, integrate its
+            // measured occupancy in one step. This keeps deep canopy bounded
+            // without replacing the near-field silhouette with an 8³ cube.
             if (insideBrickGrid(brick)) {
               if (any(notEqual(brick, cachedLeafBrick))) {
                 cachedLeafBrick = brick;
-                cachedLeafDensity = leafBrickDensityAt(brick);
+                cachedLeafDensity = leafBrickDensityAt(
+                  (vec3(brick) + vec3(0.5)) * float(BRICK_SIZE)
+                );
                 cachedLeafOnly = cachedLeafDensity >= LEAF_BRICK_DENSITY_FAST_PATH_THRESHOLD &&
                   brickDetailAt(brick) < 0.5;
               }
-              if (cachedLeafOnly) {
-                float density = cachedLeafDensity;
+              // Keep the first few intersected leaf voxels exact. Their
+              // independently oriented atlas silhouettes create the readable
+              // near-field dapple; only deeper canopy is summarized for cost.
+              int requiredDetailedLayers = leafReceiver ? 0 : DETAILED_LEAF_LAYERS;
+              if (cachedLeafOnly &&
+                  detailedLeafLayers >= requiredDetailedLayers &&
+                  !receiverLeafCell) {
                 vec3 brickBoundary = getBrickBoundary(brick, direction);
                 vec3 brickDistance = (brickBoundary - local) / directionSafe;
                 float jump = minimumPositive(brickDistance);
                 if (jump < 1e29) {
+                  float density = leafBrickDensityAt(local + direction * jump * 0.5);
                   bool receiverInBrick = all(equal(
                     brick,
                     ivec3(floor(vec3(receiverCell) / float(BRICK_SIZE)))
                   ));
                   // Preserve the per-cell self-hit suppression used by the
                   // detailed path when the receiver itself is a leaf fragment.
-                  if (receiverInBrick && leafAt(receiverCell) > 0.5) {
+                  if (receiverInBrick && (leafReceiver || leafAt(receiverCell) > 0.5)) {
                     density = max(0.0, density - 1.0 / 512.0);
                   }
                   visibility *= exp(-0.78 * density * jump);
@@ -723,15 +784,27 @@ export class VoxelSunShadowPass {
               exitFaceDirection.z = stepAxis.z;
             }
 
-            bool differentDecorativeCell = any(notEqual(cell, receiverCell));
+            bool differentDecorativeCell = leafReceiver
+              ? !receiverLeafCell
+              : any(notEqual(cell, receiverCell));
             if (differentDecorativeCell && leafAt(cell) > 0.5) {
-              visibility *= leafShadowTransmission(
-                local,
-                direction,
-                cell,
-                travel,
-                exitFaceDirection
-              );
+              if (leafReceiver) {
+                // Projecting one binary leaf tile onto a parallel interior
+                // leaf face creates moire-like diagonal bands and unstable
+                // layer switching. Interior foliage receives the same canopy
+                // energy as a smooth layer transmission; non-leaf receivers
+                // retain the exact procedural silhouette below.
+                visibility *= LEAF_RECEIVER_LAYER_TRANSMISSION;
+              } else {
+                visibility *= leafShadowTransmission(
+                  local,
+                  direction,
+                  cell,
+                  travel,
+                  exitFaceDirection
+                );
+                detailedLeafLayers += 1;
+              }
               if (visibility <= 0.01) return 0.0;
             }
             if (grassAt(cell) > 0.5 && grassBladeHit(local, direction, cell, travel)) return 0.0;
@@ -760,7 +833,8 @@ export class VoxelSunShadowPass {
           vec3 sun,
           vec3 tangentA,
           vec3 tangentB,
-          bool includeSeaweed
+          bool includeSeaweed,
+          bool leafReceiver
         ) {
           // Use one fixed, deterministic nine-ray kernel. The previous
           // 5-or-21-ray boundary classifier made the cost and result change
@@ -768,7 +842,7 @@ export class VoxelSunShadowPass {
           // tree-adjacent FPS drops and flickering shadow stripes.
           const int DISC_SAMPLES = 8;
           const float GOLDEN_ANGLE = 2.39996323;
-          float sum = traceVisibility(receiver, sun, includeSeaweed);
+          float sum = traceVisibility(receiver, sun, includeSeaweed, leafReceiver);
           for (int i = 0; i < DISC_SAMPLES; i++) {
             float fraction = (float(i) + 0.5) / float(DISC_SAMPLES);
             float radius = sqrt(fraction) * uSunAngularRadius;
@@ -777,7 +851,8 @@ export class VoxelSunShadowPass {
             sum += traceVisibility(
               receiver,
               normalize(sun + tangentA * disk.x + tangentB * disk.y),
-              includeSeaweed
+              includeSeaweed,
+              leafReceiver
             );
           }
           return sum / float(1 + DISC_SAMPLES);
@@ -805,7 +880,15 @@ export class VoxelSunShadowPass {
           tangentA = normalize(tangentA);
           vec3 tangentB = normalize(cross(sun, tangentA));
           bool includeSeaweed = receiver.y < uSeaweedWaterLevel - 0.05;
-          float visibility = traceSolarDisc(receiver, sun, tangentA, tangentB, includeSeaweed);
+          bool leafReceiver = receiverIsLeaf(receiver - uVolumeOrigin);
+          float visibility = traceSolarDisc(
+            receiver,
+            sun,
+            tangentA,
+            tangentB,
+            includeSeaweed,
+            leafReceiver
+          );
           // The player caster is evaluated exactly once per receiver, outside
           // traceSolarDisc's terrain ray loop. The screen bound is a
           // conservative optimization; the world-space AABB remains the

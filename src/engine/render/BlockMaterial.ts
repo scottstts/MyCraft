@@ -23,8 +23,16 @@ export class BlockMaterial extends THREE.ShaderMaterial {
     albedoTexture: THREE.Texture,
     envMap: THREE.CubeTexture | null,
     normalMap?: THREE.Texture,
-    atlasInfo?: { tileSize: number; atlasSize: number }
+    atlasInfo?: {
+      tileSize: number;
+      atlasSize: number;
+      leafTiles?: ReadonlyArray<readonly [number, number]>;
+    }
   ) {
+    const leafTileXs = atlasInfo?.leafTiles?.slice(0, 8).map(([x]) => x) ?? [];
+    while (leafTileXs.length < 8) leafTileXs.push(-1024);
+    const leafTileIndicesA = new THREE.Vector4(...leafTileXs.slice(0, 4) as [number, number, number, number]);
+    const leafTileIndicesB = new THREE.Vector4(...leafTileXs.slice(4, 8) as [number, number, number, number]);
     const vertexShader = `
       // Block vertex shader using per-vertex tint and ambient occlusion
       #include <common>
@@ -106,29 +114,49 @@ export class BlockMaterial extends THREE.ShaderMaterial {
         // half-pixel offset put nearest samples on texel boundaries.
         vec2 uv = gl_FragCoord.xy / max(voxelShadowResolution, vec2(1.0));
         float center = sampleVoxelShadow(uv);
-        // The solar-disc integration is intentionally adaptive, so this is
-        // only a small reconstruction of the remaining 1/21-level contouring.
-        // Neighbours are accepted only when their prepass depth agrees with
-        // this fragment; silhouettes therefore cannot bleed across geometry.
+        // Leaf transmission is fractional while opaque blockers remain at the
+        // exact endpoints. Reconstruct only that fractional signal with a
+        // compact depth-aware tent. This removes the visible nine-ray levels
+        // without softening trunks, terrain silhouettes, or other hard casts.
         float uncertainty = smoothstep(0.02, 0.98, 4.0 * center * (1.0 - center));
         if (uncertainty <= 0.0) return center;
         vec2 texel = 1.0 / max(voxelShadowResolution, vec2(1.0));
         float referenceDepth = -vViewPosition.z;
-        vec2 offsets[4];
+        vec2 offsets[12];
         offsets[0] = vec2(texel.x, 0.0);
         offsets[1] = vec2(-texel.x, 0.0);
         offsets[2] = vec2(0.0, texel.y);
         offsets[3] = vec2(0.0, -texel.y);
-        float weighted = 0.0;
-        float weightSum = 0.0;
-        for (int i = 0; i < 4; i++) {
-          float weight = shadowNeighbourWeight(uv + offsets[i], referenceDepth);
+        offsets[4] = vec2(texel.x, texel.y);
+        offsets[5] = vec2(-texel.x, texel.y);
+        offsets[6] = vec2(texel.x, -texel.y);
+        offsets[7] = vec2(-texel.x, -texel.y);
+        offsets[8] = vec2(texel.x * 2.0, 0.0);
+        offsets[9] = vec2(-texel.x * 2.0, 0.0);
+        offsets[10] = vec2(0.0, texel.y * 2.0);
+        offsets[11] = vec2(0.0, -texel.y * 2.0);
+        float tapWeights[12];
+        tapWeights[0] = 2.0;
+        tapWeights[1] = 2.0;
+        tapWeights[2] = 2.0;
+        tapWeights[3] = 2.0;
+        tapWeights[4] = 1.0;
+        tapWeights[5] = 1.0;
+        tapWeights[6] = 1.0;
+        tapWeights[7] = 1.0;
+        tapWeights[8] = 0.5;
+        tapWeights[9] = 0.5;
+        tapWeights[10] = 0.5;
+        tapWeights[11] = 0.5;
+        float weighted = center * 4.0;
+        float weightSum = 4.0;
+        for (int i = 0; i < 12; i++) {
+          float weight = shadowNeighbourWeight(uv + offsets[i], referenceDepth) * tapWeights[i];
           weighted += sampleVoxelShadow(uv + offsets[i]) * weight;
           weightSum += weight;
         }
-        if (weightSum <= 1e-4) return center;
-        float neighbours = weighted / weightSum;
-        return mix(center, neighbours, 0.55 * uncertainty);
+        float reconstructed = weighted / max(weightSum, 1e-4);
+        return mix(center, reconstructed, 0.82 * uncertainty);
       }
 
       varying vec2 vUv;
@@ -154,6 +182,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float aaLodBias;    // 0..2 typically
       uniform float atlasSize;    // tiles across (U). 1.0 if not using atlas
       uniform float tileSize;     // texels per tile (square)
+      uniform vec4 leafTileIndicesA;
+      uniform vec4 leafTileIndicesB;
       uniform float ditherAmount; // 0..1 strength in sRGB LDR (approx 1 LSB at 1.0)
       
       // Sun uniforms (directional light driven by SunController)
@@ -211,6 +241,18 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           return sampleUv;
       }
 
+      bool isLeafAtlasUv(vec2 uv) {
+          if (atlasSize <= 1.0) return false;
+          float tileIndex = floor(clamp(uv.x, 0.0, 0.999999) * atlasSize);
+          vec4 distanceA = abs(leafTileIndicesA - vec4(tileIndex));
+          vec4 distanceB = abs(leafTileIndicesB - vec4(tileIndex));
+          float closest = min(
+            min(min(distanceA.x, distanceA.y), min(distanceA.z, distanceA.w)),
+            min(min(distanceB.x, distanceB.y), min(distanceB.z, distanceB.w))
+          );
+          return closest < 0.25;
+      }
+
       // Derivative-aware texture sampling to reduce minification shimmer
       // Provide LOD function with graceful fallback if the extension is missing
       #ifdef TEXTURE_LOD_EXT
@@ -222,12 +264,14 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       // Combines 4-tap RGSS with a directional anisotropic kernel when footprint is elongated
       vec4 texture2D_AA(sampler2D tex, vec2 uv) {
           vec4 base = texture2D(tex, clampUvToTile(uv, uv));
-          // The atlas intentionally has no mip chain or padded tile borders.
-          // Any multi-tap filter can therefore turn a tiny change in the
-          // projected footprint into a different mixture of nearest texels.
-          // Keep atlas samples single-tap and stable; retain the derivative
-          // filter below for standalone textures such as the seabed.
-          if (!aaEnabled || atlasSize > 1.0) return base;
+          if (!aaEnabled) return base;
+          // Opaque atlas tiles retain their crisp single-tap pixel treatment.
+          // Sparse leaves need footprint integration under minification: a
+          // single nearest texel aliases their 16px cutout into moving diagonal
+          // bands. Every tap remains clamped to the selected tile, so this
+          // cannot sample neighbouring atlas materials.
+          bool leafAtlasSample = isLeafAtlasUv(uv);
+          if (atlasSize > 1.0 && !leafAtlasSample) return base;
 
           // Estimate pixel footprint in texel units
           vec2 texSize = vec2(max(1.0, atlasSize * tileSize), max(1.0, tileSize));
@@ -268,6 +312,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
               sum += c * w; wsum += w;
             }
             vec4 anisoAvg = sum / max(wsum, 1e-5);
+            if (leafAtlasSample && anisoAvg.a > 1e-4) {
+              anisoAvg.rgb /= anisoAvg.a;
+            }
             return mix(base, anisoAvg, k);
           }
 
@@ -286,6 +333,9 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           vec4 c3 = texLod2D(tex, clampUvToTile(uv + o3, uv), lodBiasIso);
           vec4 c4 = texLod2D(tex, clampUvToTile(uv + o4, uv), lodBiasIso);
           vec4 avg4 = (c1 + c2 + c3 + c4) * 0.25;
+          if (leafAtlasSample && avg4.a > 1e-4) {
+            avg4.rgb /= avg4.a;
+          }
           return mix(base, avg4, k);
       }
 
@@ -537,6 +587,8 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           aaLodBias: { value: 0.9 },
           atlasSize: { value: (atlasInfo?.atlasSize ?? 1) },
           tileSize: { value: (atlasInfo?.tileSize ?? 16) },
+          leafTileIndicesA: { value: leafTileIndicesA },
+          leafTileIndicesB: { value: leafTileIndicesB },
           ditherAmount: { value: 0.75 },
           voxelShadowDepth: { value: createWhiteTexture() },
           voxelShadowCameraNear: { value: 0.1 },
