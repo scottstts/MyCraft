@@ -807,11 +807,10 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   const { bounds, worldRadius } = computeBoundsFromChunkCount(totalChunks);
   const pendingSave = (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT;
   const wasVerified = (window as Window & { __WORLD_SNAPSHOT?: WorldSavePayload; __WORLD_SNAPSHOT_VERIFIED?: boolean }).__WORLD_SNAPSHOT_VERIFIED;
-  const startupReadiness = createStartupReadiness(
-    pendingSave && pendingSave.kind === 'MyCraftWorld'
-      ? pendingSave.chunks.map((chunk) => chunk.key)
-      : getGeneratedChunkKeys(totalChunks),
-  );
+  const initialChunkKeys = pendingSave && pendingSave.kind === 'MyCraftWorld'
+    ? pendingSave.chunks.map((chunk) => chunk.key)
+    : getGeneratedChunkKeys(totalChunks);
+  const startupReadiness = createStartupReadiness(initialChunkKeys);
   cancelStartupWait = startupReadiness.cancel;
 
   // World readiness is shared by the gameplay scene and the render pipeline.
@@ -874,6 +873,11 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   world.on('BLOCK_CHANGED', ({ worldX, worldY, worldZ, newBlockId }) => {
     voxelShadowVolume?.updateBlock(worldX, worldY, worldZ, newBlockId);
   });
+  // Startup receives a complete fixed world. Defer the occupancy reduction and
+  // all initial mesh jobs until every chunk has arrived, so no partial-world
+  // rebuilds or neighbour-arrival remeshes are paid during boot.
+  world.chunkPipeline.beginInitialBatch(initialChunkKeys);
+  voxelShadowVolume.beginBulkUpdate();
   sunController?.setShadowSettings({
     enabled: RENDER_STYLE.shadows.enabled,
     shadowDistance: RENDER_STYLE.shadows.distance,
@@ -1050,6 +1054,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
         const chunkData = { size: ch.size, voxels: vox };
         world.chunkPipeline.ingestChunkData(ch.key, chunkData);
       }
+      world.chunkPipeline.finishInitialBatch();
     } catch (e) {
       console.error('Failed to load snapshot; returning to Start Panel.', e);
       try { alert('Save file verification failed or is corrupted. Returning to Start Panel.'); } catch { /* ignore */ }
@@ -1074,6 +1079,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
         world.ensureChunk(cx, 0, cz);
       }
     }
+    world.chunkPipeline.finishInitialBatch();
   }
   
   // Handle window resize through one coalesced frame commit. The renderer
@@ -1130,6 +1136,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   setBootStage('world-loading', onBootStage);
   await startupReadiness.promise;
   if (!running) throw new Error('World startup stopped before readiness');
+  voxelShadowVolume?.finishBulkUpdate();
   flushPendingChunkMeshes();
   if (diagnosticMode) {
     // Diagnostics own the camera pose, but still need the character positioned

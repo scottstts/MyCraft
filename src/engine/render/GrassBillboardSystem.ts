@@ -49,13 +49,25 @@ export class GrassBillboardSystem {
 
     // Wire listeners
     world.on('CHUNK_ADDED', ({ key, chunk, coords }) => {
-      this.rebuildForChunk(key, chunk.getData().voxels, coords.cx, coords.cy, coords.cz)
+      this.rebuildForChunk(
+        key,
+        chunk.getVoxelsArray(),
+        coords.cx,
+        coords.cy,
+        coords.cz,
+        chunk.getGrassTuftPositions(),
+      )
     })
     world.on('CHUNK_REMOVED', ({ key }) => this.removeChunk(key))
     world.on('BLOCK_CHANGED', ({ chunkKey }) => {
       const chunk = world.getChunkByKey(chunkKey)
       if (!chunk) { this.removeChunk(chunkKey); return }
-      this.rebuildForChunk(chunkKey, chunk.getData().voxels, ...chunkKey.split(',').map(n => parseInt(n, 10)) as unknown as [number, number, number])
+      this.rebuildForChunk(
+        chunkKey,
+        chunk.getVoxelsArray(),
+        ...chunkKey.split(',').map(n => parseInt(n, 10)) as unknown as [number, number, number],
+        chunk.getGrassTuftPositions(),
+      )
     })
   }
 
@@ -79,17 +91,36 @@ export class GrassBillboardSystem {
     this.groups.delete(key)
   }
 
-  private rebuildForChunk(key: ChunkKey, voxels: Uint8Array, cx: number, cy: number, cz: number): void {
+  private rebuildForChunk(
+    key: ChunkKey,
+    voxels: Uint8Array,
+    cx: number,
+    cy: number,
+    cz: number,
+    grassTuftPositions: Uint16Array | null,
+  ): void {
     // Remove previous
     this.removeChunk(key)
 
     // Collect instances (local coords)
     const instances: Array<{ lx:number; ly:number; lz:number }> = []
-    for (let ly = 0; ly < CHUNK_SIZE.y; ly++) {
-      for (let lz = 0; lz < CHUNK_SIZE.z; lz++) {
-        for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
-          const idx = ly * CHUNK_SIZE.x * CHUNK_SIZE.z + lz * CHUNK_SIZE.x + lx
-          if (voxels[idx] === this.grassTuftId) instances.push({ lx, ly, lz })
+    if (grassTuftPositions) {
+      for (let index = 0; index + 2 < grassTuftPositions.length; index += 3) {
+        const lx = grassTuftPositions[index]
+        const ly = grassTuftPositions[index + 1]
+        const lz = grassTuftPositions[index + 2]
+        if (lx >= CHUNK_SIZE.x || ly >= CHUNK_SIZE.y || lz >= CHUNK_SIZE.z) continue
+        const voxelIndex = ly * CHUNK_SIZE.x * CHUNK_SIZE.z + lz * CHUNK_SIZE.x + lx
+        if (voxels[voxelIndex] !== this.grassTuftId) continue
+        instances.push({ lx, ly, lz })
+      }
+    } else {
+      for (let ly = 0; ly < CHUNK_SIZE.y; ly++) {
+        for (let lz = 0; lz < CHUNK_SIZE.z; lz++) {
+          for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
+            const idx = ly * CHUNK_SIZE.x * CHUNK_SIZE.z + lz * CHUNK_SIZE.x + lx
+            if (voxels[idx] === this.grassTuftId) instances.push({ lx, ly, lz })
+          }
         }
       }
     }

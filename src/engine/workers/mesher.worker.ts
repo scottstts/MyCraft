@@ -1,28 +1,38 @@
 /**
- * Mesher Worker - Creates mesh data from chunk voxels using naive face culling
- * Input: ChunkData + block registry
+ * Mesher Worker - Creates mesh data from cached chunk voxels using naive face culling
+ * Input: INIT_MESHER, STORE_CHUNK, and key-only MESH_CHUNK requests
  * Output: Mesh buffers (positions, normals, uvs, indices)
  */
 
 import type { 
   WorkerRequest, 
+  MesherInitRequest,
+  StoreChunkRequest,
   MeshChunkRequest,
+  RemoveChunkRequest,
   ChunkMeshResponse
 } from '../../types/workers.js';
 import type { BlockDef, BlockId } from '../../types/index.js';
 import type { AtlasConfig } from '../render/Atlas.js';
-import { isMeshChunkRequest } from '../../types/workers.js';
+import {
+  isMesherInitRequest,
+  isStoreChunkRequest,
+  isMeshChunkRequest,
+  isRemoveChunkRequest,
+} from '../../types/workers.js';
 import { CHUNK_SIZE } from '../../config/constants.js';
 import { localToIndex } from '../utils/coords.js';
+import { MeshBufferWriter } from '../world/MeshBufferWriter.js';
 
 // The unified WaterSystem owns the continuous sea-level plane. Water blocks
 // remain in World for swimming/flooding/placement, but their duplicate sea
 // level top faces must not be rasterized into the chunk mesh.
 const WATER_LEVEL = 42;
 
-// Block registry snapshot (passed from main thread)
+// Immutable mesher configuration is initialized once per worker.
 let blockRegistry = new Map<BlockId, BlockDef>();
 let atlasConfig: AtlasConfig | null = null;
+const chunkCache = new Map<string, Uint8Array>();
 
 // Face directions (normal vectors)
 const FACES = [
@@ -38,44 +48,62 @@ const FACES = [
 self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   
-  if (isMeshChunkRequest(request)) {
+  if (isMesherInitRequest(request)) {
+    handleMesherInit(request);
+  } else if (isStoreChunkRequest(request)) {
+    handleStoreChunk(request);
+  } else if (isMeshChunkRequest(request)) {
     handleMeshChunk(request);
+  } else if (isRemoveChunkRequest(request)) {
+    handleRemoveChunk(request);
   } else {
     console.warn('[MesherWorker] Unknown request type:', request);
   }
 };
 
-function handleMeshChunk(request: MeshChunkRequest): void {
-  const { key, chunkData, atlasConfig: receivedAtlasConfig, blockRegistry: receivedBlockRegistry, neighbors } = request.payload;
-  
-  // Update atlas config from main thread
-  atlasConfig = receivedAtlasConfig;
-  
-  // Update block registry from main thread
+function handleMesherInit(request: MesherInitRequest): void {
+  atlasConfig = request.payload.atlasConfig;
   blockRegistry = new Map();
-  for (const block of receivedBlockRegistry) {
+  for (const block of request.payload.blockRegistry) {
     blockRegistry.set(block.id, block);
   }
-  
-  // Assert atlas config is available and valid
-  if (!atlasConfig) {
-    throw new Error('[MesherWorker] Atlas config is required but not provided');
+  assertMesherConfig();
+}
+
+function handleStoreChunk(request: StoreChunkRequest): void {
+  const { key, voxels } = request.payload;
+  const expectedLength = CHUNK_SIZE.x * CHUNK_SIZE.y * CHUNK_SIZE.z;
+  if (voxels.length !== expectedLength) {
+    throw new Error(`[MesherWorker] Invalid voxel length for ${key}: expected ${expectedLength}, got ${voxels.length}`);
   }
-  if (!atlasConfig.atlasSize || !atlasConfig.tileSize || !atlasConfig.tiles) {
-    throw new Error('[MesherWorker] Invalid atlas config - missing required properties');
-  }
-  
-  // Build mesh from chunk data
-  const mesh = buildChunkMesh(chunkData, neighbors, key);
-  
+  // The message is intentionally cloned once into worker-owned storage. The
+  // main thread retains its own authoritative Chunk copy for World systems.
+  chunkCache.set(key, voxels);
+}
+
+function handleRemoveChunk(request: RemoveChunkRequest): void {
+  chunkCache.delete(request.payload.key);
+}
+
+function handleMeshChunk(request: MeshChunkRequest): void {
+  const { key } = request.payload;
+  const voxels = chunkCache.get(key);
+  if (!voxels) throw new Error(`[MesherWorker] Cannot mesh unsynchronized chunk: ${key}`);
+
+  const neighbors = buildNeighborsForKey(key);
+  assertMesherConfig();
+
+  // Build mesh from worker-owned chunk data and its worker-owned neighbours.
+  const mesh = buildChunkMesh({ voxels }, neighbors, key);
+
   const response: ChunkMeshResponse = {
     type: 'CHUNK_MESH',
-    key: key,
-    payload: mesh
+    key,
+    payload: mesh,
   };
-  
-  // Transfer the buffers for performance
-  self.postMessage(response, { 
+
+  // Transfer the output buffers for performance.
+  self.postMessage(response, {
     transfer: [
       mesh.opaque.positions.buffer,
       mesh.opaque.normals.buffer,
@@ -89,11 +117,45 @@ function handleMeshChunk(request: MeshChunkRequest): void {
       mesh.transparent.ao.buffer,
       mesh.transparent.indices.buffer,
       mesh.transparent.colors.buffer,
-    ] 
+    ],
   });
 }
 
-// Block registry is now provided from main thread, no hardcoded initialization needed
+function assertMesherConfig(): void {
+  // Assert atlas config is available and valid
+  if (!atlasConfig) {
+    throw new Error('[MesherWorker] Atlas config is required but not provided');
+  }
+  if (!atlasConfig.atlasSize || !atlasConfig.tileSize || !atlasConfig.tiles) {
+    throw new Error('[MesherWorker] Invalid atlas config - missing required properties');
+  }
+}
+
+function buildNeighborsForKey(key: string): {
+  posX?: { voxels: Uint8Array };
+  negX?: { voxels: Uint8Array };
+  posY?: { voxels: Uint8Array };
+  negY?: { voxels: Uint8Array };
+  posZ?: { voxels: Uint8Array };
+  negZ?: { voxels: Uint8Array };
+} {
+  const [cxText, cyText, czText] = key.split(',');
+  const cx = parseInt(cxText, 10) || 0;
+  const cy = parseInt(cyText, 10) || 0;
+  const cz = parseInt(czText, 10) || 0;
+  const data = (cxOffset: number, cyOffset: number, czOffset: number): { voxels: Uint8Array } | undefined => {
+    const voxels = chunkCache.get(`${cx + cxOffset},${cy + cyOffset},${cz + czOffset}`);
+    return voxels ? { voxels } : undefined;
+  };
+  return {
+    posX: data(1, 0, 0),
+    negX: data(-1, 0, 0),
+    posY: data(0, 1, 0),
+    negY: data(0, -1, 0),
+    posZ: data(0, 0, 1),
+    negZ: data(0, 0, -1),
+  };
+}
 
 function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
   posX?: { voxels: Uint8Array };
@@ -103,191 +165,132 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
   posZ?: { voxels: Uint8Array };
   negZ?: { voxels: Uint8Array };
 } | undefined, key: string) {
-  // Parse chunk coordinates from key for world-space hashing
+  // Count visible faces without allocating mesh storage, then fill exact-size
+  // typed arrays in a second pass. Both passes use the same topology rules.
+  const opaqueCounts = new MeshBufferWriter();
+  const transparentCounts = new MeshBufferWriter();
+  meshChunkPass(chunkData, neighbors, key, opaqueCounts, transparentCounts);
+
+  const opaque = new MeshBufferWriter(opaqueCounts.getFaceCount());
+  const transparent = new MeshBufferWriter(transparentCounts.getFaceCount());
+  meshChunkPass(chunkData, neighbors, key, opaque, transparent);
+  return {
+    opaque: opaque.toBuffers(),
+    transparent: transparent.toBuffers(),
+  };
+}
+
+function meshChunkPass(
+  chunkData: { voxels: Uint8Array },
+  neighbors: {
+    posX?: { voxels: Uint8Array };
+    negX?: { voxels: Uint8Array };
+    posY?: { voxels: Uint8Array };
+    negY?: { voxels: Uint8Array };
+    posZ?: { voxels: Uint8Array };
+    negZ?: { voxels: Uint8Array };
+  } | undefined,
+  key: string,
+  opaqueWriter: MeshBufferWriter,
+  transparentWriter: MeshBufferWriter,
+): void {
   const [cxStr, cyStr, czStr] = key.split(',');
   const cx = parseInt(cxStr, 10) || 0;
   const cy = parseInt(cyStr, 10) || 0;
   const cz = parseInt(czStr, 10) || 0;
 
-  // Opaque and transparent buffers are built separately so we can render
-  // them with different materials and blending order on the main thread.
-  const positionsO: number[] = [];
-  const normalsO: number[] = [];
-  const uvsO: number[] = [];
-  const aoO: number[] = [];
-  const colorsO: number[] = [];
-  const indicesO: number[] = [];
-  let vertexCountO = 0;
-
-  const positionsT: number[] = [];
-  const normalsT: number[] = [];
-  const uvsT: number[] = [];
-  const aoT: number[] = [];
-  const colorsT: number[] = [];
-  const indicesT: number[] = [];
-  let vertexCountT = 0;
-  
-  // Iterate through all voxels in the chunk
   for (let ly = 0; ly < CHUNK_SIZE.y; ly++) {
     for (let lz = 0; lz < CHUNK_SIZE.z; lz++) {
       for (let lx = 0; lx < CHUNK_SIZE.x; lx++) {
         const voxelIndex = localToIndex(lx, ly, lz);
         const blockId = chunkData.voxels[voxelIndex];
-        
-        // Skip air blocks
         if (blockId === 0) continue;
-        
+
         const block = blockRegistry.get(blockId);
-        if (!block) continue;
-        // Skip decorative billboards (e.g., grass tufts). They are rendered by a separate system.
-        if (block.name === 'grass_tuft') continue;
+        if (!block || block.name === 'grass_tuft') continue;
         const currentIsLeaf = isLeafBlock(block);
-        
-        // Compute world coords of this voxel for per-block hashing
         const gx = cx * CHUNK_SIZE.x + lx;
         const gy = cy * CHUNK_SIZE.y + ly;
         const gz = cz * CHUNK_SIZE.z + lz;
-
         if (block.name === 'water' && gy === WATER_LEVEL) continue;
 
-        // Per-block variant/tint choices are deterministic in world space, so
-        // remeshing never makes a block visibly pop. Orientation is selected
-        // per face below because grass sides and wood grain have constraints
-        // that do not apply to their top faces.
         const tint = getTintJitter(gx, gy, gz);
-
-        // Check each face
         for (const face of FACES) {
-          // Special-case: only render the top face for water blocks
-          if (block.name === 'water' && face.name !== 'top') {
-            continue;
-          }
+          if (block.name === 'water' && face.name !== 'top') continue;
           const rot = getUVRotation(block.name, face.name, gx, gy, gz);
           const neighborX = lx + face.dir[0];
           const neighborY = ly + face.dir[1];
           const neighborZ = lz + face.dir[2];
-          
-          // Leaf blocks stay in the opaque/depth-writing mesh for stable
-          // cutouts, but they must not hide faces behind transparent texels.
-          // Emit every boundary involving a leaf so a cutout can reveal the
-          // next leaf layer, a trunk, or the terrain behind it.
           let shouldRenderFace = false;
-          
+
           if (neighborX < 0 || neighborX >= CHUNK_SIZE.x ||
               neighborY < 0 || neighborY >= CHUNK_SIZE.y ||
               neighborZ < 0 || neighborZ >= CHUNK_SIZE.z) {
-            // Outside chunk - consult neighbor data if provided
             let neighborOpaque = false;
             let neighborIsLeaf = false;
             if (neighbors) {
               if (neighborX === -1 && neighbors.negX) {
-                const nLx = CHUNK_SIZE.x - 1;
-                const nIndex = localToIndex(nLx, ly, lz);
-                const nId = neighbors.negX.voxels[nIndex];
-                const nDef = blockRegistry.get(nId);
+                const nIndex = localToIndex(CHUNK_SIZE.x - 1, ly, lz);
+                const nDef = blockRegistry.get(neighbors.negX.voxels[nIndex]);
                 neighborOpaque = !!(nDef && nDef.opaque);
                 neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborX === CHUNK_SIZE.x && neighbors.posX) {
-                const nLx = 0;
-                const nIndex = localToIndex(nLx, ly, lz);
-                const nId = neighbors.posX.voxels[nIndex];
-                const nDef = blockRegistry.get(nId);
+                const nIndex = localToIndex(0, ly, lz);
+                const nDef = blockRegistry.get(neighbors.posX.voxels[nIndex]);
                 neighborOpaque = !!(nDef && nDef.opaque);
                 neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborZ === -1 && neighbors.negZ) {
-                const nLz = CHUNK_SIZE.z - 1;
-                const nIndex = localToIndex(lx, ly, nLz);
-                const nId = neighbors.negZ.voxels[nIndex];
-                const nDef = blockRegistry.get(nId);
+                const nIndex = localToIndex(lx, ly, CHUNK_SIZE.z - 1);
+                const nDef = blockRegistry.get(neighbors.negZ.voxels[nIndex]);
                 neighborOpaque = !!(nDef && nDef.opaque);
                 neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborZ === CHUNK_SIZE.z && neighbors.posZ) {
-                const nLz = 0;
-                const nIndex = localToIndex(lx, ly, nLz);
-                const nId = neighbors.posZ.voxels[nIndex];
-                const nDef = blockRegistry.get(nId);
+                const nIndex = localToIndex(lx, ly, 0);
+                const nDef = blockRegistry.get(neighbors.posZ.voxels[nIndex]);
                 neighborOpaque = !!(nDef && nDef.opaque);
                 neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborY === -1 && neighbors.negY) {
-                const nLy = CHUNK_SIZE.y - 1;
-                const nIndex = localToIndex(lx, nLy, lz);
-                const nId = neighbors.negY.voxels[nIndex];
-                const nDef = blockRegistry.get(nId);
+                const nIndex = localToIndex(lx, CHUNK_SIZE.y - 1, lz);
+                const nDef = blockRegistry.get(neighbors.negY.voxels[nIndex]);
                 neighborOpaque = !!(nDef && nDef.opaque);
                 neighborIsLeaf = isLeafBlock(nDef);
               } else if (neighborY === CHUNK_SIZE.y && neighbors.posY) {
-                const nLy = 0;
-                const nIndex = localToIndex(lx, nLy, lz);
-                const nId = neighbors.posY.voxels[nIndex];
-                const nDef = blockRegistry.get(nId);
+                const nIndex = localToIndex(lx, 0, lz);
+                const nDef = blockRegistry.get(neighbors.posY.voxels[nIndex]);
                 neighborOpaque = !!(nDef && nDef.opaque);
                 neighborIsLeaf = isLeafBlock(nDef);
               }
             }
-            // A leaf boundary remains visible even when both blocks are
-            // nominally opaque to the voxel topology.
             shouldRenderFace = !neighborOpaque || currentIsLeaf || neighborIsLeaf;
           } else {
-            // Check neighbor block
             const neighborIndex = localToIndex(neighborX, neighborY, neighborZ);
-            const neighborBlockId = chunkData.voxels[neighborIndex];
-            const neighborBlock = blockRegistry.get(neighborBlockId);
-            
-            // With alpha discard and depth writes, the front layer still
-            // occludes covered texels while uncovered texels can continue
-            // through the emitted inner boundary faces.
+            const neighborBlock = blockRegistry.get(chunkData.voxels[neighborIndex]);
             shouldRenderFace = !neighborBlock || !neighborBlock.opaque ||
               currentIsLeaf || isLeafBlock(neighborBlock);
           }
-          
-          if (shouldRenderFace) {
-            // Add face quad
-            const isOpaque = !!block.opaque;
-            if (isOpaque) {
-              addFaceQuad(
-                lx, ly, lz, gx, gy, gz, face, block,
-                positionsO, normalsO, uvsO, aoO, colorsO, indicesO, vertexCountO,
-                chunkData, // for in-chunk AO sampling
-                neighbors, // for AO sampling across chunk borders
-                rot, tint, // per-block
-                
-              );
-              vertexCountO += 4;
-            } else {
-              addFaceQuad(
-                lx, ly, lz, gx, gy, gz, face, block,
-                positionsT, normalsT, uvsT, aoT, colorsT, indicesT, vertexCountT,
-                chunkData,
-                neighbors,
-                0, 1.0, // no tint/rotation for water; safe defaults
-                
-              );
-              vertexCountT += 4;
-            }
+
+          if (!shouldRenderFace) continue;
+          if (block.opaque) {
+            addFaceQuad(
+              lx, ly, lz, gx, gy, gz, face, block,
+              opaqueWriter,
+              chunkData,
+              neighbors,
+              rot, tint,
+            );
+          } else {
+            addFaceQuad(
+              lx, ly, lz, gx, gy, gz, face, block,
+              transparentWriter,
+              chunkData,
+              neighbors,
+              0, 1.0,
+            );
           }
         }
       }
     }
   }
-  
-  return {
-    opaque: {
-      positions: new Float32Array(positionsO),
-      normals: new Float32Array(normalsO),
-      uvs: new Float32Array(uvsO),
-      ao: new Float32Array(aoO),
-      colors: new Float32Array(colorsO),
-      indices: new Uint32Array(indicesO)
-    },
-    transparent: {
-      positions: new Float32Array(positionsT),
-      normals: new Float32Array(normalsT),
-      uvs: new Float32Array(uvsT),
-      ao: new Float32Array(aoT),
-      colors: new Float32Array(colorsT),
-      indices: new Uint32Array(indicesT)
-    }
-  };
 }
 
 interface Face {
@@ -301,8 +304,7 @@ function addFaceQuad(
   gx: number, gy: number, gz: number,
   face: Face,
   block: BlockDef,
-  positions: number[], normals: number[], uvs: number[], ao: number[], colors: number[], indices: number[],
-  vertexOffset: number,
+  writer: MeshBufferWriter,
   chunkData: { voxels: Uint8Array },
   neighbors: {
     posX?: { voxels: Uint8Array };
@@ -315,13 +317,18 @@ function addFaceQuad(
   uvRotation: number,
   tintJitter: number
 ): void {
+  if (writer.isCounting) {
+    writer.addFaceCount();
+    return;
+  }
+
   const [nx, ny, nz] = face.normal;
   
   // Get UV coordinates for this face
   const [tileU, tileV] = getFaceUV(block, face.name, gx, gy, gz);
   
   // Define quad vertices based on face direction
-  let quad: number[][];
+  let quad: Array<readonly [number, number, number]>;
   
   switch (face.name) {
     case 'front': // +Z
@@ -378,16 +385,6 @@ function addFaceQuad(
       return;
   }
   
-  // Add positions
-  for (const [x, y, z] of quad) {
-    positions.push(x, y, z);
-  }
-  
-  // Add normals (same for all 4 vertices)
-  for (let i = 0; i < 4; i++) {
-    normals.push(nx, ny, nz);
-  }
-  
   // Add UVs using atlas config
   if (!atlasConfig) {
     throw new Error('[MesherWorker] Atlas config required for UV calculation');
@@ -421,10 +418,6 @@ function addFaceQuad(
     // 270 deg
     uvOrder = [uvBR, uvTR, uvTL, uvBL];
   }
-  for (const uv of uvOrder) {
-    uvs.push(uv[0], uv[1]);
-  }
-
   // Per-vertex ambient occlusion for solid blocks only (skip water)
   const isSolid = !!block.solid && block.name !== 'water';
   const aoTable = [1.0, 0.8, 0.6, 0.45];
@@ -446,6 +439,7 @@ function addFaceQuad(
 
   // Precompute bn vector
   const bn = [bnX, bnY, bnZ];
+  const aoValues: number[] = [];
 
   // For each vertex, compute AO count from 3 samples (two sides + corner), map to factor
   for (let i = 0; i < 4; i++) {
@@ -466,9 +460,9 @@ function addFaceQuad(
 
     let aoFactor = 1.0;
     if (isSolid) {
-    const oc1 = isOccluding(s1[0], s1[1], s1[2], chunkData, neighbors);
-    const oc2 = isOccluding(s2[0], s2[1], s2[2], chunkData, neighbors);
-    const ocC = isOccluding(sc[0], sc[1], sc[2], chunkData, neighbors);
+      const oc1 = isOccluding(s1[0], s1[1], s1[2], chunkData, neighbors);
+      const oc2 = isOccluding(s2[0], s2[1], s2[2], chunkData, neighbors);
+      const ocC = isOccluding(sc[0], sc[1], sc[2], chunkData, neighbors);
       let occ = 0;
       if (oc1) occ++;
       if (oc2) occ++;
@@ -480,32 +474,10 @@ function addFaceQuad(
     // not darkened by the baked term. The legacy mesher applied a 0.7
     // skylight factor to every opaque voxel; retain that ambient contribution
     // without letting it multiply the direct light.
-    const c = isSolid ? tintJitter : 1.0;
-    colors.push(c, c, c);
-    ao.push(aoFactor * (isSolid ? 0.7 : 1.0));
+    aoValues.push(aoFactor * (isSolid ? 0.7 : 1.0));
   }
-  
-  // Select the diagonal from the four actual corner AO values. A fixed
-  // diagonal turns a difference between opposite corners into a visible
-  // triangular patch on an otherwise planar voxel face. Choosing the
-  // diagonal whose opposite-corner pair carries the greater AO sum keeps
-  // the interpolation on the less conspicuous side while preserving the
-  // authored per-corner occlusion.
-  const ao0 = ao[vertexOffset];
-  const ao1 = ao[vertexOffset + 1];
-  const ao2 = ao[vertexOffset + 2];
-  const ao3 = ao[vertexOffset + 3];
-  if (ao0 + ao2 > ao1 + ao3) {
-    indices.push(
-      vertexOffset,     vertexOffset + 1, vertexOffset + 2,
-      vertexOffset,     vertexOffset + 2, vertexOffset + 3,
-    );
-  } else {
-    indices.push(
-      vertexOffset,     vertexOffset + 1, vertexOffset + 3,
-      vertexOffset + 1, vertexOffset + 2, vertexOffset + 3,
-    );
-  }
+
+  writer.addFace(quad, [nx, ny, nz], uvOrder, aoValues, isSolid ? tintJitter : 1.0);
 }
 
 function getFaceUV(block: BlockDef, faceName: string, gx: number, gy: number, gz: number): [number, number] {

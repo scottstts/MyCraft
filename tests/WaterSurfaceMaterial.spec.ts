@@ -241,6 +241,45 @@ describe('WaterSurfaceMaterial', () => {
     textureLoad.mockRestore();
   });
 
+  it('samples only the voxel ring and seam halo with one cached terrain query per column', () => {
+    const textureLoad = vi.spyOn(THREE.TextureLoader.prototype, 'load')
+      .mockImplementation((_url, onLoad) => {
+        const texture = new THREE.Texture();
+        onLoad?.(texture);
+        return texture;
+      });
+    const scene = new THREE.Scene();
+    const water = new WaterSystem(scene, {
+      bounds: { minX: 0, maxX: 64, minZ: 0, maxZ: 64 },
+      waterLevel: 42,
+      farDistance: 128,
+      seed: 17,
+      worldRadius: 64,
+    });
+    const sampled: Array<{ x: number; z: number }> = [];
+    const internals = water as unknown as {
+      terrainSampler: (x: number, z: number) => { height: number; isOcean: boolean };
+      createVoxelRingGeometry: (nearRange: number) => THREE.BufferGeometry;
+    };
+    internals.terrainSampler = (x, z) => {
+      sampled.push({ x, z });
+      return { height: 5, isOcean: false };
+    };
+
+    const geometry = internals.createVoxelRingGeometry(1);
+    const uniqueSamples = new Set(sampled.map(({ x, z }) => `${x},${z}`));
+    expect(sampled).toHaveLength(uniqueSamples.size);
+    // The old implementation eagerly sampled the entire 68x68 map-plus-halo
+    // before discarding the 64x64 interior. The strip path stays perimeter
+    // local and must not query deep interior columns.
+    expect(sampled.length).toBeLessThan(68 * 68);
+    expect(sampled.some(({ x, z }) => x >= 1 && x < 63 && z >= 1 && z < 63)).toBe(false);
+
+    geometry.dispose();
+    water.dispose();
+    textureLoad.mockRestore();
+  });
+
   it('keeps the visual seabed below the wave trough and smooths the far LOD plates', async () => {
     const textureLoad = vi.spyOn(THREE.TextureLoader.prototype, 'load')
       .mockImplementation((_url, onLoad) => {

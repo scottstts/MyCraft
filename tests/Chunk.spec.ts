@@ -218,6 +218,22 @@ describe('Chunk class', () => {
       expect(data.voxels[flattenIndex(5, 10, 7)]).toBe(3); // Should still be 3
     });
 
+    it('preserves generated grass metadata until a voxel edit invalidates it', () => {
+      const positions = new Uint16Array([1, 4, 2, 8, 9, 10]);
+      const generated = new Chunk({
+        size: { ...CHUNK_SIZE },
+        voxels: new Uint8Array(getChunkVoxelCount()),
+        grassTuftPositions: positions,
+      });
+
+      expect(Array.from(generated.getGrassTuftPositions() ?? [])).toEqual(Array.from(positions));
+      const data = generated.getData();
+      expect(Array.from(data.grassTuftPositions ?? [])).toEqual(Array.from(positions));
+
+      generated.set(0, 0, 0, 1);
+      expect(generated.getGrassTuftPositions()).toBeNull();
+    });
+
     it('should return size copy', () => {
       const size = chunk.getSize();
       expect(size).toEqual(CHUNK_SIZE);

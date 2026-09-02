@@ -70,6 +70,41 @@ describe('VoxelOccupancyVolume', () => {
     volume.dispose()
   });
 
+  it('coalesces bulk ingestion into one brick reduction while keeping edits local', () => {
+    const volume = new VoxelOccupancyVolume({
+      minX: 0,
+      maxX: CHUNK_SIZE.x * 2,
+      minY: 0,
+      maxY: CHUNK_SIZE.y,
+      minZ: 0,
+      maxZ: CHUNK_SIZE.z,
+    });
+    const firstChunk = new Chunk();
+    firstChunk.set(1, 2, 3, 1);
+    const secondChunk = new Chunk();
+    secondChunk.set(2, 2, 3, 1);
+    const seaweedTextureVersion = volume.seaweedTexture.version;
+
+    volume.beginBulkUpdate();
+    volume.setSeaweedAnchors([{ x: 100.25, z: 4.75, rootY: 8, height: 4 }]);
+    volume.updateChunk('0,0,0', firstChunk);
+    volume.updateChunk('1,0,0', secondChunk);
+    expect(volume.getDiagnostics().fullBrickRebuilds).toBe(0);
+    expect(volume.seaweedTexture.version).toBe(seaweedTextureVersion);
+    volume.finishBulkUpdate();
+
+    expect(volume.getDiagnostics().fullBrickRebuilds).toBe(1);
+    expect(volume.getDiagnostics().opaqueVoxels).toBe(2);
+    expect(volume.seaweedTexture.version).toBeGreaterThan(seaweedTextureVersion);
+
+    const beforeEdit = volume.getDiagnostics().fullBrickRebuilds;
+    volume.updateBlock(1, 2, 3, 0);
+    expect(volume.getDiagnostics().fullBrickRebuilds).toBe(beforeEdit);
+    expect(volume.getDiagnostics().opaqueVoxels).toBe(1);
+    expect((volume.texture.image.data as Uint8Array)[1 + CHUNK_SIZE.x * (2 + CHUNK_SIZE.y * 3)]).toBe(0);
+    volume.dispose();
+  });
+
   it('keeps leaf blocks porous in the shadow caster while preserving the brick fast path', () => {
     const volume = new VoxelOccupancyVolume({
       minX: 0,

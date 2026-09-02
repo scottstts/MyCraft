@@ -177,6 +177,7 @@ export class World extends EventEmitter<WorldEvents> {
     const existed = this.chunks.delete(key);
     
     if (existed) {
+      this.chunkPipeline.removeChunk(key);
       this.emit('CHUNK_REMOVED', { 
         key, 
         coords: { cx, cy, cz } 

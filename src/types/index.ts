@@ -30,8 +30,10 @@ export interface C3 {
 
 // Chunk data payload
 export interface ChunkData {
-  size: V3i;               // {16,64,16}
+  size: V3i;               // fixed build-time chunk dimensions
   voxels: Uint8Array;      // length = size.x * size.y * size.z
+  /** Optional generator-owned local positions for decorative grass tufts. */
+  grassTuftPositions?: Uint16Array; // [lx, ly, lz, ...]
   // Optional later: light: Uint8Array;
 }
 
@@ -52,7 +54,7 @@ export interface BlockDef {
 
 // Worker messaging
 export interface WorkerReq {
-  type: 'GEN_CHUNK' | 'MESH_CHUNK';
+  type: 'GEN_CHUNK' | 'INIT_MESHER' | 'STORE_CHUNK' | 'MESH_CHUNK' | 'REMOVE_CHUNK';
   payload: unknown;
 }
 

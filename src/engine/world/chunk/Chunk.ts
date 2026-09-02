@@ -1,5 +1,5 @@
 /**
- * Chunk - Container for voxel data in a 16x64x16 block region
+ * Chunk - Container for voxel data in a 64x128x64 block region
  * Purpose: Manages block storage and provides efficient get/set operations
  * Callers: World manager, chunk generators, and mesh builders
  * Invariants: 
@@ -15,6 +15,7 @@ import { flattenIndex, getChunkVoxelCount, isValidLocalCoords } from './index.js
 export class Chunk {
   private voxels: Uint8Array;
   private readonly size: V3i;
+  private grassTuftPositions: Uint16Array | null = null;
 
   /**
    * Create a new chunk
@@ -33,6 +34,9 @@ export class Chunk {
         throw new Error(`Invalid chunk data: size mismatch. Expected ${CHUNK_SIZE.x}x${CHUNK_SIZE.y}x${CHUNK_SIZE.z}, got ${data.size.x}x${data.size.y}x${data.size.z}`);
       }
       this.voxels = new Uint8Array(data.voxels);
+      this.grassTuftPositions = data.grassTuftPositions
+        ? new Uint16Array(data.grassTuftPositions)
+        : null;
     } else {
       // Create empty chunk filled with AIR (id = 0)
       this.voxels = new Uint8Array(voxelCount);
@@ -73,6 +77,7 @@ export class Chunk {
     }
 
     const index = flattenIndex(lx, ly, lz);
+    if (this.voxels[index] !== id) this.grassTuftPositions = null;
     this.voxels[index] = id;
   }
 
@@ -81,10 +86,12 @@ export class Chunk {
    * @returns ChunkData object with size and voxel data
    */
   getData(): ChunkData {
-    return {
+    const data: ChunkData = {
       size: { ...this.size },
       voxels: new Uint8Array(this.voxels) // Create a copy
     };
+    if (this.grassTuftPositions) data.grassTuftPositions = new Uint16Array(this.grassTuftPositions);
+    return data;
   }
 
   /**
@@ -104,6 +111,9 @@ export class Chunk {
     
     // Replace voxels array
     this.voxels = new Uint8Array(data.voxels);
+    this.grassTuftPositions = data.grassTuftPositions
+      ? new Uint16Array(data.grassTuftPositions)
+      : null;
   }
 
   /**
@@ -112,6 +122,15 @@ export class Chunk {
    */
   getVoxelsArray(): Uint8Array {
     return this.voxels;
+  }
+
+  /**
+   * Return generator-provided local grass positions when the chunk has not
+   * been edited. A null result means callers should scan the direct voxel
+   * array because the metadata may no longer be complete.
+   */
+  getGrassTuftPositions(): Uint16Array | null {
+    return this.grassTuftPositions;
   }
 
   /**
@@ -131,6 +150,7 @@ export class Chunk {
       throw new Error(`Invalid block ID: ${id}. Must be 0-255.`);
     }
     this.voxels.fill(id);
+    this.grassTuftPositions = null;
   }
 
   /**
@@ -138,6 +158,7 @@ export class Chunk {
    */
   clear(): void {
     this.voxels.fill(0);
+    this.grassTuftPositions = null;
   }
 
   /**

@@ -25,26 +25,37 @@ export interface GenerateChunkRequest {
   };
 }
 
+export interface MesherInitRequest {
+  type: 'INIT_MESHER';
+  payload: {
+    atlasConfig: AtlasConfig;
+    blockRegistry: BlockDef[];
+  };
+}
+
+export interface StoreChunkRequest {
+  type: 'STORE_CHUNK';
+  payload: {
+    key: ChunkKey;
+    voxels: Uint8Array;
+  };
+}
+
 export interface MeshChunkRequest {
   type: 'MESH_CHUNK';
   payload: {
     key: ChunkKey;
-    chunkData: ChunkData;
-    atlasConfig: AtlasConfig;
-    blockRegistry: BlockDef[];
-    // Optional neighbor chunk data for border face culling
-    neighbors?: {
-      posX?: ChunkData;
-      negX?: ChunkData;
-      posY?: ChunkData;
-      negY?: ChunkData;
-      posZ?: ChunkData;
-      negZ?: ChunkData;
-    };
   };
 }
 
-export type WorkerRequest = GenerateChunkRequest | MeshChunkRequest;
+export interface RemoveChunkRequest {
+  type: 'REMOVE_CHUNK';
+  payload: {
+    key: ChunkKey;
+  };
+}
+
+export type WorkerRequest = GenerateChunkRequest | MesherInitRequest | StoreChunkRequest | MeshChunkRequest | RemoveChunkRequest;
 
 // Worker response types
 export interface ChunkDataResponse {
@@ -87,10 +98,25 @@ export function isGenerateChunkRequest(msg: any): msg is GenerateChunkRequest {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isMeshChunkRequest(msg: any): msg is MeshChunkRequest {
   return msg && msg.type === 'MESH_CHUNK' && msg.payload &&
-         typeof msg.payload.key === 'string' &&
-         msg.payload.chunkData &&
-         msg.payload.atlasConfig &&
-         Array.isArray(msg.payload.blockRegistry);
+         typeof msg.payload.key === 'string';
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function isMesherInitRequest(msg: any): msg is MesherInitRequest {
+  return msg && msg.type === 'INIT_MESHER' && msg.payload &&
+         msg.payload.atlasConfig && Array.isArray(msg.payload.blockRegistry);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function isStoreChunkRequest(msg: any): msg is StoreChunkRequest {
+  return msg && msg.type === 'STORE_CHUNK' && msg.payload &&
+         typeof msg.payload.key === 'string' && msg.payload.voxels instanceof Uint8Array;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function isRemoveChunkRequest(msg: any): msg is RemoveChunkRequest {
+  return msg && msg.type === 'REMOVE_CHUNK' && msg.payload &&
+         typeof msg.payload.key === 'string';
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

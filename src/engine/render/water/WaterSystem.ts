@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { BlockMaterial } from '../BlockMaterial'
 import type { AtlasConfig } from '../Atlas'
 import { CHUNK_SIZE } from '../../../config/constants'
-import { getHeightAtPosition } from '../../world/TerrainGenerator'
+import { createTerrainSampler, type TerrainSampler } from '../../world/TerrainGenerator'
 import { getOceanMaxAmplitude, OCEAN_WATER_CENTER_OFFSET, OCEAN_WAVES, sampleOceanHeight } from './OceanWaveField'
 import { WaterSurfaceMaterial } from './WaterSurfaceMaterial'
 import { CAUSTIC_REFERENCE_DEPTH, CAUSTIC_TILE_SIZE, WaterCaustics } from './WaterCaustics'
@@ -28,8 +28,7 @@ const OCEAN_OUTER_CELL_SIZE = 16
 const SEABED_SURFACE_CLEARANCE = 2
 function createTerrainHeightTexture(
   bounds: WaterSystemOptions['bounds'],
-  seed: number,
-  worldRadius: number,
+  terrainSampler: TerrainSampler,
 ): THREE.DataTexture {
   const spanX = Math.max(1, bounds.maxX - bounds.minX)
   const spanZ = Math.max(1, bounds.maxZ - bounds.minZ)
@@ -41,7 +40,7 @@ function createTerrainHeightTexture(
     const worldZ = bounds.minZ + ((z + 0.5) / resolution) * spanZ
     for (let x = 0; x < resolution; x += 1) {
       const worldX = bounds.minX + ((x + 0.5) / resolution) * spanX
-      const height = getHeightAtPosition(worldX, worldZ, seed, worldRadius)
+      const height = terrainSampler(worldX, worldZ).height
       const encoded = Math.round(THREE.MathUtils.clamp(height / TERRAIN_HEIGHT_TEXTURE_SCALE, 0, 1) * 255)
       const index = (z * resolution + x) * 4
       data[index] = encoded
@@ -91,6 +90,7 @@ export class WaterSystem {
   private readonly oceanGroup: THREE.Group
   private readonly material: WaterSurfaceMaterial
   private readonly terrainHeightTexture: THREE.DataTexture
+  private terrainSampler: TerrainSampler
   private readonly caustics: WaterCaustics | null
   private readonly blockWaterMaterial: WaterSurfaceMaterial | null
   private seabedMaterial: BlockMaterial | null = null
@@ -125,10 +125,15 @@ export class WaterSystem {
     this.oceanGroup.name = 'OceanSurface'
     this.group.add(this.oceanGroup)
 
+    // Construct the seeded noise streams once per world configuration. The
+    // terrain height texture, seabed geometry, and shoreline helpers all share
+    // this exact sampler rather than rebuilding eight noise generators for
+    // every queried column.
+    this.terrainSampler = createTerrainSampler(options.seed, options.worldRadius)
     // The water shader needs the same terrain height field that defines the
     // playable shoreline. This keeps foam on shallow coast water instead of
     // guessing from the rectangular map boundary.
-    this.terrainHeightTexture = createTerrainHeightTexture(options.bounds, options.seed, options.worldRadius)
+    this.terrainHeightTexture = createTerrainHeightTexture(options.bounds, this.terrainSampler)
 
     const surfaceY = options.waterLevel + OCEAN_WATER_CENTER_OFFSET
     this.cameraSurfaceY = surfaceY
@@ -249,6 +254,7 @@ export class WaterSystem {
   setSeed(seed: number): void {
     if (this.options.seed === seed || this.disposed) return
     this.options.seed = seed
+    this.terrainSampler = createTerrainSampler(seed, this.options.worldRadius)
     this.updateTerrainHeightTexture()
     this.seabedBuildToken += 1
     if (this.seabedGroup) {
@@ -626,7 +632,7 @@ export class WaterSystem {
 
   /** Authoritative terrain sampling remains unchanged for foam/shoreline use. */
   private sampleTerrainHeight(x: number, z: number): number {
-    return getHeightAtPosition(x, z, this.options.seed, this.options.worldRadius)
+    return this.terrainSampler(x, z).height
   }
 
   /**
@@ -674,20 +680,6 @@ export class WaterSystem {
     const x1 = Math.ceil(maxX + nearRange)
     const z0 = Math.floor(minZ - nearRange)
     const z1 = Math.ceil(maxZ + nearRange)
-    const heights = new Map<string, number>()
-    for (let z = z0 - 1; z <= z1; z += 1) {
-      for (let x = x0 - 1; x <= x1; x += 1) {
-        // The ring and the authoritative chunks meet at a column-height
-        // boundary. Sample the real terrain on the gameplay side so either
-        // its chunk face or this extension's complementary face closes every
-        // height difference. Applying the visual seabed clamp on both sides
-        // can fabricate an unsupported shelf at that seam.
-        const height = this.insideBounds(x, z)
-          ? this.sampleTerrainHeight(x, z)
-          : this.sampleSeabedHeight(x, z)
-        heights.set(`${x},${z}`, height)
-      }
-    }
 
     const positions: number[] = []
     const normals: number[] = []
@@ -695,55 +687,96 @@ export class WaterSystem {
     const ao: number[] = []
     const colors: number[] = []
     const indices: number[] = []
-    for (let z = z0; z < z1; z += 1) {
-      for (let x = x0; x < x1; x += 1) {
-        if (this.insideBounds(x, z)) continue
-        const height = heights.get(`${x},${z}`) ?? this.sampleSeabedHeight(x, z)
-        this.appendQuad(positions, normals, uvs, ao, colors, indices,
-          [[x, height + 1, z], [x + 1, height + 1, z], [x + 1, height + 1, z + 1], [x, height + 1, z + 1]],
-          [0, 1, 0], [[x, z], [x + 1, z], [x + 1, z + 1], [x, z + 1]])
+    // The ring and the authoritative chunks meet at a column-height
+    // boundary. Cache the ring plus only the one-cell seam halo needed by its
+    // neighbour comparisons. A dense numeric grid avoids hundreds of
+    // thousands of temporary "x,z" strings and Map lookups while never
+    // evaluating the discarded world interior.
+    const sampleMinX = x0 - 1
+    const sampleMinZ = z0 - 1
+    const sampleWidth = x1 - x0 + 2
+    const sampleDepth = z1 - z0 + 2
+    const heights = new Float32Array(sampleWidth * sampleDepth)
+    heights.fill(Number.NaN)
+    const cachedHeight = (x: number, z: number): number => {
+      const localX = x - sampleMinX
+      const localZ = z - sampleMinZ
+      if (localX < 0 || localX >= sampleWidth || localZ < 0 || localZ >= sampleDepth) {
+        throw new RangeError(`[WaterSystem] Voxel ring neighbour outside cache: (${x}, ${z})`)
+      }
+      const index = localZ * sampleWidth + localX
+      const cached = heights[index]
+      if (!Number.isNaN(cached)) return cached
+      // Sample the real terrain on the gameplay side so either its chunk face
+      // or this extension's complementary face closes every height
+      // difference. Applying the visual seabed clamp on both sides can
+      // fabricate an unsupported shelf at that seam.
+      const height = this.insideBounds(x, z)
+        ? this.sampleTerrainHeight(x, z)
+        : this.sampleSeabedHeight(x, z)
+      heights[index] = height
+      return height
+    }
 
-        const neighbors: Array<{ dx: number; dz: number; normal: Vec3Tuple }> = [
-          { dx: 1, dz: 0, normal: [1, 0, 0] },
-          { dx: -1, dz: 0, normal: [-1, 0, 0] },
-          { dx: 0, dz: 1, normal: [0, 0, 1] },
-          { dx: 0, dz: -1, normal: [0, 0, -1] },
-        ]
-        for (const neighbor of neighbors) {
-          const nx = x + neighbor.dx
-          const nz = z + neighbor.dz
-          const neighborHeight = heights.get(`${nx},${nz}`) ?? (
-            this.insideBounds(nx, nz)
-              ? this.sampleTerrainHeight(nx, nz)
-              : this.sampleSeabedHeight(nx, nz)
-          )
-          if (neighborHeight >= height) continue
-          for (let y = neighborHeight + 1; y <= height; y += 1) {
-            let face: Vec3Tuple[]
-            let faceUv: Array<[number, number]>
-            if (neighbor.dx === 1) {
-              face = [[x + 1, y, z + 1], [x + 1, y, z], [x + 1, y + 1, z], [x + 1, y + 1, z + 1]]
-              // X-facing walls use Z as their horizontal tangent. X is
-              // constant on this face; using it for U collapses the U span
-              // to zero and stretches one sand tile across the whole wall.
-              faceUv = [[z + 1, y], [z, y], [z, y + 1], [z + 1, y + 1]]
-            } else if (neighbor.dx === -1) {
-              face = [[x, y, z], [x, y, z + 1], [x, y + 1, z + 1], [x, y + 1, z]]
-              // See the +X case above: the side-plane coordinate, not the
-              // constant normal-axis coordinate, owns horizontal U.
-              faceUv = [[z, y], [z + 1, y], [z + 1, y + 1], [z, y + 1]]
-            } else if (neighbor.dz === 1) {
-              face = [[x, y, z + 1], [x + 1, y, z + 1], [x + 1, y + 1, z + 1], [x, y + 1, z + 1]]
-              faceUv = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]]
-            } else {
-              face = [[x + 1, y, z], [x, y, z], [x, y + 1, z], [x + 1, y + 1, z]]
-              faceUv = [[x + 1, y], [x, y], [x, y + 1], [x + 1, y + 1]]
-            }
-            this.appendQuad(positions, normals, uvs, ao, colors, indices, face, neighbor.normal, faceUv)
+    const neighbors: Array<{ dx: number; dz: number; normal: Vec3Tuple }> = [
+      { dx: 1, dz: 0, normal: [1, 0, 0] },
+      { dx: -1, dz: 0, normal: [-1, 0, 0] },
+      { dx: 0, dz: 1, normal: [0, 0, 1] },
+      { dx: 0, dz: -1, normal: [0, 0, -1] },
+    ]
+
+    const appendRingCell = (x: number, z: number): void => {
+      const height = cachedHeight(x, z)
+      this.appendQuad(positions, normals, uvs, ao, colors, indices,
+        [[x, height + 1, z], [x + 1, height + 1, z], [x + 1, height + 1, z + 1], [x, height + 1, z + 1]],
+        [0, 1, 0], [[x, z], [x + 1, z], [x + 1, z + 1], [x, z + 1]])
+
+      for (const neighbor of neighbors) {
+        const neighborHeight = cachedHeight(x + neighbor.dx, z + neighbor.dz)
+        if (neighborHeight >= height) continue
+        for (let y = neighborHeight + 1; y <= height; y += 1) {
+          let face: Vec3Tuple[]
+          let faceUv: Array<[number, number]>
+          if (neighbor.dx === 1) {
+            face = [[x + 1, y, z + 1], [x + 1, y, z], [x + 1, y + 1, z], [x + 1, y + 1, z + 1]]
+            // X-facing walls use Z as their horizontal tangent. X is
+            // constant on this face; using it for U collapses the U span
+            // to zero and stretches one sand tile across the whole wall.
+            faceUv = [[z + 1, y], [z, y], [z, y + 1], [z + 1, y + 1]]
+          } else if (neighbor.dx === -1) {
+            face = [[x, y, z], [x, y, z + 1], [x, y + 1, z + 1], [x, y + 1, z]]
+            // See the +X case above: the side-plane coordinate, not the
+            // constant normal-axis coordinate, owns horizontal U.
+            faceUv = [[z, y], [z + 1, y], [z + 1, y + 1], [z, y + 1]]
+          } else if (neighbor.dz === 1) {
+            face = [[x, y, z + 1], [x + 1, y, z + 1], [x + 1, y + 1, z + 1], [x, y + 1, z + 1]]
+            faceUv = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]]
+          } else {
+            face = [[x + 1, y, z], [x, y, z], [x, y + 1, z], [x + 1, y + 1, z]]
+            faceUv = [[x + 1, y], [x, y], [x, y + 1], [x + 1, y + 1]]
           }
+          this.appendQuad(positions, normals, uvs, ao, colors, indices, face, neighbor.normal, faceUv)
         }
       }
     }
+
+    const appendStrip = (stripZ0: number, stripZ1: number, stripX0: number, stripX1: number): void => {
+      for (let z = stripZ0; z < stripZ1; z += 1) {
+        for (let x = stripX0; x < stripX1; x += 1) appendRingCell(x, z)
+      }
+    }
+
+    // Four non-overlapping strips cover exactly the outside ring. The
+    // north/south strips own the corners; west/east only cover the interior
+    // span, avoiding duplicate seam faces.
+    const innerX0 = Math.ceil(minX)
+    const innerX1 = Math.ceil(maxX)
+    const innerZ0 = Math.ceil(minZ)
+    const innerZ1 = Math.ceil(maxZ)
+    appendStrip(z0, innerZ0, x0, x1)
+    appendStrip(innerZ1, z1, x0, x1)
+    appendStrip(innerZ0, innerZ1, x0, innerX0)
+    appendStrip(innerZ0, innerZ1, innerX1, x1)
     return this.makeGeometry(positions, normals, uvs, ao, colors, indices)
   }
 

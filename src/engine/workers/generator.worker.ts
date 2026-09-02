@@ -7,6 +7,7 @@
 import { createNoise2D } from 'simplex-noise';
 import { CHUNK_SIZE } from '../../config/constants.js';
 import { localToIndex } from '../utils/coords.js';
+import { createTerrainColumnCache, type TerrainColumnSampler } from '../world/TerrainColumnCache.js';
 import type { 
   WorkerRequest, 
   GenerateChunkRequest,
@@ -48,6 +49,7 @@ const TREE_CLUSTER_SCALE = 0.006;       // Larger clusters (more natural patches
 const TREE_MIN_HEIGHT = 4;              // Minimum trunk height
 const TREE_MAX_HEIGHT = 7;              // Maximum trunk height
 const TREE_MIN_SPACING = 5;             // Enforce safe horizontal spacing between trunks (in blocks)
+const TREE_ANCHOR_RADIUS = 3;            // Leaf radius used when evaluating cross-chunk anchors
 
 // Seeded RNG for simplex-noise
 function mulberry32(seed: number): () => number {
@@ -201,14 +203,30 @@ function handleGenerateChunk(request: GenerateChunkRequest): void {
   // Create voxel array
   const totalVoxels = CHUNK_SIZE.x * CHUNK_SIZE.y * CHUNK_SIZE.z;
   const voxels = new Uint8Array(totalVoxels);
+  const grassTuftPositions: number[] = [];
+
+  // Terrain columns are shared by terrain filling, grass placement, and the
+  // tree candidate/spacing search. Include the complete tree evaluation halo
+  // plus one extra column in each positive direction for slope reads.
+  const wx0 = cx * CHUNK_SIZE.x;
+  const wz0 = cz * CHUNK_SIZE.z;
+  const wx1 = wx0 + CHUNK_SIZE.x - 1;
+  const wz1 = wz0 + CHUNK_SIZE.z - 1;
+  const terrainColumns = createTerrainColumnCache(heightAt, {
+    minX: wx0 - TREE_ANCHOR_RADIUS - TREE_MIN_SPACING,
+    maxX: wx1 + TREE_ANCHOR_RADIUS + TREE_MIN_SPACING + 1,
+    minZ: wz0 - TREE_ANCHOR_RADIUS - TREE_MIN_SPACING,
+    maxZ: wz1 + TREE_ANCHOR_RADIUS + TREE_MIN_SPACING + 1,
+  });
   
   // Generate terrain for this chunk
-  generateTerrain(voxels, cx, cy, cz, heightAt, nTreeCluster, seed);
+  generateTerrain(voxels, cx, cy, cz, terrainColumns, nTreeCluster, seed, grassTuftPositions);
   
   
   const chunkData: ChunkData = {
     size: CHUNK_SIZE,
-    voxels: voxels
+    voxels,
+    grassTuftPositions: new Uint16Array(grassTuftPositions),
   };
   
   const response: ChunkDataResponse = {
@@ -217,8 +235,10 @@ function handleGenerateChunk(request: GenerateChunkRequest): void {
     payload: chunkData
   };
   
-  // Transfer the voxels array for performance
-  self.postMessage(response, { transfer: [voxels.buffer] });
+  // Transfer the generated arrays for performance.
+  self.postMessage(response, {
+    transfer: [voxels.buffer, chunkData.grassTuftPositions!.buffer],
+  });
 }
 
 function generateTerrain(
@@ -226,9 +246,10 @@ function generateTerrain(
   cx: number,
   cy: number,
   cz: number,
-  heightAt: (x: number, z: number) => { height: number; isLand: boolean },
+  heightAt: TerrainColumnSampler,
   nTreeCluster: (x: number, z: number) => number,
-  seed: number
+  seed: number,
+  grassTuftPositions: number[],
 ): void {
   // Block IDs
   const AIR = 0;
@@ -251,12 +272,7 @@ function generateTerrain(
       
       // Generate terrain data
       const terrainData = heightAt(worldX, worldZ);
-      const { height, isLand } = terrainData;
-      
-      // Calculate slope for surface block determination
-      const heightNeighborX = heightAt(worldX + 1, worldZ).height;
-      const heightNeighborZ = heightAt(worldX, worldZ + 1).height;
-      const slope = Math.max(Math.abs(heightNeighborX - height), Math.abs(heightNeighborZ - height));
+      const { height, isLand, slope } = terrainData;
       
       // Distance from water level for beach determination
       const distanceFromWater = height - WATER_LEVEL;
@@ -343,6 +359,7 @@ function generateTerrain(
       const r = hash2d(worldX, worldZ, 911 ^ seed);
       if (r < spawnProb) {
         voxels[idxAbove] = GRASS_TUFT;
+        grassTuftPositions.push(lx, lyAbove, lz);
       }
     }
   }
@@ -352,15 +369,11 @@ function generateTerrain(
   const wz0 = cz * CHUNK_SIZE.z;
   const wx1 = wx0 + CHUNK_SIZE.x - 1;
   const wz1 = wz0 + CHUNK_SIZE.z - 1;
-  const RMAX = 3; // maximum leaf radius to include neighbor anchors
+  const RMAX = TREE_ANCHOR_RADIUS;
 
   for (let ax = wx0 - RMAX; ax <= wx1 + RMAX; ax++) {
     for (let az = wz0 - RMAX; az <= wz1 + RMAX; az++) {
-      const { height: baseY, isLand } = heightAt(ax, az);
-      const slope = Math.max(
-        Math.abs(heightAt(ax + 1, az).height - baseY),
-        Math.abs(heightAt(ax, az + 1).height - baseY)
-      );
+      const { height: baseY, isLand, slope } = heightAt(ax, az);
       const distanceFromWater = baseY - WATER_LEVEL;
 
       // Only on gentle inland grass surfaces (mirrors surface grass conditions)
@@ -390,10 +403,7 @@ function generateTerrain(
           // Neighbor must also qualify as a spawn-candidate on similar terrain
           const nData = heightAt(bx, bz);
           if (!nData.isLand) continue;
-          const nSlope = Math.max(
-            Math.abs(heightAt(bx + 1, bz).height - nData.height),
-            Math.abs(heightAt(bx, bz + 1).height - nData.height)
-          );
+          const nSlope = nData.slope;
           const nDistWater = nData.height - WATER_LEVEL;
           if (nDistWater <= 3 || nSlope >= 3) continue;
 
@@ -502,6 +512,21 @@ function generateTerrain(
       }
     }
   }
+
+  // Tree trunks are authored after the grass pass and can replace a tuft at
+  // the same cell. Keep the compact response metadata aligned with the final
+  // voxel array so billboard instancing cannot resurrect an overwritten tuft.
+  let validGrassPositionCount = 0;
+  for (let index = 0; index + 2 < grassTuftPositions.length; index += 3) {
+    const lx = grassTuftPositions[index];
+    const ly = grassTuftPositions[index + 1];
+    const lz = grassTuftPositions[index + 2];
+    if (voxels[localToIndex(lx, ly, lz)] !== GRASS_TUFT) continue;
+    grassTuftPositions[validGrassPositionCount++] = lx;
+    grassTuftPositions[validGrassPositionCount++] = ly;
+    grassTuftPositions[validGrassPositionCount++] = lz;
+  }
+  grassTuftPositions.length = validGrassPositionCount;
 }
 
 // Fast 2D integer hash -> [0,1)

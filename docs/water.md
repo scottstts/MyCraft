@@ -18,6 +18,15 @@ The half-block offset is a visual envelope for the optical interface, forward me
 
 When `USE_OCEAN_HORIZON` is enabled, `WaterSystem` adds the far ocean surface and its visual seabed extension. These meshes never enter `World`, so they cannot affect collision or swimming, be selected, mined, placed on, or serialized into a save. The island generator is radial while gameplay bounds are rectangular, so render-only samples outside those bounds are clamped below the lowest wave trough; a generated land-height sample must never cross the optical interface. The one-block ring preserves the voxel boundary, while the far representation averages coarse samples into a continuous heightfield and closes both its inner seam and outer perimeter with skirts.
 
+`WaterSystem` constructs one seeded `TerrainSampler` per water-world
+configuration and shares it with the terrain height texture, seabed sampling,
+and shoreline/ring helpers. Changing the seed replaces that sampler and
+rebuilds the dependent fields. The near seabed ring evaluates only four
+outside strips plus the one-cell seam halo required for neighbour walls; a
+dense numeric height cache prevents discarded interior columns and temporary
+coordinate strings from consuming the startup budget. Its geometry and seam
+height rules are unchanged.
+
 The gameplay/extension boundary follows a complementary-face contract. Authoritative edge chunks expose their outward faces when they are taller; when an outside extension column is taller, the extension samples the authoritative neighbour height and emits the missing inward wall one voxel at a time. The far closure skirts remain visible in direct rendering and in the water-free color/depth capture because they are real boundary faces. Their 16-block LOD edges are split into one-world-block wall segments with local U coordinates, preserving the same sand-tile density on outer sides as in the near voxel ring. Hiding any of these faces opens the seabed topology and makes its top surface appear as a hanging plane through the water.
 
 The extension extracts the sand tile from the live voxel atlas and uses the same nearest, no-mipmap sampling response and base ambient visibility as authoritative sand. Its lighting, material response, shadows, and caustics remain synchronized with the shared block material. Real water-path extinction can still change sand appearance with depth, but crossing the invisible gameplay boundary alone must not change its base material.

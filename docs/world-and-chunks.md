@@ -15,9 +15,17 @@ it to derive world bounds and the expected startup chunk keys.
 `ChunkPipeline` owns two module workers:
 
 - the generator worker produces `ChunkData` from coordinates, seed, and world radius;
-- the mesher worker turns chunk data plus available neighbors into renderable geometry using the atlas and block registry.
+- the mesher worker turns worker-owned chunk data plus available neighbors into renderable geometry using the atlas and block registry.
 
-The pipeline caches chunk data so neighboring chunks can be remeshed when a shared boundary becomes available. Its public events are:
+The mesher receives one `INIT_MESHER` message for immutable atlas/registry state,
+one `STORE_CHUNK` message per synchronized voxel array, and then key-only
+`MESH_CHUNK` messages. It owns the neighbor cache, so mesh jobs no longer
+structured-clone the current chunk, six neighbors, or configuration. Removed
+chunks receive `REMOVE_CHUNK` and loaded-neighbour boundaries are refreshed.
+The main-thread pipeline keeps only the loaded key set; `World` remains the
+authoritative mutable `Chunk` store.
+
+Its public events are:
 
 | Event | Meaning |
 | --- | --- |
@@ -25,7 +33,7 @@ The pipeline caches chunk data so neighboring chunks can be remeshed when a shar
 | `CHUNK_MESH` | Worker geometry is ready for `ChunkRenderer` |
 | `WORKER_ERROR` | A worker failed or returned data that could not be handled |
 
-Saved chunks use `ingestChunkData()` and follow the same meshing/event path as generated chunks. This avoids maintaining a separate renderer for restored worlds.
+Saved chunks use `ingestChunkData()` and follow the same meshing/event path as generated chunks. This avoids maintaining a separate renderer for restored worlds. Generated chunks may include compact local grass-tuft positions; `Chunk` uses that metadata for billboard instancing until a voxel edit invalidates it, then the grass system falls back to its direct array.
 
 ## Mesh publication and edits
 
@@ -33,6 +41,10 @@ Saved chunks use `ingestChunkData()` and follow the same meshing/event path as g
 
 Mining and placing update `World` first, then request remeshes for the affected chunk and relevant neighbors. `ChunkRenderer` reuses its scene group and resident mesh resources when possible, so an edit replaces geometry without rebuilding unrelated render state.
 
+The mesher performs a count pass followed by an exact typed-array fill pass.
+Face visibility and AO/topology rules are shared by both passes; output buffers
+are allocated once at their final sizes.
+
 ## Startup and cleanup
 
-The engine derives the expected square chunk set from the configured total count and world bounds. Startup waits for both data and mesh events for that set, then flushes the initial render queue before exposing gameplay. A worker error rejects this gate with stage context. `World.destroy()` terminates both workers and clears its loaded chunks; the engine calls it during every stop path.
+The engine derives the expected square chunk set from the configured total count and world bounds. It opens an initial batch, ingests all expected data, and only then posts one mesh job per chunk. Startup waits for both data and mesh events for that set, then flushes the initial render queue before exposing gameplay. The voxel shadow volume uses the same startup window to coalesce its full-world brick reduction into one commit; runtime block updates refresh only their touched brick. A worker error rejects this gate with stage context. `World.destroy()` terminates both workers and clears its loaded chunks; the engine calls it during every stop path.
