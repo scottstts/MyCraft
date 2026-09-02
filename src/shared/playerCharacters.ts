@@ -6,7 +6,7 @@
  * state; world saves continue to describe the world and inventory only.
  */
 
-export const PLAYER_CHARACTER_IDS = ['Otherys', 'Solvaris', 'Vespera', 'Kaelith'] as const;
+export const PLAYER_CHARACTER_IDS = ['Otherys', 'Solvaris', 'Eryndor', 'Vespera', 'Kaelith'] as const;
 
 export type PlayerCharacterId = typeof PLAYER_CHARACTER_IDS[number];
 
@@ -21,6 +21,7 @@ export const DEFAULT_PLAYER_CHARACTER: PlayerCharacterId = 'Otherys';
 export const PLAYER_CHARACTER_OPTIONS: readonly PlayerCharacterOption[] = [
   { id: 'Otherys', name: 'Otherys', accent: '#22d3ee' },
   { id: 'Solvaris', name: 'Solvaris', accent: '#f59e0b' },
+  { id: 'Eryndor', name: 'Eryndor', accent: '#b86cff' },
   { id: 'Vespera', name: 'Vespera', accent: '#f472b6' },
   { id: 'Kaelith', name: 'Kaelith', accent: '#38bdf8' },
 ];

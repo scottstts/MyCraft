@@ -28,9 +28,9 @@ const MAX_SHADER_STEPS = 512;
 // remaining a narrow outdoor-sun transition rather than a point-light blur.
 const SOLAR_ANGULAR_RADIUS = 0.00465;
 const SUN_ANGULAR_RADIUS = SOLAR_ANGULAR_RADIUS * 2.25;
-// The authored appearances contribute up to 43 box meshes (Kaelith). Keep a
-// small amount of headroom so decorative parts remain registered as shadow
-// casters when the active appearance changes.
+// The authored appearances contribute up to 48 box meshes (Eryndor). Keep the
+// caster budget aligned with the most detailed authored body so every visible
+// part remains registered as a shadow caster when the active appearance changes.
 const MAX_CHARACTER_SHADOW_BOXES = 48;
 
 export interface VoxelSunShadowDiagnostics {

@@ -25,7 +25,7 @@ grid (`tiny` through `full world`). The store keeps only the normalized total
 chunk count used by the engine; chunk dimensions are fixed by the build and are
 not UI state.
 
-The settings panel presents the four authored player appearances as an accessible 2x2 radio grid. Selecting one updates the store and calls the engine's narrow appearance bridge; the renderer swaps the live appearance without restarting the world. The selection is session UI state and is not serialized into world saves. During active gameplay, `R` advances through the same ordered list and wraps at the end; the HUD shows the key as a compact button-shaped hint.
+The settings panel presents the five authored player appearances as an accessible 3x2 radio grid. Selecting one updates the store and calls the engine's narrow appearance bridge; the renderer swaps the live appearance without restarting the world. The selection is session UI state and is not serialized into world saves. During active gameplay, `R` advances through the same ordered list and wraps at the end; the HUD shows the key as a compact button-shaped hint.
 
 ## Pause and entry semantics
 

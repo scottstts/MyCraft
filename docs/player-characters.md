@@ -1,6 +1,6 @@
 # Player characters
 
-The selectable appearances are `Otherys`, `Solvaris`, `Vespera`, and `Kaelith`; the ids intentionally match the four files under `ref/`. Otherys is the default. `playerCharacterRigs.ts` owns each reference's pixel textures, material recipes, and named decorative box subassemblies.
+The selectable appearances are `Otherys`, `Solvaris`, `Eryndor`, `Vespera`, and `Kaelith`; the ids intentionally match the files under `ref/`. Otherys is the default. `playerCharacterRigs.ts` owns each reference's pixel textures, material recipes, and named decorative box subassemblies.
 
 All appearances compile to the same moving rig contract: head pivot and eye anchor, torso, backpack, two arm pivots, two leg pivots, and the shared pickaxe. `PlayerCharacter` owns the common animation, first-/third-person visibility, camera follow, feet/eye alignment, and shadow-box registration. Every mesh in the active authored body, including decorative parts on both legs, is registered with the analytic sun-shadow caster. Switching appearance disposes the old geometry/materials/textures, creates the new authored subtree, and carries the current rig pose across the swap.
 

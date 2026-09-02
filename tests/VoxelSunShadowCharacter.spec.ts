@@ -58,7 +58,7 @@ describe('analytic character sun visibility', () => {
       maxZ: 16,
     });
     const pass = new VoxelSunShadowPass(createRendererStub(), 1, 1, volume);
-    const boxes = Array.from({ length: 43 }, () => ({
+    const boxes = Array.from({ length: 48 }, () => ({
       inverseMatrix: new THREE.Matrix4(),
       center: new THREE.Vector3(),
       halfSize: new THREE.Vector3(0.1, 0.1, 0.1),
@@ -66,7 +66,7 @@ describe('analytic character sun visibility', () => {
 
     pass.setCharacterShadowBoxes(boxes);
 
-    expect(pass.getDiagnostics().characterShadowBoxes).toBe(43);
+    expect(pass.getDiagnostics().characterShadowBoxes).toBe(48);
 
     pass.dispose();
     volume.dispose();

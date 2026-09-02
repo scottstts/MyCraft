@@ -246,6 +246,7 @@ describe('player character feet alignment', () => {
     const expectedAccessory: Record<typeof PLAYER_CHARACTER_IDS[number], string> = {
       Otherys: 'HairBand',
       Solvaris: 'CrestGem',
+      Eryndor: 'WizardHatBrim',
       Vespera: 'PonytailLower',
       Kaelith: 'CrownStar',
     };

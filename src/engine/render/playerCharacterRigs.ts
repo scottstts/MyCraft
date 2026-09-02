@@ -80,9 +80,13 @@ interface CharacterAppearance {
   materials: BaseMaterials;
   buildHeadAccessories: AccessoryBuilder;
   buildBackpack: AccessoryBuilder;
+  decorateHead?: MeshDecorator;
+  decorateTorso?: MeshDecorator;
   decorateLeftArm: MeshDecorator;
   decorateRightArm: MeshDecorator;
   decorateLeg: MeshDecorator;
+  decorateLeftLeg?: MeshDecorator;
+  decorateRightLeg?: MeshDecorator;
 }
 
 const LEG_LENGTH = 0.75;
@@ -91,6 +95,7 @@ const LEG_PIVOT_Y = 0.65;
 const TEXTURE_SEEDS: Record<PlayerCharacterId, number> = {
   Otherys: 0x4d594352,
   Solvaris: 0x534f4c56,
+  Eryndor: 0x4552594e,
   Vespera: 0x56455350,
   Kaelith: 0x4b41454c,
 };
@@ -147,6 +152,8 @@ function createCharacterTextures(id: PlayerCharacterId): TextureSet {
       return createOtherysTextures(factory);
     case 'Solvaris':
       return createSolvarisTextures(factory);
+    case 'Eryndor':
+      return createEryndorTextures(factory);
     case 'Vespera':
       return createVesperaTextures(factory);
     case 'Kaelith':
@@ -318,6 +325,125 @@ function createSolvarisTextures(factory: TextureFactory): TextureSet {
     context.fillStyle = '#f59e0b';
     context.fillRect(0, 22, 8, 2);
     addNoise(context, 8, 24, 0.05);
+  });
+  return { face, hair, torso, arm, pants };
+}
+
+function createEryndorTextures(factory: TextureFactory): TextureSet {
+  const hair = factory.create(16, 16, (context, addNoise) => {
+    context.fillStyle = '#b9c6d3';
+    context.fillRect(0, 0, 16, 16);
+    context.fillStyle = '#e5edf3';
+    context.fillRect(1, 1, 5, 5);
+    context.fillRect(9, 3, 6, 4);
+    context.fillRect(3, 10, 4, 5);
+    context.fillStyle = '#7d8b9b';
+    context.fillRect(0, 7, 5, 3);
+    context.fillRect(11, 10, 5, 4);
+    addNoise(context, 16, 16, 0.045);
+  });
+  const face = factory.create(16, 16, (context, addNoise) => {
+    context.fillStyle = '#b9785f';
+    context.fillRect(0, 0, 16, 16);
+    context.fillStyle = '#c98d70';
+    context.fillRect(2, 4, 12, 7);
+    context.fillStyle = '#c8d3df';
+    context.fillRect(0, 0, 16, 3);
+    context.fillRect(0, 3, 2, 8);
+    context.fillRect(14, 3, 2, 8);
+    context.fillStyle = '#8d9bac';
+    context.fillRect(2, 1, 4, 2);
+    context.fillRect(10, 0, 4, 2);
+    context.fillStyle = '#f5e6c8';
+    context.fillRect(3, 6, 3, 2);
+    context.fillStyle = '#d6a52e';
+    context.fillRect(4, 6, 1, 2);
+    context.fillStyle = '#2b123e';
+    context.fillRect(10, 5, 4, 4);
+    context.fillStyle = '#b86cff';
+    context.fillRect(11, 6, 2, 2);
+    context.fillStyle = '#f5e8ff';
+    context.fillRect(12, 6, 1, 1);
+    context.fillStyle = '#7d3bb5';
+    context.fillRect(12, 9, 1, 3);
+    context.fillRect(11, 11, 2, 1);
+    context.fillStyle = '#9f604f';
+    context.fillRect(7, 8, 2, 2);
+    context.fillStyle = '#dbe4eb';
+    context.fillRect(4, 10, 8, 2);
+    context.fillRect(3, 12, 10, 2);
+    context.fillRect(5, 14, 6, 2);
+    context.fillStyle = '#9eacba';
+    context.fillRect(4, 12, 2, 1);
+    context.fillRect(10, 13, 2, 1);
+    addNoise(context, 16, 16, 0.035);
+  });
+  const torso = factory.create(16, 24, (context, addNoise) => {
+    context.fillStyle = '#17112c';
+    context.fillRect(0, 0, 16, 24);
+    context.fillStyle = '#241746';
+    context.fillRect(2, 0, 12, 24);
+    context.fillStyle = '#0e2638';
+    context.fillRect(0, 0, 16, 4);
+    context.fillStyle = '#2c6b78';
+    context.fillRect(0, 3, 16, 1);
+    context.fillStyle = '#a97825';
+    context.fillRect(2, 4, 3, 3);
+    context.fillRect(4, 7, 3, 4);
+    context.fillRect(6, 11, 3, 4);
+    context.fillRect(8, 15, 3, 5);
+    context.fillStyle = '#e3bd54';
+    context.fillRect(3, 4, 1, 3);
+    context.fillRect(7, 12, 1, 3);
+    context.fillStyle = '#24150f';
+    context.fillRect(0, 18, 16, 3);
+    context.fillStyle = '#77531e';
+    context.fillRect(6, 18, 4, 3);
+    context.fillStyle = '#62e6dc';
+    context.fillRect(10, 7, 2, 2);
+    context.fillRect(9, 9, 4, 1);
+    context.fillRect(10, 10, 2, 3);
+    context.fillStyle = '#d7fffb';
+    context.fillRect(10, 9, 1, 1);
+    context.fillStyle = '#8063bf';
+    context.fillRect(3, 13, 1, 1);
+    context.fillRect(13, 5, 1, 1);
+    context.fillRect(12, 15, 1, 1);
+    context.fillRect(4, 22, 1, 1);
+    addNoise(context, 16, 24, 0.035);
+  });
+  const arm = factory.create(8, 24, (context, addNoise) => {
+    context.fillStyle = '#21163f';
+    context.fillRect(0, 0, 8, 14);
+    context.fillStyle = '#30205a';
+    context.fillRect(1, 2, 6, 8);
+    context.fillStyle = '#2d7e83';
+    context.fillRect(0, 12, 8, 3);
+    context.fillStyle = '#73e4da';
+    context.fillRect(1, 13, 2, 1);
+    context.fillRect(5, 13, 2, 1);
+    context.fillStyle = '#2a201f';
+    context.fillRect(0, 15, 8, 9);
+    context.fillStyle = '#6f4b38';
+    context.fillRect(1, 16, 6, 5);
+    context.fillStyle = '#b78a3e';
+    context.fillRect(0, 20, 8, 2);
+    addNoise(context, 8, 24, 0.04);
+  });
+  const pants = factory.create(8, 24, (context, addNoise) => {
+    context.fillStyle = '#161129';
+    context.fillRect(0, 0, 8, 15);
+    context.fillStyle = '#2b1d4a';
+    context.fillRect(1, 2, 6, 10);
+    context.fillStyle = '#876329';
+    context.fillRect(0, 12, 8, 2);
+    context.fillStyle = '#16151b';
+    context.fillRect(0, 15, 8, 9);
+    context.fillStyle = '#3b3349';
+    context.fillRect(1, 16, 6, 3);
+    context.fillStyle = '#4c8f91';
+    context.fillRect(0, 20, 8, 1);
+    addNoise(context, 8, 24, 0.045);
   });
   return { face, hair, torso, arm, pants };
 }
@@ -753,6 +879,155 @@ function createAppearance(
     };
   }
 
+  if (id === 'Eryndor') {
+    const materials = createBaseMaterials(context, textures, {
+      hair: { roughness: 0.8 },
+      face: { roughness: 0.82 },
+      torso: { roughness: 0.78 },
+      arm: { roughness: 0.8 },
+      pants: { roughness: 0.85 },
+    });
+    const hatMat = context.createMaterial({ color: 0x21133f, roughness: 0.9 });
+    const hatShadowMat = context.createMaterial({ color: 0x100a20, roughness: 0.95 });
+    const runeMat = context.createMaterial({
+      color: 0x70f0e6,
+      emissive: 0x1b8b88,
+      emissiveIntensity: 0.85,
+      roughness: 0.35,
+    });
+    const riftMat = context.createMaterial({
+      color: 0xb365ff,
+      emissive: 0x6b23a8,
+      emissiveIntensity: 1.0,
+      roughness: 0.28,
+    });
+    const goldMatWizard = context.createMaterial({
+      color: 0xb88932,
+      metalness: 0.65,
+      roughness: 0.32,
+    });
+    const silverMat = context.createMaterial({
+      color: 0xb7c4d0,
+      metalness: 0.25,
+      roughness: 0.58,
+    });
+    const bookMat = context.createMaterial({ color: 0x30184c, roughness: 0.78 });
+    const pageMat = context.createMaterial({ color: 0xcbbf9c, roughness: 0.95 });
+    const robeMat = context.createMaterial({ color: 0x1a1232, roughness: 0.9 });
+
+    const addBox = (
+      buildContext: PlayerCharacterRigBuildContext,
+      parent: THREE.Object3D,
+      width: number,
+      height: number,
+      depth: number,
+      material: THREE.Material,
+      name: string,
+      x: number,
+      y: number,
+      z: number,
+    ): THREE.Mesh => {
+      const mesh = buildContext.createMesh(new THREE.BoxGeometry(width, height, depth), material, name);
+      mesh.position.set(x, y, z);
+      parent.add(mesh);
+      return mesh;
+    };
+
+    return {
+      materials,
+      decorateHead: (buildContext, mesh) => {
+        const beardRoot = new THREE.Group();
+        beardRoot.name = 'BeardRoot';
+        beardRoot.position.set(0, -0.12, 0.276);
+        mesh.add(beardRoot);
+        addBox(buildContext, beardRoot, 0.34, 0.13, 0.070, silverMat, 'BeardUpper', 0, 0, 0);
+        addBox(buildContext, beardRoot, 0.26, 0.11, 0.090, silverMat, 'BeardMiddleUpper', 0, -0.105, 0.003);
+        addBox(buildContext, beardRoot, 0.16, 0.10, 0.110, silverMat, 'BeardMiddleLower', 0, -0.195, 0.006);
+        addBox(buildContext, beardRoot, 0.08, 0.07, 0.130, silverMat, 'BeardTip', 0, -0.265, 0.009);
+      },
+      buildHeadAccessories: (buildContext) => {
+        const hairBand = new THREE.Group();
+        hairBand.name = 'HairBand';
+        hairBand.position.set(0, 0.48, 0);
+
+        const brim = buildContext.createMesh(
+          new THREE.BoxGeometry(0.74, 0.075, 0.70),
+          hatShadowMat,
+          'WizardHatBrim',
+        );
+        brim.rotation.y = THREE.MathUtils.degToRad(4);
+        hairBand.add(brim);
+        addBox(buildContext, hairBand, 0.54, 0.16, 0.52, hatMat, 'WizardHatLower', -0.015, 0.105, 0.0);
+        addBox(buildContext, hairBand, 0.43, 0.17, 0.43, hatMat, 'WizardHatMiddleLower', 0.025, 0.255, -0.01);
+        addBox(buildContext, hairBand, 0.34, 0.16, 0.34, hatMat, 'WizardHatMiddleUpper', -0.005, 0.405, -0.015);
+        addBox(buildContext, hairBand, 0.26, 0.15, 0.27, hatMat, 'WizardHatUpper', 0.045, 0.535, -0.015);
+        const bentTip = addBox(buildContext, hairBand, 0.19, 0.14, 0.22, hatMat, 'WizardHatBentTip', 0.105, 0.645, 0.005);
+        bentTip.rotation.z = THREE.MathUtils.degToRad(-17);
+        const tip = addBox(buildContext, hairBand, 0.12, 0.12, 0.18, hatMat, 'WizardHatTip', 0.165, 0.74, 0.02);
+        tip.rotation.z = THREE.MathUtils.degToRad(-27);
+        addBox(buildContext, hairBand, 0.57, 0.058, 0.55, goldMatWizard, 'WizardHatBand', -0.01, 0.137, 0);
+        addBox(buildContext, hairBand, 0.09, 0.09, 0.08, runeMat, 'WizardHatFrontRune', -0.01, 0.15, 0.294);
+        const hatCrystal = addBox(buildContext, hairBand, 0.09, 0.18, 0.09, riftMat, 'WizardHatCrystal', -0.30, 0.18, 0.02);
+        hatCrystal.rotation.z = THREE.MathUtils.degToRad(18);
+        addBox(buildContext, hairBand, 0.05, 0.10, 0.05, runeMat, 'WizardHatCrystalRune', -0.355, 0.25, 0.02);
+        return hairBand;
+      },
+      buildBackpack: (buildContext) => {
+        const backpack = new THREE.Group();
+        backpack.name = 'Backpack';
+        const book = buildContext.createMesh(
+          new THREE.BoxGeometry(0.38, 0.45, 0.15),
+          bookMat,
+          'SpellbookPack',
+        );
+        book.position.set(0, 1.05, -0.19);
+        backpack.add(book);
+        addBox(buildContext, book, 0.32, 0.37, 0.035, pageMat, 'SpellbookPages', 0, 0, -0.09);
+        addBox(buildContext, book, 0.06, 0.40, 0.04, goldMatWizard, 'SpellbookLeftRail', -0.14, 0, -0.115);
+        addBox(buildContext, book, 0.06, 0.40, 0.04, goldMatWizard, 'SpellbookRightRail', 0.14, 0, -0.115);
+        addBox(buildContext, book, 0.13, 0.13, 0.04, runeMat, 'SpellbookRune', 0, 0, -0.12);
+        return backpack;
+      },
+      decorateTorso: (buildContext, mesh) => {
+        const tabard = addBox(buildContext, mesh, 0.34, 0.48, 0.035, robeMat, 'RobeTabard', 0, -0.36, 0.145);
+        tabard.rotation.z = THREE.MathUtils.degToRad(2);
+        addBox(buildContext, mesh, 0.06, 0.26, 0.042, goldMatWizard, 'RobeGoldSash', -0.11, -0.34, 0.166);
+        addBox(buildContext, mesh, 0.06, 0.16, 0.042, runeMat, 'RobeRuneSash', 0.105, -0.35, 0.166);
+        addBox(buildContext, mesh, 0.12, 0.10, 0.05, goldMatWizard, 'RobeClasp', 0, 0.03, 0.16);
+        addBox(buildContext, mesh, 0.06, 0.06, 0.06, runeMat, 'RobeClaspRune', 0, 0.03, 0.185);
+        addBox(buildContext, mesh, 0.22, 0.10, 0.32, hatShadowMat, 'RightMantle', 0.20, 0.28, 0.00);
+        addBox(buildContext, mesh, 0.18, 0.07, 0.30, goldMatWizard, 'LeftMantle', -0.20, 0.25, 0.00);
+      },
+      decorateLeftArm: (buildContext, mesh) => {
+        const pauldron = buildContext.createMesh(
+          new THREE.BoxGeometry(0.31, 0.16, 0.31),
+          hatShadowMat,
+          'LeftCrystalPauldron',
+        );
+        pauldron.position.set(0.01, 0.02, 0);
+        mesh.add(pauldron);
+        const leftCrystalA = addBox(buildContext, mesh, 0.09, 0.22, 0.09, riftMat, 'LeftRiftCrystal', 0.075, 0.11, -0.02);
+        leftCrystalA.rotation.z = THREE.MathUtils.degToRad(-12);
+        const leftCrystalB = addBox(buildContext, mesh, 0.07, 0.15, 0.07, runeMat, 'LeftRuneCrystal', -0.065, 0.08, 0.04);
+        leftCrystalB.rotation.z = THREE.MathUtils.degToRad(14);
+      },
+      decorateRightArm: (buildContext, mesh) => {
+        addBox(buildContext, mesh, 0.28, 0.11, 0.28, goldMatWizard, 'RightRuneGuard', 0, 0.015, 0);
+        addBox(buildContext, mesh, 0.07, 0.07, 0.05, riftMat, 'RightRiftGem', 0, 0.015, 0.162);
+      },
+      decorateLeg: (buildContext, mesh) => {
+        void buildContext;
+        void mesh;
+      },
+      decorateLeftLeg: (buildContext, mesh) => {
+        addBox(buildContext, mesh, 0.17, 0.08, 0.035, runeMat, 'LeftRobeRune', 0, -0.17, 0.145);
+      },
+      decorateRightLeg: (buildContext, mesh) => {
+        addBox(buildContext, mesh, 0.17, 0.08, 0.035, goldMatWizard, 'RightRobeTrim', 0, -0.17, 0.145);
+      },
+    };
+  }
+
   if (id === 'Vespera') {
     const materials = createBaseMaterials(context, textures, {
       hair: { roughness: 0.6 },
@@ -1037,6 +1312,7 @@ export function createPlayerCharacterRig(
     'HeadMesh',
   );
   headMesh.position.y = 0.25;
+  appearance.decorateHead?.(context, headMesh);
 
   const hairBand = appearance.buildHeadAccessories(context);
   const headPivot = new THREE.Group();
@@ -1054,6 +1330,7 @@ export function createPlayerCharacterRig(
     'TorsoMesh',
   );
   torsoMesh.position.set(0, 1.025, 0);
+  appearance.decorateTorso?.(context, torsoMesh);
   const backpack = appearance.buildBackpack(context);
 
   const leftArmMesh = context.createMesh(
@@ -1091,6 +1368,7 @@ export function createPlayerCharacterRig(
   );
   leftLegMesh.position.y = -LEG_LENGTH / 2;
   appearance.decorateLeg(context, leftLegMesh);
+  appearance.decorateLeftLeg?.(context, leftLegMesh);
   const leftLeg = new THREE.Group();
   leftLeg.name = 'LeftLegPivot';
   leftLeg.position.set(0.13, LEG_PIVOT_Y, 0);
@@ -1103,6 +1381,7 @@ export function createPlayerCharacterRig(
   );
   rightLegMesh.position.y = -LEG_LENGTH / 2;
   appearance.decorateLeg(context, rightLegMesh);
+  appearance.decorateRightLeg?.(context, rightLegMesh);
   const rightLeg = new THREE.Group();
   rightLeg.name = 'RightLegPivot';
   rightLeg.position.set(-0.13, LEG_PIVOT_Y, 0);
