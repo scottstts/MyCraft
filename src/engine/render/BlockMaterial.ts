@@ -18,17 +18,28 @@ function createWhiteTexture(): THREE.DataTexture {
   return texture;
 }
 
+export type BlockSurfaceMode = 'opaque' | 'cutout';
+
+interface BlockAtlasInfo {
+  tileSize: number;
+  atlasSize: number;
+  leafTiles?: ReadonlyArray<readonly [number, number]>;
+  /** Optional construction-time override for callers that share atlas data. */
+  surfaceMode?: BlockSurfaceMode;
+}
+
 export class BlockMaterial extends THREE.ShaderMaterial {
+  readonly surfaceMode: BlockSurfaceMode;
+
   constructor(
     albedoTexture: THREE.Texture,
     envMap: THREE.CubeTexture | null,
     normalMap?: THREE.Texture,
-    atlasInfo?: {
-      tileSize: number;
-      atlasSize: number;
-      leafTiles?: ReadonlyArray<readonly [number, number]>;
-    }
+    atlasInfo?: BlockAtlasInfo,
+    surfaceMode: BlockSurfaceMode = 'cutout',
   ) {
+    const resolvedSurfaceMode = atlasInfo?.surfaceMode ?? surfaceMode;
+    const isCutout = resolvedSurfaceMode === 'cutout';
     const leafTileXs = atlasInfo?.leafTiles?.slice(0, 8).map(([x]) => x) ?? [];
     while (leafTileXs.length < 8) leafTileXs.push(-1024);
     const leafTileIndicesA = new THREE.Vector4(...leafTileXs.slice(0, 4) as [number, number, number, number]);
@@ -68,6 +79,127 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           gl_Position = apparentClip;
       }
     `;
+
+    const cutoutSamplingShader = isCutout ? /* glsl */ `
+      bool isLeafAtlasUv(vec2 uv) {
+          if (atlasSize <= 1.0) return false;
+          float tileIndex = floor(clamp(uv.x, 0.0, 0.999999) * atlasSize);
+          vec4 distanceA = abs(leafTileIndicesA - vec4(tileIndex));
+          vec4 distanceB = abs(leafTileIndicesB - vec4(tileIndex));
+          float closest = min(
+            min(min(distanceA.x, distanceA.y), min(distanceA.z, distanceA.w)),
+            min(min(distanceB.x, distanceB.y), min(distanceB.z, distanceB.w))
+          );
+          return closest < 0.25;
+      }
+
+      // Derivative-aware texture sampling to reduce minification shimmer
+      // Provide LOD function with graceful fallback if the extension is missing
+      #ifdef TEXTURE_LOD_EXT
+      vec4 texLod2D(sampler2D tex, vec2 uv, float lod) { return texture2DLodEXT(tex, uv, lod); }
+      #else
+      vec4 texLod2D(sampler2D tex, vec2 uv, float lod) { return texture2D(tex, uv); }
+      #endif
+
+      // Combines 4-tap RGSS with a directional anisotropic kernel when footprint is elongated
+      vec4 texture2D_AA(sampler2D tex, vec2 uv) {
+          vec4 base = texture2D(tex, clampUvToTile(uv, uv));
+          if (!aaEnabled) return base;
+          // Opaque atlas tiles retain their crisp single-tap pixel treatment.
+          // Sparse leaves need footprint integration under minification: a
+          // single nearest texel aliases their 16px cutout into moving diagonal
+          // bands. Every tap remains clamped to the selected tile, so this
+          // cannot sample neighbouring atlas materials.
+          bool leafAtlasSample = isLeafAtlasUv(uv);
+          if (atlasSize > 1.0 && !leafAtlasSample) return base;
+
+          // Estimate pixel footprint in texel units
+          vec2 texSize = vec2(max(1.0, atlasSize * tileSize), max(1.0, tileSize));
+          vec2 dx_uvt = dFdx(uv) * texSize;
+          vec2 dy_uvt = dFdy(uv) * texSize;
+          float lenx = length(dx_uvt);
+          float leny = length(dy_uvt);
+          float maxLen = max(lenx, leny);
+          float minLen = max(min(lenx, leny), 1e-5);
+          float aniso = maxLen / minLen;
+
+          // Mix factor vs minification
+          float k = smoothstep(1.0, 3.0, maxLen) * clamp(aaStrength, 0.0, 1.0);
+          if (k <= 0.001) return base;
+
+          // If footprint is strongly elongated, sample along its major axis (screen-aligned stripes case)
+          if (aniso > 2.0) {
+            // Keep the derivative magnitude. A normalized direction with a
+            // raw ±0.5 UV offset spans most of the atlas instead of one pixel.
+            vec2 majorDerivative = (lenx > leny) ? dFdx(uv) : dFdy(uv);
+
+            // 7- or 9-tap kernel depending on minification (clamped)
+            int taps = (maxLen > 6.0) ? 9 : 7;
+            float halfT = float(taps - 1) * 0.5;
+
+            // Cover the pixel footprint width (±0.5 along major) with a Gaussian
+            vec4 sum = vec4(0.0);
+            float wsum = 0.0;
+            for (int i = 0; i < 9; i++) {
+              if (i >= taps) break;
+              float fi = float(i) - halfT;       // [-halfT, halfT]
+              float t = fi / max(halfT, 1.0);    // [-1, 1]
+              float w = exp(-t*t * 3.0);         // Gaussian-ish weights
+              vec2 o = majorDerivative * (t * 0.5); // ±0.5 pixel footprint
+              // On non-atlas textures (single image with mipmaps), push a slight lod bias to avoid banding
+              float lodBias = (atlasSize <= 1.0 && aaLodBiasEnabled) ? (aaLodBias * smoothstep(1.5, 8.0, maxLen)) : 0.0;
+              vec4 c = texLod2D(tex, clampUvToTile(uv + o, uv), lodBias);
+              sum += c * w; wsum += w;
+            }
+            vec4 anisoAvg = sum / max(wsum, 1e-5);
+            if (leafAtlasSample && anisoAvg.a > 1e-4) {
+              anisoAvg.rgb /= anisoAvg.a;
+            }
+            return mix(base, anisoAvg, k);
+          }
+
+          // Otherwise use 4-tap rotated grid inside the pixel footprint (good isotropic prefilter)
+          vec2 dx = dFdx(uv);
+          vec2 dy = dFdy(uv);
+          const float ofs = 0.35;
+          vec2 o1 = ( dx + dy) * ofs;
+          vec2 o2 = ( dx - dy) * ofs;
+          vec2 o3 = (-dx + dy) * ofs;
+          vec2 o4 = (-dx - dy) * ofs;
+
+          float lodBiasIso = (atlasSize <= 1.0 && aaLodBiasEnabled) ? (aaLodBias * smoothstep(1.5, 8.0, maxLen)) : 0.0;
+          vec4 c1 = texLod2D(tex, clampUvToTile(uv + o1, uv), lodBiasIso);
+          vec4 c2 = texLod2D(tex, clampUvToTile(uv + o2, uv), lodBiasIso);
+          vec4 c3 = texLod2D(tex, clampUvToTile(uv + o3, uv), lodBiasIso);
+          vec4 c4 = texLod2D(tex, clampUvToTile(uv + o4, uv), lodBiasIso);
+          vec4 avg4 = (c1 + c2 + c3 + c4) * 0.25;
+          if (leafAtlasSample && avg4.a > 1e-4) {
+            avg4.rgb /= avg4.a;
+          }
+          return mix(base, avg4, k);
+      }
+    ` : '';
+    const cutoutUniformDeclarations = isCutout ? /* glsl */ `
+      uniform float alphaCutoff;
+      uniform bool aaEnabled;
+      uniform float aaStrength;   // 0..1
+      uniform bool aaLodBiasEnabled; // use explicit LOD bias for non-atlas textures
+      uniform float aaLodBias;    // 0..2 typically
+      uniform vec4 leafTileIndicesA;
+      uniform vec4 leafTileIndicesB;
+    ` : '';
+    const textureSampleShader = isCutout
+      ? /* glsl */ `
+          vec4 texColor = texture2D_AA(map, vUv);
+          // Procedural tree and cherry leaf tiles use binary cutouts to keep
+          // the voxel topology opaque while exposing the sparse leaf gaps.
+          // Sample before the forward receiver early-return as well, so
+          // refraction preserves the same silhouette as the visible pass.
+          if (texColor.a < alphaCutoff) discard;
+        `
+      : /* glsl */ `
+          vec4 texColor = texture2D(map, clampUvToTile(vUv, vUv));
+        `;
 
     const fragmentShader = `
       #include <common>
@@ -172,19 +304,12 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       uniform float metalness;
       uniform float envMapIntensity;
       uniform float alphaScale;
-      uniform float alphaCutoff;
       uniform float lightingMix;
 
-      // Anti-aliasing controls
-      uniform bool aaEnabled;
-      uniform float aaStrength;   // 0..1
-      uniform bool aaLodBiasEnabled; // use explicit LOD bias for non-atlas textures
-      uniform float aaLodBias;    // 0..2 typically
-      uniform float atlasSize;    // tiles across (U). 1.0 if not using atlas
+      uniform float atlasSize;    // tiles across (U). 1.0 if not using an atlas
       uniform float tileSize;     // texels per tile (square)
-      uniform vec4 leafTileIndicesA;
-      uniform vec4 leafTileIndicesB;
-      uniform float ditherAmount; // 0..1 strength in sRGB LDR (approx 1 LSB at 1.0)
+      ${cutoutUniformDeclarations}
+      uniform float ditherAmount;
       
       // Sun uniforms (directional light driven by SunController)
       uniform vec3 sunDirection;
@@ -241,104 +366,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           return sampleUv;
       }
 
-      bool isLeafAtlasUv(vec2 uv) {
-          if (atlasSize <= 1.0) return false;
-          float tileIndex = floor(clamp(uv.x, 0.0, 0.999999) * atlasSize);
-          vec4 distanceA = abs(leafTileIndicesA - vec4(tileIndex));
-          vec4 distanceB = abs(leafTileIndicesB - vec4(tileIndex));
-          float closest = min(
-            min(min(distanceA.x, distanceA.y), min(distanceA.z, distanceA.w)),
-            min(min(distanceB.x, distanceB.y), min(distanceB.z, distanceB.w))
-          );
-          return closest < 0.25;
-      }
-
-      // Derivative-aware texture sampling to reduce minification shimmer
-      // Provide LOD function with graceful fallback if the extension is missing
-      #ifdef TEXTURE_LOD_EXT
-      vec4 texLod2D(sampler2D tex, vec2 uv, float lod) { return texture2DLodEXT(tex, uv, lod); }
-      #else
-      vec4 texLod2D(sampler2D tex, vec2 uv, float lod) { return texture2D(tex, uv); }
-      #endif
-
-      // Combines 4-tap RGSS with a directional anisotropic kernel when footprint is elongated
-      vec4 texture2D_AA(sampler2D tex, vec2 uv) {
-          vec4 base = texture2D(tex, clampUvToTile(uv, uv));
-          if (!aaEnabled) return base;
-          // Opaque atlas tiles retain their crisp single-tap pixel treatment.
-          // Sparse leaves need footprint integration under minification: a
-          // single nearest texel aliases their 16px cutout into moving diagonal
-          // bands. Every tap remains clamped to the selected tile, so this
-          // cannot sample neighbouring atlas materials.
-          bool leafAtlasSample = isLeafAtlasUv(uv);
-          if (atlasSize > 1.0 && !leafAtlasSample) return base;
-
-          // Estimate pixel footprint in texel units
-          vec2 texSize = vec2(max(1.0, atlasSize * tileSize), max(1.0, tileSize));
-          vec2 dx_uvt = dFdx(uv) * texSize;
-          vec2 dy_uvt = dFdy(uv) * texSize;
-          float lenx = length(dx_uvt);
-          float leny = length(dy_uvt);
-          float maxLen = max(lenx, leny);
-          float minLen = max(min(lenx, leny), 1e-5);
-          float aniso = maxLen / minLen;
-
-          // Mix factor vs minification
-          float k = smoothstep(1.0, 3.0, maxLen) * clamp(aaStrength, 0.0, 1.0);
-          if (k <= 0.001) return base;
-
-          // If footprint is strongly elongated, sample along its major axis (screen-aligned stripes case)
-          if (aniso > 2.0) {
-            // Keep the derivative magnitude. A normalized direction with a
-            // raw ±0.5 UV offset spans most of the atlas instead of one pixel.
-            vec2 majorDerivative = (lenx > leny) ? dFdx(uv) : dFdy(uv);
-
-            // 7- or 9-tap kernel depending on minification (clamped)
-            int taps = (maxLen > 6.0) ? 9 : 7;
-            float halfT = float(taps - 1) * 0.5;
-
-            // Cover the pixel footprint width (±0.5 along major) with a Gaussian
-            vec4 sum = vec4(0.0);
-            float wsum = 0.0;
-            for (int i = 0; i < 9; i++) {
-              if (i >= taps) break;
-              float fi = float(i) - halfT;       // [-halfT, halfT]
-              float t = fi / max(halfT, 1.0);    // [-1, 1]
-              float w = exp(-t*t * 3.0);         // Gaussian-ish weights
-              vec2 o = majorDerivative * (t * 0.5); // ±0.5 pixel footprint
-              // On non-atlas textures (single image with mipmaps), push a slight lod bias to avoid banding
-              float lodBias = (atlasSize <= 1.0 && aaLodBiasEnabled) ? (aaLodBias * smoothstep(1.5, 8.0, maxLen)) : 0.0;
-              vec4 c = texLod2D(tex, clampUvToTile(uv + o, uv), lodBias);
-              sum += c * w; wsum += w;
-            }
-            vec4 anisoAvg = sum / max(wsum, 1e-5);
-            if (leafAtlasSample && anisoAvg.a > 1e-4) {
-              anisoAvg.rgb /= anisoAvg.a;
-            }
-            return mix(base, anisoAvg, k);
-          }
-
-          // Otherwise use 4-tap rotated grid inside the pixel footprint (good isotropic prefilter)
-          vec2 dx = dFdx(uv);
-          vec2 dy = dFdy(uv);
-          const float ofs = 0.35;
-          vec2 o1 = ( dx + dy) * ofs;
-          vec2 o2 = ( dx - dy) * ofs;
-          vec2 o3 = (-dx + dy) * ofs;
-          vec2 o4 = (-dx - dy) * ofs;
-
-          float lodBiasIso = (atlasSize <= 1.0 && aaLodBiasEnabled) ? (aaLodBias * smoothstep(1.5, 8.0, maxLen)) : 0.0;
-          vec4 c1 = texLod2D(tex, clampUvToTile(uv + o1, uv), lodBiasIso);
-          vec4 c2 = texLod2D(tex, clampUvToTile(uv + o2, uv), lodBiasIso);
-          vec4 c3 = texLod2D(tex, clampUvToTile(uv + o3, uv), lodBiasIso);
-          vec4 c4 = texLod2D(tex, clampUvToTile(uv + o4, uv), lodBiasIso);
-          vec4 avg4 = (c1 + c2 + c3 + c4) * 0.25;
-          if (leafAtlasSample && avg4.a > 1e-4) {
-            avg4.rgb /= avg4.a;
-          }
-          return mix(base, avg4, k);
-      }
-
+      ${cutoutSamplingShader}
       vec3 directSunLighting(vec3 normal) {
           vec3 sunDir = normalize(sunDirection);
           float sunDot = max(dot(normal, sunDir), 0.0);
@@ -459,12 +487,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
 
       void main() {
           forwardRefractionDiscardCameraMedium();
-          vec4 texColor = texture2D_AA(map, vUv);
-          // Procedural tree and cherry leaf tiles use binary cutouts to keep
-          // the voxel topology opaque while exposing the sparse leaf gaps.
-          // Sample before the forward receiver early-return as well, so
-          // refraction preserves the same silhouette as the visible pass.
-          if (texColor.a < alphaCutoff) discard;
+          ${textureSampleShader}
           if (uForwardRefractionOutputReceiver > 0.5) {
             gl_FragColor = vec4(
               forwardRefractionStoreReceiver(vForwardRefractionSourceWorld),
@@ -546,7 +569,6 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           metalness: { value: 0.0 },
           envMapIntensity: { value: 0.3 },
           alphaScale: { value: 1.0 },
-          alphaCutoff: { value: 0.5 },
           lightingMix: { value: 1.0 },
 
           // Sun uniforms (updated by Engine via SunController)
@@ -570,19 +592,21 @@ export class BlockMaterial extends THREE.ShaderMaterial {
           waterCausticOrigin: { value: new THREE.Vector2(0, 0) },
           waterCausticExtent: { value: 256.0 },
           waterCausticResolution: { value: new THREE.Vector2(256, 256) },
-          // Anti-aliasing defaults
-          aaEnabled: { value: true },
-          aaStrength: { value: 1.0 },
-          aaLodBiasEnabled: { value: true },
-          aaLodBias: { value: 0.9 },
           atlasSize: { value: (atlasInfo?.atlasSize ?? 1) },
           tileSize: { value: (atlasInfo?.tileSize ?? 16) },
-          leafTileIndicesA: { value: leafTileIndicesA },
-          leafTileIndicesB: { value: leafTileIndicesB },
           ditherAmount: { value: 0.75 },
           voxelShadowDepth: { value: createWhiteTexture() },
           voxelShadowCameraNear: { value: 0.1 },
-          voxelShadowCameraFar: { value: 1024.0 }
+          voxelShadowCameraFar: { value: 1024.0 },
+          ...(isCutout ? {
+            alphaCutoff: { value: 0.5 },
+            aaEnabled: { value: true },
+            aaStrength: { value: 1.0 },
+            aaLodBiasEnabled: { value: true },
+            aaLodBias: { value: 0.9 },
+            leafTileIndicesA: { value: leafTileIndicesA },
+            leafTileIndicesB: { value: leafTileIndicesB },
+          } : {}),
         }
       ]),
       defines: envMap ? { USE_ENVMAP: true } : {},
@@ -593,6 +617,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
       // chunks are intentionally disabled; VoxelSunShadowPass owns visibility.
       lights: false,
     });
+    this.surfaceMode = resolvedSurfaceMode;
     attachForwardRefractionUniforms(this);
   }
 
@@ -619,6 +644,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   /** Configure in-shader anti-aliasing strength (0..1) and toggle */
   setAntialiasing(enabled: boolean, strength = 1.0): void {
     const u = this.uniforms as Record<string, { value: unknown }>;
+    if (!u.aaEnabled || !u.aaStrength) return;
     u.aaEnabled.value = !!enabled;
     u.aaStrength.value = THREE.MathUtils.clamp(strength, 0, 1);
   }
@@ -626,6 +652,7 @@ export class BlockMaterial extends THREE.ShaderMaterial {
   /** Configure LOD bias AA (for non-atlas textures with mipmaps such as seabed sand) */
   setAALodBias(enabled: boolean, bias = 0.9): void {
     const u = this.uniforms as Record<string, { value: unknown }>;
+    if (!u.aaLodBiasEnabled || !u.aaLodBias) return;
     u.aaLodBiasEnabled.value = !!enabled;
     u.aaLodBias.value = THREE.MathUtils.clamp(bias, 0, 2);
   }

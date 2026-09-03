@@ -58,4 +58,5 @@ When changing rendering or startup, also inspect these invariants manually in th
 - direct-sun-disabled frames keep voxel visibility white without repeatedly clearing either target;
 - the X/Z caster-height hierarchy remains conservative after block edits and seaweed replacement;
 - medium-separated terrain uses minimal source-world receiver draws and full terrain materials for forward color draws.
+- mesher responses keep opaque, cutout, and transparent buffers separate, and the capture-depth shortcut swaps only registered opaque terrain when block-water geometry is absent.
 - seaweed diagnostics show a fresh per-load distribution seed, ocean-only accepted anchors, submerged height caps, and the separate caster-field count.

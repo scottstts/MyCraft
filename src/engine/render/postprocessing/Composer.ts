@@ -37,6 +37,28 @@ function profilePass(pass: Pass, stage: RenderStageName, profiler: RenderStagePr
   )
 }
 
+/** Shared terrain material used when the capture needs depth but not terrain color. */
+export function createSolidTerrainDepthMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    name: 'MyCraftSolidTerrainDepthOnly',
+    vertexShader: /* glsl */ `
+      void main() {
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      void main() {
+        gl_FragColor = vec4(0.0);
+      }
+    `,
+    colorWrite: false,
+    depthWrite: true,
+    depthTest: true,
+    side: THREE.FrontSide,
+    toneMapped: false,
+  })
+}
+
 export class Composer {
   private composer: EffectComposer
   private renderPass: RenderPass
@@ -54,8 +76,12 @@ export class Composer {
   private readonly forwardRefractionParticipants: ForwardRefractionParticipantRegistry
   private readonly stageProfiler: RenderStageProfiler
   private readonly ownsStageProfiler: boolean
+  private readonly solidTerrainDepthMaterial = createSolidTerrainDepthMaterial()
+  private readonly solidTerrainMeshes = new Set<THREE.Mesh>()
+  private readonly swappedSolidTerrainMaterials = new Map<THREE.Mesh, THREE.Material>()
   private beforeOpaqueCapture: (() => void) | null = null
   private afterOpaqueCapture: (() => void) | null = null
+  private sceneColorCaptureRequired = true
   private underwaterEnabled = false
 
   constructor(
@@ -196,12 +222,42 @@ export class Composer {
     this.shadowSamplingMaterials.unregister(material)
   }
 
+  registerSolidTerrainMesh(mesh: THREE.Mesh): void {
+    this.solidTerrainMeshes.add(mesh)
+  }
+
+  unregisterSolidTerrainMesh(mesh: THREE.Mesh): void {
+    this.solidTerrainMeshes.delete(mesh)
+    this.swappedSolidTerrainMaterials.delete(mesh)
+  }
+
+  /** Select color+depth capture only when legacy block water consumes the color. */
+  setSceneColorCaptureRequired(required: boolean): void {
+    this.sceneColorCaptureRequired = required
+  }
+
   private setShadowSamplingEnabled(enabled: boolean): ShadowSamplingUniformState[] {
     return this.shadowSamplingMaterials.toggle(enabled)
   }
 
   private restoreShadowSampling(states: ShadowSamplingUniformState[]): void {
     this.shadowSamplingMaterials.restore(states)
+  }
+
+  private swapSolidTerrainMaterialsForDepth(): void {
+    for (const mesh of this.solidTerrainMeshes) {
+      if (mesh.material === this.solidTerrainDepthMaterial) continue
+      if (Array.isArray(mesh.material)) continue
+      this.swappedSolidTerrainMaterials.set(mesh, mesh.material)
+      mesh.material = this.solidTerrainDepthMaterial
+    }
+  }
+
+  private restoreSolidTerrainMaterials(): void {
+    for (const [mesh, material] of this.swappedSolidTerrainMaterials) {
+      if (mesh.material === this.solidTerrainDepthMaterial) mesh.material = material
+    }
+    this.swappedSolidTerrainMaterials.clear()
   }
 
   getDepthTexture(): THREE.DepthTexture {
@@ -273,12 +329,14 @@ export class Composer {
     const prev = this.renderer.getRenderTarget()
     try {
       this.beforeOpaqueCapture?.()
+      if (!this.sceneColorCaptureRequired) this.swapSolidTerrainMaterialsForDepth()
       this.stageProfiler.measure('water-free-scene-capture', () => {
         this.renderer.setRenderTarget(this.depthTarget)
         this.renderer.clear(true, true, true)
         this.renderer.render(this.scene, camera)
       })
     } finally {
+      this.restoreSolidTerrainMaterials()
       this.renderer.setRenderTarget(prev)
       this.afterOpaqueCapture?.()
       this.restoreShadowSampling(shadowStates);
@@ -352,6 +410,9 @@ export class Composer {
     this.underwater.dispose()
     this.lens.dispose()
     this.composer.dispose()
+    this.solidTerrainMeshes.clear()
+    this.swappedSolidTerrainMaterials.clear()
+    this.solidTerrainDepthMaterial.dispose()
     if (this.ownsStageProfiler) this.stageProfiler.dispose()
   }
 }

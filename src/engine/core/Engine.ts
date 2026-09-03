@@ -84,6 +84,7 @@ let camera: THREE.PerspectiveCamera | null = null;
 let world: World | null = null;
 let chunkRenderer: ChunkRenderer | null = null;
 let blockMaterial: BlockMaterial | null = null;
+let blockOpaqueMaterial: BlockMaterial | null = null;
 let waterMaterial: WaterSurfaceMaterial | null = null;
 let composer: Composer | null = null;
 let sunController: SunController | null = null;
@@ -489,16 +490,28 @@ function update(dtSeconds: number) {
   }
 
   // Update block materials with sun uniforms
-  if (blockMaterial && sunController && atmosphereState) {
+  if (blockMaterial && blockOpaqueMaterial && sunController && atmosphereState) {
     const sdir = sunController.getSunDirection();
     blockMaterial.setSunUniforms(sdir, atmosphereState.sunColor);
+    blockOpaqueMaterial.setSunUniforms(sdir, atmosphereState.sunColor);
     // Day/night factor for ambient modulation with a small night floor to avoid total darkness
     const NIGHT_MIN_LIGHT = 0.10; // keep nights faintly lit
     const dayLight = Math.max(NIGHT_MIN_LIGHT, atmosphereState.daylight);
     blockMaterial.setDayLight(dayLight);
+    blockOpaqueMaterial.setDayLight(dayLight);
     blockMaterial.setStarLight(atmosphereState.starVisibility * 0.35);
+    blockOpaqueMaterial.setStarLight(atmosphereState.starVisibility * 0.35);
     blockMaterial.setSkyAmbient(atmosphereState.skyIrradiance);
+    blockOpaqueMaterial.setSkyAmbient(atmosphereState.skyIrradiance);
     blockMaterial.setWaterCaustics(
+      true,
+      VISUAL_WATER_LEVEL,
+      0.80,
+      waterSystem?.getTime() ?? 0,
+      waterSystem?.getCausticReferenceDepth() ?? CAUSTIC_REFERENCE_DEPTH,
+      atmosphereState.sunIntensity,
+    );
+    blockOpaqueMaterial.setWaterCaustics(
       true,
       VISUAL_WATER_LEVEL,
       0.80,
@@ -556,6 +569,13 @@ function update(dtSeconds: number) {
   // blocks, swimming, or interaction state.
   if (waterSystem && camera) {
     waterSystem.update(dtSeconds, camera);
+    blockOpaqueMaterial?.setWaterCausticTexture(
+      waterSystem.getCausticTexture(),
+      waterSystem.getCausticOrigin(),
+      waterSystem.getCausticExtent(),
+      waterSystem.getCausticResolution(),
+      waterSystem.getCausticReferenceDepth(),
+    );
     seaweedSystem?.update(waterSystem.getTime(), camera);
     seaweedSystem?.setWaterCausticTexture(
       waterSystem.getCausticTexture(),
@@ -594,6 +614,7 @@ function update(dtSeconds: number) {
     // pose. VoxelSunShadowPass evaluates them once per receiver, outside its
     // terrain solar-ray loop, so this remains deterministic and bounded.
     voxelSunShadowPass?.setCharacterShadowBoxes(playerBody?.getShadowBoxes() ?? []);
+    composer.setSceneColorCaptureRequired(chunkRenderer?.hasBlockWaterGeometry() ?? false);
     composer.update(camera, sdir, atmosphereState.sunColor, atmosphereState);
     // Feed the same bounded frame delta used by the simulation into the
     // composer so any time-based post effects remain synchronized with the
@@ -690,15 +711,24 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     'cherry_leaves_3',
   ].flatMap((name) => atlasConfig.tiles[name] ? [atlasConfig.tiles[name]] : []);
   setBootStage('render-pipeline', onBootStage);
+  const blockAtlasInfo = {
+    tileSize: atlasConfig.tileSize,
+    atlasSize: atlasConfig.atlasSize,
+    leafTiles: leafAtlasTiles,
+  };
   blockMaterial = new BlockMaterial(
     atlas.getTexture(),
     null,
     undefined,
-    {
-      tileSize: atlasConfig.tileSize,
-      atlasSize: atlasConfig.atlasSize,
-      leafTiles: leafAtlasTiles,
-    }
+    blockAtlasInfo,
+    'cutout',
+  );
+  blockOpaqueMaterial = new BlockMaterial(
+    atlas.getTexture(),
+    null,
+    undefined,
+    blockAtlasInfo,
+    'opaque',
   );
   // Mild in-shader AA to reduce texture shimmer on distant blocks
   blockMaterial.setAntialiasing(true, 0.9);
@@ -706,6 +736,8 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   // Configure material properties for natural block materials
   blockMaterial.setMaterialProperties(0.8, 0.0, 0.3);
   blockMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80, 0, CAUSTIC_REFERENCE_DEPTH, 1.35);
+  blockOpaqueMaterial.setMaterialProperties(0.8, 0.0, 0.3);
+  blockOpaqueMaterial.setWaterCaustics(true, VISUAL_WATER_LEVEL, 0.80, 0, CAUSTIC_REFERENCE_DEPTH, 1.35);
   const forwardRefractionParticipants = new ForwardRefractionParticipantRegistry();
   forwardRefractionReceiverMaterials = createForwardRefractionReceiverMaterials({
     map: atlas.getTexture(),
@@ -732,10 +764,12 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
 
   chunkRenderer = new ChunkRenderer(
     scene,
-    { opaque: blockMaterial, transparent: waterMaterial },
+    { opaque: blockOpaqueMaterial, cutout: blockMaterial, transparent: waterMaterial },
     {
       forwardRefractionParticipants,
       forwardRefractionReceiverMaterials,
+      registerSolidTerrainMesh: (mesh) => composer?.registerSolidTerrainMesh(mesh),
+      unregisterSolidTerrainMesh: (mesh) => composer?.unregisterSolidTerrainMesh(mesh),
     },
   );
   
@@ -756,6 +790,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     forwardRefractionParticipants,
   );
   composer.registerShadowSamplingMaterial(blockMaterial);
+  composer.registerShadowSamplingMaterial(blockOpaqueMaterial);
   composer.setBloom(RENDER_STYLE.bloom.enabled, RENDER_STYLE.bloom.strength, RENDER_STYLE.bloom.threshold);
   composer.setLens(RENDER_STYLE.lens.enabled, RENDER_STYLE.lens.intensity);
   composer.setAerialPerspective(true, aerialPerspectiveDistance);
@@ -885,7 +920,9 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
   voxelSunShadowPass.setSeaweedWaterLevel(VISUAL_WATER_LEVEL);
   const shadowResolution = voxelSunShadowPass.getDiagnostics().resolution;
   blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), shadowResolution.width, shadowResolution.height, true);
+  blockOpaqueMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), shadowResolution.width, shadowResolution.height, true);
   blockMaterial?.setVoxelShadowDepthTexture(composer.getDepthTexture(), camera.near, camera.far);
+  blockOpaqueMaterial?.setVoxelShadowDepthTexture(composer.getDepthTexture(), camera.near, camera.far);
   composer.setVoxelSunShadowPass(voxelSunShadowPass);
   if (diagnosticMode) console.info('[VoxelSunShadow]', JSON.stringify(voxelSunShadowPass.getDiagnostics()));
 
@@ -1155,6 +1192,7 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
       if (voxelSunShadowPass) {
         const resolution = voxelSunShadowPass.getDiagnostics().resolution;
         blockMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
+        blockOpaqueMaterial?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
         grassSystem?.setVoxelShadowTexture(voxelSunShadowPass.getTexture(), resolution.width, resolution.height, !!composer);
         if (seaweedSystem && blockMaterial) seaweedSystem.shareVoxelShadowState(blockMaterial);
         waterSystem?.setSunVisibility(voxelSunShadowPass.getTexture());
@@ -1290,6 +1328,10 @@ function stop() {
   if (blockMaterial) {
     blockMaterial.dispose();
     blockMaterial = null;
+  }
+  if (blockOpaqueMaterial) {
+    blockOpaqueMaterial.dispose();
+    blockOpaqueMaterial = null;
   }
   if (waterMaterial) {
     waterMaterial.dispose();

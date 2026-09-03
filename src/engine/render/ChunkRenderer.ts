@@ -2,7 +2,7 @@
  * ChunkRenderer - owns render buffers for authoritative chunks and compiles
  * immutable startup terrain into small static render regions.
  * Input: CHUNK_MESH events from ChunkPipeline
- * Output: one or two Three.js meshes per 2x2x1 chunk region
+ * Output: up to three Three.js meshes per 1x1x1 chunk region
  */
 
 import * as THREE from 'three'
@@ -26,7 +26,7 @@ export interface ChunkRendererEvents extends Record<string, unknown> {
   MESH_REMOVED: { key: ChunkKey }
 }
 
-export const STATIC_REGION_CHUNK_SIDE = 2
+export const STATIC_REGION_CHUNK_SIDE = 1
 
 interface ChunkCoordinates {
   cx: number
@@ -36,6 +36,7 @@ interface ChunkCoordinates {
 
 interface RegionMeshes {
   opaque: THREE.Mesh | null
+  cutout: THREE.Mesh | null
   transparent: THREE.Mesh | null
 }
 
@@ -139,15 +140,18 @@ function mergeBuffers(
  * Render storage for chunks. Before startup finalization it uses individual
  * meshes so worker results can arrive independently. Once the complete initial
  * world is known, source buffers remain authoritative while the scene receives
- * only 2x2 chunk region meshes. A later edit rebuilds its one affected region.
+ * up to three 1x1 chunk region meshes. A later edit rebuilds its one affected region.
  */
 export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
   private readonly scene: THREE.Scene
   private readonly materialOpaque: THREE.Material
+  private readonly materialCutout: THREE.Material
   private readonly materialTransparent: THREE.Material
   private readonly forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
   private readonly forwardRefractionReceiverMaterials?: ForwardRefractionReceiverMaterials
-  private readonly chunkBuffers = new Map<ChunkKey, { opaque: MeshBuffers; transparent: MeshBuffers }>()
+  private readonly registerSolidTerrainMesh?: (mesh: THREE.Mesh) => void
+  private readonly unregisterSolidTerrainMesh?: (mesh: THREE.Mesh) => void
+  private readonly chunkBuffers = new Map<ChunkKey, ChunkMeshResponse['payload']>()
   private readonly chunkMeshes = new Map<ChunkKey, THREE.Mesh>()
   private readonly chunkGroups = new Map<ChunkKey, THREE.Group>()
   private readonly chunkForwardMeshes = new Map<ChunkKey, THREE.Mesh[]>()
@@ -155,34 +159,47 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
   private readonly regionGroups = new Map<string, THREE.Group>()
   private readonly regionMeshes = new Map<string, RegionMeshes>()
   private readonly regionForwardMeshes = new Map<string, THREE.Mesh[]>()
+  private blockWaterIndexCount = 0
   private regionsFinalized = false
 
   constructor(
     scene: THREE.Scene,
-    materials: { opaque: THREE.Material; transparent: THREE.Material },
+    materials: { opaque: THREE.Material; cutout?: THREE.Material; transparent: THREE.Material },
     options: {
       forwardRefractionParticipants?: ForwardRefractionParticipantRegistry
       forwardRefractionReceiverMaterials?: ForwardRefractionReceiverMaterials
+      registerSolidTerrainMesh?: (mesh: THREE.Mesh) => void
+      unregisterSolidTerrainMesh?: (mesh: THREE.Mesh) => void
     } = {},
   ) {
     super()
     this.scene = scene
     this.materialOpaque = materials.opaque
+    this.materialCutout = materials.cutout ?? materials.opaque
     this.materialTransparent = materials.transparent
     this.forwardRefractionParticipants = options.forwardRefractionParticipants
     this.forwardRefractionReceiverMaterials = options.forwardRefractionReceiverMaterials
+    this.registerSolidTerrainMesh = options.registerSolidTerrainMesh
+    this.unregisterSolidTerrainMesh = options.unregisterSolidTerrainMesh
   }
 
   /** Handle chunk mesh data from the mesher worker. */
   handleChunkMesh(response: ChunkMeshResponse): void {
     const { key, payload } = response
-    if (!hasVertices(payload.opaque) && !hasVertices(payload.transparent)) {
+    if (
+      !hasVertices(payload.opaque) &&
+      !hasVertices(payload.cutout) &&
+      !hasVertices(payload.transparent)
+    ) {
       this.removeChunkMesh(key)
       return
     }
 
     const wasLoaded = this.chunkBuffers.has(key)
+    const previousBuffers = this.chunkBuffers.get(key)
+    if (previousBuffers) this.blockWaterIndexCount -= previousBuffers.transparent.indices.length
     this.chunkBuffers.set(key, payload)
+    this.blockWaterIndexCount += payload.transparent.indices.length
     if (this.regionsFinalized) {
       this.addRegionMember(key)
       this.rebuildRegion(getStaticRegionKey(key))
@@ -198,7 +215,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
 
   /**
    * Switch the complete initial world from independently arriving chunks to
-   * static 2x2 region meshes. This is intentionally called once, after startup
+   * static 1x1 region meshes. This is intentionally called once, after startup
    * readiness, so the authoritative per-chunk buffers remain available for
    * edits and no partial region is treated as immutable.
    */
@@ -220,8 +237,10 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
 
   /** Remove the render storage for one chunk. */
   removeChunkMesh(key: ChunkKey): void {
-    const hadBuffer = this.chunkBuffers.delete(key)
-    if (!hadBuffer) return
+    const previousBuffers = this.chunkBuffers.get(key)
+    if (!previousBuffers) return
+    this.chunkBuffers.delete(key)
+    this.blockWaterIndexCount -= previousBuffers.transparent.indices.length
 
     const previousMesh = this.chunkMeshes.get(key)
     this.chunkMeshes.delete(key)
@@ -256,12 +275,18 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     return this.chunkBuffers.size
   }
 
+  /** Whether any authoritative chunk currently contains legacy block-water faces. */
+  hasBlockWaterGeometry(): boolean {
+    return this.blockWaterIndexCount > 0
+  }
+
   /** Number of actual scene draw meshes after optional region compilation. */
   getRenderedMeshCount(): number {
     if (!this.regionsFinalized) return this.chunkMeshes.size
     let count = 0
     for (const meshes of this.regionMeshes.values()) {
       if (meshes.opaque) count += 1
+      if (meshes.cutout) count += 1
       if (meshes.transparent) count += 1
     }
     return count
@@ -277,10 +302,8 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
       this.scene.remove(group)
       const meshes = this.regionMeshes.get(regionKey)
       if (meshes) {
-        for (const mesh of [meshes.opaque, meshes.transparent]) {
-          if (!mesh) continue
-          this.forwardRefractionParticipants?.unregister(mesh)
-          mesh.geometry.dispose()
+        for (const mesh of [meshes.opaque, meshes.cutout, meshes.transparent]) {
+          if (mesh) this.disposeMesh(mesh)
         }
       }
       const forwardMeshes = this.regionForwardMeshes.get(regionKey) ?? []
@@ -293,11 +316,12 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     this.regionMembers.clear()
     this.chunkMeshes.clear()
     this.chunkBuffers.clear()
+    this.blockWaterIndexCount = 0
   }
 
   private updateIndividualChunk(
     key: ChunkKey,
-    payload: { opaque: MeshBuffers; transparent: MeshBuffers },
+    payload: ChunkMeshResponse['payload'],
   ): void {
     let group = this.chunkGroups.get(key)
     if (!group) {
@@ -310,6 +334,10 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     const existingOpaque = group.children.find(
       (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.material === this.materialOpaque,
     )
+    const existingCutout = group.children.find(
+      (child): child is THREE.Mesh => child !== existingOpaque &&
+        child instanceof THREE.Mesh && child.material === this.materialCutout,
+    )
     const existingTransparent = group.children.find(
       (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.material === this.materialTransparent,
     )
@@ -318,13 +346,14 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     for (const mesh of previousForwardMeshes) this.disposeMesh(mesh)
     group.clear()
     const reused = new Set<THREE.Mesh>()
-    const opaqueMesh = this.upsertMesh(payload.opaque, existingOpaque, this.materialOpaque, false, reused)
-    const transparentMesh = this.upsertMesh(payload.transparent, existingTransparent, this.materialTransparent, true, reused)
-    for (const oldMesh of [existingOpaque, existingTransparent]) {
+    const opaqueMesh = this.upsertMesh(payload.opaque, existingOpaque, this.materialOpaque, false, true, reused)
+    const cutoutMesh = this.upsertMesh(payload.cutout, existingCutout, this.materialCutout, false, false, reused)
+    const transparentMesh = this.upsertMesh(payload.transparent, existingTransparent, this.materialTransparent, true, false, reused)
+    for (const oldMesh of [existingOpaque, existingCutout, existingTransparent]) {
       if (oldMesh && !reused.has(oldMesh)) this.disposeMesh(oldMesh)
     }
 
-    if (!opaqueMesh && !transparentMesh) {
+    if (!opaqueMesh && !cutoutMesh && !transparentMesh) {
       this.removeChunkMesh(key)
       return
     }
@@ -332,11 +361,15 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     const { cx, cy, cz } = parseChunkKey(key)
     group.position.set(cx * CHUNK_SIZE.x, cy * CHUNK_SIZE.y, cz * CHUNK_SIZE.z)
     if (opaqueMesh) group.add(opaqueMesh)
+    if (cutoutMesh) group.add(cutoutMesh)
     if (transparentMesh) group.add(transparentMesh)
-    const forwardMeshes = this.createForwardMeshes(payload.opaque)
+    const forwardMeshes = [
+      ...this.createForwardMeshes(payload.opaque, this.materialOpaque),
+      ...this.createForwardMeshes(payload.cutout, this.materialCutout),
+    ]
     for (const mesh of forwardMeshes) group.add(mesh)
     this.chunkForwardMeshes.set(key, forwardMeshes)
-    this.chunkMeshes.set(key, opaqueMesh ?? transparentMesh!)
+    this.chunkMeshes.set(key, opaqueMesh ?? cutoutMesh ?? transparentMesh!)
   }
 
   private addRegionMember(key: ChunkKey): void {
@@ -376,9 +409,15 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     }
     const previous = this.regionMeshes.get(regionKey)
     const previousOpaque = previous?.opaque ?? null
+    const previousCutout = previous?.cutout ?? null
     const previousTransparent = previous?.transparent ?? null
     const mergedOpaque = mergeBuffers(entries.map(({ buffers, offsetX, offsetZ }) => ({
       buffer: buffers.opaque,
+      offsetX,
+      offsetZ,
+    })))
+    const mergedCutout = mergeBuffers(entries.map(({ buffers, offsetX, offsetZ }) => ({
+      buffer: buffers.cutout,
       offsetX,
       offsetZ,
     })))
@@ -397,6 +436,15 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
       previousOpaque,
       this.materialOpaque,
       false,
+      true,
+      reused,
+    )
+    const cutout = this.upsertMesh(
+      mergedCutout,
+      previousCutout,
+      this.materialCutout,
+      false,
+      false,
       reused,
     )
     const transparent = this.upsertMesh(
@@ -404,9 +452,10 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
       previousTransparent,
       this.materialTransparent,
       true,
+      false,
       reused,
     )
-    for (const oldMesh of [previousOpaque, previousTransparent]) {
+    for (const oldMesh of [previousOpaque, previousCutout, previousTransparent]) {
       if (oldMesh && !reused.has(oldMesh)) this.disposeMesh(oldMesh)
     }
 
@@ -417,20 +466,26 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
       regionZ * STATIC_REGION_CHUNK_SIDE * CHUNK_SIZE.z,
     )
     if (opaque) group.add(opaque)
+    if (cutout) group.add(cutout)
     if (transparent) group.add(transparent)
-    const forwardMeshes = this.createForwardMeshes(mergedOpaque)
+    const forwardMeshes = [
+      ...this.createForwardMeshes(mergedOpaque, this.materialOpaque),
+      ...this.createForwardMeshes(mergedCutout, this.materialCutout),
+    ]
     for (const mesh of forwardMeshes) group.add(mesh)
     this.regionForwardMeshes.set(regionKey, forwardMeshes)
-    if (!opaque && !transparent) {
+    if (!opaque && !cutout && !transparent) {
       this.removeRegion(regionKey)
       return
     }
-    this.regionMeshes.set(regionKey, { opaque, transparent })
+    this.regionMeshes.set(regionKey, { opaque, cutout, transparent })
     for (const key of members ?? []) {
       const buffers = this.chunkBuffers.get(key)
       const primary = buffers && hasVertices(buffers.opaque)
-        ? opaque ?? transparent
-        : transparent ?? opaque
+        ? opaque ?? cutout ?? transparent
+        : buffers && hasVertices(buffers.cutout)
+          ? cutout ?? opaque ?? transparent
+          : transparent ?? opaque ?? cutout
       if (primary) this.chunkMeshes.set(key, primary)
     }
   }
@@ -440,7 +495,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     if (group) this.scene.remove(group)
     const meshes = this.regionMeshes.get(regionKey)
     if (meshes) {
-      for (const mesh of [meshes.opaque, meshes.transparent]) {
+      for (const mesh of [meshes.opaque, meshes.cutout, meshes.transparent]) {
         if (mesh) this.disposeMesh(mesh)
       }
     }
@@ -457,6 +512,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     existing: THREE.Mesh | null | undefined,
     material: THREE.Material,
     transparent: boolean,
+    solidTerrain: boolean,
     reused: Set<THREE.Mesh>,
   ): THREE.Mesh | null {
     if (!buffer || !hasVertices(buffer)) return null
@@ -499,6 +555,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     mesh.castShadow = false
     mesh.receiveShadow = false
     if (transparent) mesh.renderOrder = 2
+    if (solidTerrain) this.registerSolidTerrainMesh?.(mesh)
     // Dedicated receiver meshes use geometry-only shaders below. Keep the
     // visual terrain out of the forward registry so the expensive full
     // material branch is not executed in either forward-refraction raster.
@@ -508,34 +565,37 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
     return mesh
   }
 
-  private createForwardMeshes(buffer: MeshBuffers | null): THREE.Mesh[] {
+  private createForwardMeshes(buffer: MeshBuffers | null, colorMaterial: THREE.Material): THREE.Mesh[] {
     if (
       !buffer ||
       !this.forwardRefractionReceiverMaterials ||
       !this.forwardRefractionParticipants
     ) return []
     const meshes: THREE.Mesh[] = []
+    const colors = buffer.colors.length > 0
+      ? buffer.colors
+      : new Float32Array(buffer.positions.length)
+    if (buffer.colors.length === 0) colors.fill(1)
+    const sharedPosition = new THREE.BufferAttribute(buffer.positions, 3)
+    const sharedNormal = new THREE.BufferAttribute(buffer.normals, 3)
+    const sharedUv = new THREE.BufferAttribute(buffer.uvs, 2)
+    const sharedAo = new THREE.BufferAttribute(buffer.ao, 1)
+    const sharedColor = new THREE.BufferAttribute(colors, 3)
     for (const bucket of FORWARD_REFRACTION_INDEX_BUCKETS) {
       const indices = buffer.forwardIndices?.[bucket]
       if (!indices || indices.length === 0) continue
       const cutout = bucket.endsWith('Cutout')
       const geometry = new THREE.BufferGeometry()
-      geometry.setAttribute('position', new THREE.BufferAttribute(buffer.positions, 3))
+      geometry.setAttribute('position', sharedPosition)
       // The receiver shader only consumes position (and UV for a cutout), but
       // the same source mesh switches to the full BlockMaterial for the color
       // draw. Keep that second material's required attributes on the shared
       // geometry so the optimization cannot turn refracted terrain black or
       // unlit when it reaches the radiance target.
-      geometry.setAttribute('normal', new THREE.BufferAttribute(buffer.normals, 3))
-      geometry.setAttribute('uv', new THREE.BufferAttribute(buffer.uvs, 2))
-      geometry.setAttribute('ao', new THREE.BufferAttribute(buffer.ao, 1))
-      if (buffer.colors.length > 0) {
-        geometry.setAttribute('color', new THREE.BufferAttribute(buffer.colors, 3))
-      } else {
-        const defaultColors = new Float32Array(buffer.positions.length)
-        defaultColors.fill(1)
-        geometry.setAttribute('color', new THREE.BufferAttribute(defaultColors, 3))
-      }
+      geometry.setAttribute('normal', sharedNormal)
+      geometry.setAttribute('uv', sharedUv)
+      geometry.setAttribute('ao', sharedAo)
+      geometry.setAttribute('color', sharedColor)
       geometry.setIndex(new THREE.BufferAttribute(indices, 1))
       geometry.computeBoundingBox()
       geometry.computeBoundingSphere()
@@ -556,7 +616,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
         receiverMaterial: cutout
           ? this.forwardRefractionReceiverMaterials.cutout
           : this.forwardRefractionReceiverMaterials.opaque,
-        colorMaterial: this.materialOpaque,
+        colorMaterial,
       })
       meshes.push(mesh)
     }
@@ -564,6 +624,7 @@ export class ChunkRenderer extends EventEmitter<ChunkRendererEvents> {
   }
 
   private disposeMesh(mesh: THREE.Mesh): void {
+    this.unregisterSolidTerrainMesh?.(mesh)
     this.forwardRefractionParticipants?.unregister(mesh)
     mesh.geometry.dispose()
   }

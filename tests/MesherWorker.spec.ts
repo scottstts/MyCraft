@@ -39,6 +39,7 @@ describe('mesher worker', () => {
 
     const voxels = new Uint8Array(CHUNK_SIZE.x * CHUNK_SIZE.y * CHUNK_SIZE.z);
     voxels[localToIndex(1, 1, 1)] = 3;
+    voxels[localToIndex(4, 1, 1)] = 7;
     fakeSelf.onmessage?.({
       data: { type: 'STORE_CHUNK', payload: { key: '0,0,0', voxels } },
     } as MessageEvent);
@@ -51,12 +52,18 @@ describe('mesher worker', () => {
       type: string;
       payload: {
         opaque: { positions: Float32Array; indices: Uint32Array };
+        cutout: { positions: Float32Array; indices: Uint32Array };
         transparent: { positions: Float32Array; indices: Uint32Array };
       };
     };
     expect(response.type).toBe('CHUNK_MESH');
     expect(response.payload.opaque.positions).toHaveLength(6 * 4 * 3);
     expect(response.payload.opaque.indices).toHaveLength(6 * 6);
+    expect(response.payload.cutout.positions).toHaveLength(6 * 4 * 3);
+    expect(response.payload.cutout.indices).toHaveLength(6 * 6);
+    expect(response.payload.opaque.forwardIndices?.belowOpaque).toHaveLength(6 * 6);
+    expect(response.payload.cutout.forwardIndices?.belowCutout).toHaveLength(6 * 6);
+    expect(response.payload.cutout.forwardIndices?.belowOpaque).toBeUndefined();
     expect(response.payload.transparent.positions).toHaveLength(0);
     expect(response.payload.transparent.indices).toHaveLength(0);
   });

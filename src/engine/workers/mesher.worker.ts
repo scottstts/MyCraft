@@ -112,6 +112,7 @@ function handleMeshChunk(request: MeshChunkRequest): void {
   self.postMessage(response, {
     transfer: [
       ...getMeshTransferBuffers(mesh.opaque),
+      ...getMeshTransferBuffers(mesh.cutout),
       ...getMeshTransferBuffers(mesh.transparent),
     ],
   });
@@ -176,20 +177,26 @@ function buildChunkMesh(chunkData: { voxels: Uint8Array }, neighbors: {
   // Count visible faces without allocating mesh storage, then fill exact-size
   // typed arrays in a second pass. Both passes use the same topology rules.
   const opaqueCounts = new MeshBufferWriter();
+  const cutoutCounts = new MeshBufferWriter();
   const transparentCounts = new MeshBufferWriter();
-  meshChunkPass(chunkData, neighbors, key, opaqueCounts, transparentCounts);
+  meshChunkPass(chunkData, neighbors, key, opaqueCounts, cutoutCounts, transparentCounts);
 
   const opaque = new MeshBufferWriter(
     opaqueCounts.getFaceCount(),
     opaqueCounts.getForwardIndexCounts(),
   );
+  const cutout = new MeshBufferWriter(
+    cutoutCounts.getFaceCount(),
+    cutoutCounts.getForwardIndexCounts(),
+  );
   const transparent = new MeshBufferWriter(
     transparentCounts.getFaceCount(),
     transparentCounts.getForwardIndexCounts(),
   );
-  meshChunkPass(chunkData, neighbors, key, opaque, transparent);
+  meshChunkPass(chunkData, neighbors, key, opaque, cutout, transparent);
   return {
     opaque: opaque.toBuffers(),
+    cutout: cutout.toBuffers(),
     transparent: transparent.toBuffers(),
   };
 }
@@ -206,6 +213,7 @@ function meshChunkPass(
   } | undefined,
   key: string,
   opaqueWriter: MeshBufferWriter,
+  cutoutWriter: MeshBufferWriter,
   transparentWriter: MeshBufferWriter,
 ): void {
   const [cxStr, cyStr, czStr] = key.split(',');
@@ -288,7 +296,7 @@ function meshChunkPass(
             const forwardBucket = getForwardRefractionBucket(face.name, gy, currentIsLeaf);
             addFaceQuad(
               lx, ly, lz, gx, gy, gz, face, block,
-              opaqueWriter,
+              currentIsLeaf ? cutoutWriter : opaqueWriter,
               chunkData,
               neighbors,
               rot, tint, forwardBucket,

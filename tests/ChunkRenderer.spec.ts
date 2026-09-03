@@ -25,6 +25,60 @@ function makeBuffers(
 }
 
 describe('voxel shadow integration', () => {
+  it('routes opaque, cutout, and block-water buffers to their own materials', () => {
+    const scene = new THREE.Scene();
+    const opaqueMaterial = new THREE.MeshBasicMaterial();
+    const cutoutMaterial = new THREE.MeshBasicMaterial();
+    const transparentMaterial = new THREE.MeshBasicMaterial();
+    const registered: THREE.Mesh[] = [];
+    const unregistered: THREE.Mesh[] = [];
+    const renderer = new ChunkRenderer(
+      scene,
+      { opaque: opaqueMaterial, cutout: cutoutMaterial, transparent: transparentMaterial },
+      {
+        registerSolidTerrainMesh: (mesh) => registered.push(mesh),
+        unregisterSolidTerrainMesh: (mesh) => unregistered.push(mesh),
+      },
+    );
+    const quad = [0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0];
+
+    renderer.handleChunkMesh({
+      type: 'CHUNK_MESH',
+      key: '0,0,0',
+      payload: {
+        opaque: makeBuffers(quad),
+        cutout: makeBuffers(quad),
+        transparent: makeBuffers(quad),
+      },
+    });
+
+    const group = scene.getObjectByName('Chunk:0,0,0') as THREE.Group;
+    const meshes = group.children.filter((child): child is THREE.Mesh => child instanceof THREE.Mesh);
+    expect(meshes.find((mesh) => mesh.material === opaqueMaterial)).toBeDefined();
+    expect(meshes.find((mesh) => mesh.material === cutoutMaterial)).toBeDefined();
+    expect(meshes.find((mesh) => mesh.material === transparentMaterial)).toBeDefined();
+    expect(renderer.getChunkMesh('0,0,0')?.material).toBe(opaqueMaterial);
+    expect(renderer.hasBlockWaterGeometry()).toBe(true);
+    expect(registered).toHaveLength(1);
+
+    renderer.handleChunkMesh({
+      type: 'CHUNK_MESH',
+      key: '0,0,0',
+      payload: {
+        opaque: makeBuffers(quad),
+        cutout: makeBuffers(quad),
+        transparent: makeBuffers([]),
+      },
+    });
+    expect(renderer.hasBlockWaterGeometry()).toBe(false);
+
+    renderer.destroy();
+    expect(unregistered.length).toBeGreaterThan(0);
+    opaqueMaterial.dispose();
+    cutoutMaterial.dispose();
+    transparentMaterial.dispose();
+  });
+
   it('keeps native shadow-map flags disabled because occupancy owns casting', () => {
     const scene = new THREE.Scene();
     const opaqueMaterial = new THREE.MeshBasicMaterial();
@@ -39,6 +93,7 @@ describe('voxel shadow integration', () => {
       key: '0,0,0',
       payload: {
         opaque: makeBuffers([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        cutout: makeBuffers([]),
         transparent: makeBuffers([]),
       },
     });
@@ -55,7 +110,7 @@ describe('voxel shadow integration', () => {
     transparentMaterial.dispose();
   });
 
-  it('compiles complete neighboring chunks into one editable 2x2 region', () => {
+  it('keeps each chunk in its own editable 1x1 region', () => {
     const scene = new THREE.Scene();
     const opaqueMaterial = new THREE.MeshBasicMaterial();
     const transparentMaterial = new THREE.MeshBasicMaterial();
@@ -68,6 +123,7 @@ describe('voxel shadow integration', () => {
       key,
       payload: {
         opaque: makeBuffers([x, 0, 0, x + 1, 0, 0, x, 1, 0]),
+        cutout: makeBuffers([]),
         transparent: makeBuffers([]),
       },
     });
@@ -78,11 +134,11 @@ describe('voxel shadow integration', () => {
     renderer.finalizeStaticRegions();
 
     expect(renderer.getLoadedMeshCount()).toBe(3);
-    expect(renderer.getRenderedMeshCount()).toBe(2);
+    expect(renderer.getRenderedMeshCount()).toBe(3);
     const firstRegionMesh = renderer.getChunkMesh('0,0,0');
-    expect(firstRegionMesh).toBe(renderer.getChunkMesh('1,0,0'));
+    expect(firstRegionMesh).not.toBe(renderer.getChunkMesh('1,0,0'));
     expect(firstRegionMesh).not.toBe(renderer.getChunkMesh('2,0,0'));
-    expect(scene.children.filter((child) => child.name.startsWith('ChunkRegion:'))).toHaveLength(2);
+    expect(scene.children.filter((child) => child.name.startsWith('ChunkRegion:'))).toHaveLength(3);
 
     const secondRegionMesh = renderer.getChunkMesh('2,0,0');
     renderer.handleChunkMesh(response('0,0,0', 2));
@@ -109,7 +165,11 @@ describe('voxel shadow integration', () => {
     renderer.handleChunkMesh({
       type: 'CHUNK_MESH',
       key: '0,0,0',
-      payload: { opaque: makeBuffers([0, 0, 0, 1, 0, 0, 0, 1, 0]), transparent: makeBuffers([]) },
+      payload: {
+        opaque: makeBuffers([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        cutout: makeBuffers([]),
+        transparent: makeBuffers([]),
+      },
     });
     renderer.removeChunkMesh('0,0,0');
     expect(opaqueDispose).not.toHaveBeenCalled();
@@ -118,7 +178,7 @@ describe('voxel shadow integration', () => {
     transparentMaterial.dispose();
   });
 
-  it('merges medium-segregated receiver indices into minimal forward meshes', () => {
+  it('shares source attributes across medium-segregated forward meshes', () => {
     const scene = new THREE.Scene();
     const opaqueMaterial = new THREE.MeshBasicMaterial();
     const transparentMaterial = new THREE.MeshBasicMaterial();
@@ -141,17 +201,18 @@ describe('voxel shadow integration', () => {
       0, 1, 0,
     ];
     const belowOpaque = new Uint32Array([0, 1, 2, 0, 2, 3]);
-    const response = (key: string): Parameters<ChunkRenderer['handleChunkMesh']>[0] => ({
+    const boundaryOpaque = new Uint32Array([0, 1, 2, 0, 2, 3]);
+    const response: Parameters<ChunkRenderer['handleChunkMesh']>[0] = {
       type: 'CHUNK_MESH',
-      key,
+      key: '0,0,0',
       payload: {
-        opaque: makeBuffers(positions, { belowOpaque }),
+        opaque: makeBuffers(positions, { belowOpaque, boundaryOpaque }),
+        cutout: makeBuffers([]),
         transparent: makeBuffers([]),
       },
-    });
+    };
 
-    renderer.handleChunkMesh(response('0,0,0'));
-    renderer.handleChunkMesh(response('1,0,0'));
+    renderer.handleChunkMesh(response);
     renderer.finalizeStaticRegions();
 
     const receiver = scene.getObjectByName('ForwardRefraction:belowOpaque') as THREE.Mesh | undefined;
@@ -166,10 +227,17 @@ describe('voxel shadow integration', () => {
     expect(receiver?.geometry.getAttribute('color')).toBeDefined();
     expect(Array.from(receiver?.geometry.getIndex()?.array ?? [])).toEqual([
       0, 1, 2, 0, 2, 3,
-      4, 5, 6, 4, 6, 7,
     ]);
-    expect(participants.size).toBe(1);
-    expect(Array.from(participants.getParticipants())).toEqual([receiver]);
+    const boundary = scene.getObjectByName('ForwardRefraction:boundaryOpaque') as THREE.Mesh | undefined;
+    expect(boundary).toBeDefined();
+    expect(boundary?.geometry.getAttribute('position')).toBe(receiver?.geometry.getAttribute('position'));
+    expect(boundary?.geometry.getAttribute('normal')).toBe(receiver?.geometry.getAttribute('normal'));
+    expect(boundary?.geometry.getAttribute('uv')).toBe(receiver?.geometry.getAttribute('uv'));
+    expect(boundary?.geometry.getAttribute('ao')).toBe(receiver?.geometry.getAttribute('ao'));
+    expect(boundary?.geometry.getAttribute('color')).toBe(receiver?.geometry.getAttribute('color'));
+    expect(boundary?.geometry.getIndex()).not.toBe(receiver?.geometry.getIndex());
+    expect(participants.size).toBe(2);
+    expect(Array.from(participants.getParticipants())).toEqual([receiver, boundary]);
 
     renderer.destroy();
     receiverMaterials.opaque.dispose();

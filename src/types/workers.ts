@@ -81,6 +81,7 @@ export interface ChunkMeshResponse {
   key: ChunkKey;
   payload: {
     opaque: MeshBuffers;
+    cutout: MeshBuffers;
     transparent: MeshBuffers;
   };
 }
@@ -134,22 +135,20 @@ export function isChunkMeshResponse(msg: any): msg is ChunkMeshResponse {
   return msg && msg.type === 'CHUNK_MESH' &&
          typeof msg.key === 'string' &&
          msg.payload &&
-         msg.payload.opaque &&
-         msg.payload.transparent &&
-         msg.payload.opaque.positions instanceof Float32Array &&
-         msg.payload.opaque.normals instanceof Float32Array &&
-         msg.payload.opaque.uvs instanceof Float32Array &&
-         msg.payload.opaque.ao instanceof Float32Array &&
-         msg.payload.opaque.colors instanceof Float32Array &&
-         (msg.payload.opaque.indices instanceof Uint16Array || msg.payload.opaque.indices instanceof Uint32Array) &&
-         (!msg.payload.opaque.forwardIndices ||
-           Object.values(msg.payload.opaque.forwardIndices).every((indices: unknown) => indices instanceof Uint32Array)) &&
-         msg.payload.transparent.positions instanceof Float32Array &&
-         msg.payload.transparent.normals instanceof Float32Array &&
-         msg.payload.transparent.uvs instanceof Float32Array &&
-         msg.payload.transparent.ao instanceof Float32Array &&
-         msg.payload.transparent.colors instanceof Float32Array &&
-         (msg.payload.transparent.indices instanceof Uint16Array || msg.payload.transparent.indices instanceof Uint32Array) &&
-         (!msg.payload.transparent.forwardIndices ||
-           Object.values(msg.payload.transparent.forwardIndices).every((indices: unknown) => indices instanceof Uint32Array));
+         isMeshBuffers(msg.payload.opaque) &&
+         isMeshBuffers(msg.payload.cutout) &&
+         isMeshBuffers(msg.payload.transparent);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function isMeshBuffers(value: any): value is MeshBuffers {
+  return value &&
+    value.positions instanceof Float32Array &&
+    value.normals instanceof Float32Array &&
+    value.uvs instanceof Float32Array &&
+    value.ao instanceof Float32Array &&
+    value.colors instanceof Float32Array &&
+    (value.indices instanceof Uint16Array || value.indices instanceof Uint32Array) &&
+    (!value.forwardIndices ||
+      Object.values(value.forwardIndices).every((indices: unknown) => indices instanceof Uint32Array));
 }

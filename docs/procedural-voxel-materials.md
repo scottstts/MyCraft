@@ -1,6 +1,6 @@
 # Procedural voxel materials
 
-`src/engine/render/ProceduralVoxelTextures.ts` owns the block-face pixel field. It produces deterministic 16×16 RGBA tiles in a one-row 38-slot atlas consumed by `public/atlas.json` and the mesher worker, so startup no longer loads block texture PNGs. Each material family has four pattern realizations (the base tile plus three generated variants), and `PROCEDURAL_VOXEL_TEXTURE_SEED` is the stable seed for the material family.
+`src/engine/render/ProceduralVoxelTextures.ts` owns the block-face pixel field. It produces deterministic 16×16 RGBA tiles in a one-row 38-slot atlas consumed by `public/atlas.json` and the mesher worker, so startup no longer loads block texture PNGs. Each material family has four pattern realizations (the base tile plus three generated variants), and `PROCEDURAL_VOXEL_TEXTURE_SEED` is the stable seed for the material family. The mesher publishes normal opaque faces and leaf faces into separate terrain buffers: normal faces use an opaque `BlockMaterial` variant with a single clamped atlas lookup, while leaves use the full cutout variant.
 
 The field stack uses a warped, multi-band value-noise signal for broad material grouping, meso breakup, and pixel variation. Each material then applies an authored palette and structural rule: dirt, grass, and sand use clustered particulate color; cobblestone uses jittered stone cells and mortar; wood side uses vertical grain while wood top uses square growth rings; grass side keeps its directional green cap.
 

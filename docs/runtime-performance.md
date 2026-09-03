@@ -24,7 +24,7 @@ Caustic receivers use four phase samples for block terrain and one explicit pref
 
 ## Static terrain regions
 
-`ChunkRenderer` keeps each worker response in an authoritative per-chunk buffer map. After the complete initial mesh set is ready, it compiles neighboring chunks into 2×2 X/Z regions with separate opaque and transparent meshes. The region size is intentionally limited to two chunks because larger batches need a benchmark before they can be justified. A remesh or removal rebuilds only its region, reuses its geometry object where the material bucket remains present, and leaves other region draw objects untouched.
+`ChunkRenderer` keeps each worker response in an authoritative per-chunk buffer map. After the complete initial mesh set is ready, it compiles each chunk into a 1×1 X/Z region with separate opaque, cutout, and transparent meshes. A remesh or removal rebuilds only its region, reuses its geometry object where the material bucket remains present, and leaves other region draw objects untouched. Opaque terrain meshes are registered with `Composer`; when no block-water indices are present, the water-free capture temporarily replaces only those meshes with a shared depth-only material, preserving cutout and silhouette-sensitive paths.
 
 ## Edit invalidation
 
