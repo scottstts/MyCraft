@@ -15,6 +15,9 @@ export const CAMERA_AUDIO_SUBMERSION_THRESHOLD = 0.5
 export const CAMERA_AUDIO_SAMPLE_HEIGHT = 0.4
 export const OCEAN_AUDIO_REFERENCE_DISTANCE = 12
 export const OCEAN_AUDIO_MAX_DISTANCE = 96
+export const WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS = [1.28, 2.73, 4.07, 5.25] as const
+// Kept for compatibility with callers/tests that reference the old first-cutoff constant.
+export const WATER_STEP_INACTIVITY_CUTOFF_SECONDS = WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[0]
 
 /**
  * Treat a small vertical camera envelope as the audio listener volume. At the
@@ -131,6 +134,7 @@ export class SoundEffects {
   private lastY: number
   private lastZ: number
   private lastGrounded: boolean = false
+  private lastTouchingWaterSurface: boolean = false
 
   private sfxVolume: number = 0.7
 
@@ -139,7 +143,9 @@ export class SoundEffects {
   private oceanLoop = makeLoopingAudio(oceanUrl, this.sfxVolume * 0.6)
 
   private waterStepClip: HTMLAudioElement | null = null
-  private lastTouchingWater = false
+  private waterStepTriggerActive = false
+  private waterStepCutoffTimer: ReturnType<typeof setTimeout> | null = null
+  private waterStepCutoffTargetSeconds: number | null = null
 
   // Ocean proximity sampling (to control ocean volume by distance to sea)
   private oceanSampleTimer = 0
@@ -156,7 +162,6 @@ export class SoundEffects {
     this.lastX = position.x
     this.lastY = position.y
     this.lastZ = position.z
-    this.lastTouchingWater = this.isTouchingWaterSurface() || (this.player.isUnderwater?.() ?? false)
   }
 
   setVolume(v: number) {
@@ -212,10 +217,12 @@ export class SoundEffects {
   }
 
   /**
-   * Water steps are a serialized one-shot stream. A trigger that arrives while
-   * the current sample is playing is intentionally ignored rather than
-   * overlapping or restarting it. When cadence stops, the active sample is
-   * left alone but no replacement can be scheduled.
+   * Water steps are a serialized one-shot stream. While the trigger remains
+   * active, repeated updates leave the current sample alone and the ended
+   * callback starts the next sample. When the trigger becomes inactive, finish
+   * the gulp that is currently in progress, then stop at its authored boundary.
+   * If inactivity begins after the final authored boundary, let the clip reach
+   * its natural end.
    */
   private startWaterStepIfIdle(): void {
     const current = this.waterStepClip
@@ -226,21 +233,103 @@ export class SoundEffects {
       audio.preload = 'auto'
       audio.loop = false
       audio.volume = this.sfxVolume
+      audio.ontimeupdate = () => this.stopWaterStepAtInactivityBoundary(audio)
       audio.onended = () => {
         if (this.waterStepClip !== audio) return
+        this.clearWaterStepCutoffTimer()
+        this.waterStepCutoffTargetSeconds = null
         this.waterStepClip = null
+        if (this.waterStepTriggerActive) this.startWaterStepIfIdle()
       }
       this.waterStepClip = audio
       void audio.play().catch(() => {
-        if (this.waterStepClip === audio) this.waterStepClip = null
+        if (this.waterStepClip === audio) {
+          this.clearWaterStepCutoffTimer()
+          this.waterStepCutoffTargetSeconds = null
+          this.waterStepClip = null
+        }
       })
     } catch {
       // Ignore unavailable audio devices and autoplay failures.
     }
   }
 
-  private setWaterStepCadenceActive(active: boolean): void {
-    if (active) this.startWaterStepIfIdle()
+  private setWaterStepTriggerActive(active: boolean): void {
+    const wasActive = this.waterStepTriggerActive
+    this.waterStepTriggerActive = active
+
+    if (active) {
+      // Reactivation during a gulp's inactivity grace period resumes ownership
+      // of the same clip. Never restart/reset a clip that is already playing.
+      this.clearWaterStepCutoffTimer()
+      this.waterStepCutoffTargetSeconds = null
+      if (!wasActive || !this.waterStepClip) this.startWaterStepIfIdle()
+      return
+    }
+
+    // Snapshot the next authored gulp boundary only on the active -> inactive
+    // edge. Repeated inactive frames must not advance the target to a later gulp.
+    if (wasActive) this.armWaterStepInactivityBoundary()
+  }
+
+  private armWaterStepInactivityBoundary(): void {
+    this.clearWaterStepCutoffTimer()
+    const audio = this.waterStepClip
+    if (!audio) {
+      this.waterStepCutoffTargetSeconds = null
+      return
+    }
+
+    this.waterStepCutoffTargetSeconds = null
+    for (const stopPoint of WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS) {
+      if (audio.currentTime <= stopPoint) {
+        this.waterStepCutoffTargetSeconds = stopPoint
+        break
+      }
+    }
+
+    // Past 5.25 s, the next valid stopping point is the file's natural end.
+    if (this.waterStepCutoffTargetSeconds === null) return
+    this.stopWaterStepAtInactivityBoundary(audio)
+  }
+
+  private stopWaterStepAtInactivityBoundary(audio = this.waterStepClip): void {
+    if (!audio || this.waterStepTriggerActive) return
+    if (this.waterStepClip !== audio) return
+
+    const stopAt = this.waterStepCutoffTargetSeconds
+    if (stopAt === null) return
+
+    if (audio.currentTime >= stopAt) {
+      this.stopWaterStepImmediately()
+      return
+    }
+
+    if (this.waterStepCutoffTimer !== null) return
+    const remainingMs = Math.max(1, (stopAt - audio.currentTime) * 1000)
+    this.waterStepCutoffTimer = setTimeout(() => {
+      this.waterStepCutoffTimer = null
+      this.stopWaterStepAtInactivityBoundary(audio)
+    }, remainingMs)
+  }
+
+  private clearWaterStepCutoffTimer(): void {
+    if (this.waterStepCutoffTimer === null) return
+    clearTimeout(this.waterStepCutoffTimer)
+    this.waterStepCutoffTimer = null
+  }
+
+  private stopWaterStepImmediately(): void {
+    const current = this.waterStepClip
+    this.clearWaterStepCutoffTimer()
+    this.waterStepCutoffTargetSeconds = null
+    this.waterStepClip = null
+    if (!current) return
+    current.onended = null
+    current.ontimeupdate = null
+    try {
+      current.pause()
+    } catch { /* Ignore stop errors */ }
   }
 
   // Public one-shots for interactions (both use the same block sound)
@@ -261,8 +350,8 @@ export class SoundEffects {
       this.lastY = position.y
       this.lastZ = position.z
       this.lastGrounded = this.player.isGrounded()
-      this.lastTouchingWater = this.isTouchingWaterSurface() || (this.player.isUnderwater?.() ?? false)
-      this.setWaterStepCadenceActive(false)
+      this.lastTouchingWaterSurface = this.isTouchingWaterSurface()
+      this.setWaterStepTriggerActive(false)
       return
     }
 
@@ -292,19 +381,33 @@ export class SoundEffects {
     const inputMoving = Math.hypot(inputVec.x, inputVec.z) > 0.05
     const movingOnGround = grounded && (speedXZ > 0.2 || inputMoving)
 
-    const waterTransitioned = touchingWater !== this.lastTouchingWater
-    const movingThroughWater = speedXZ > 0.05 || inputMoving || Math.abs(dy) > 0.08
-    const waterStepCadence = touchingWaterSurface && !playerUnderWater && movingThroughWater
-    if (waterTransitioned) this.startWaterStepIfIdle()
-    this.setWaterStepCadenceActive(waterStepCadence)
+    // Sustained water-step audio is owned only by intentional movement input
+    // while the character actually intersects the surface. Vertical movement is
+    // deliberately NOT treated as a continuous action: frame-to-frame dy can
+    // contain landing/collision corrections that otherwise create false
+    // inactive -> active retriggers and start a fresh clip tail.
+    //
+    // Jumps are represented as one-frame surface-contact events instead:
+    // - leaving the surface while moving upward = jump/takeoff from water
+    // - entering the surface while moving downward = landing/jump into water
+    const jumpedOffWaterSurface =
+      this.lastTouchingWaterSurface && !touchingWaterSurface && dy > 0.02
+    const landedOnWaterSurface =
+      !this.lastTouchingWaterSurface && touchingWaterSurface && dy < -0.02
+    const verticalWaterContactAction = jumpedOffWaterSurface || landedOnWaterSurface
 
-    // Precedence: underwater > water step > footstep. Water transitions are
-    // handled above so entering/leaving water also works while jumping.
+    const sustainedWaterStepAction = touchingWaterSurface && inputMoving
+    const waterStepActionActive =
+      !playerUnderWater && (sustainedWaterStepAction || verticalWaterContactAction)
+    this.setWaterStepTriggerActive(waterStepActionActive)
+
+    // Precedence: underwater > water step > footstep. The water-step trigger
+    // is evaluated before this branch so deactivation can arm the next gulp boundary.
     if (isUnderWater) {
       // Start underwater loop immediately; stop requesting new footstep clips.
       this.setLoopPlaying(this.underLoop, true)
       this.footLoop.setDesired(false)
-    } else if (touchingWaterSurface && !playerUnderWater && movingThroughWater) {
+    } else if (waterStepActionActive) {
       this.setLoopPlaying(this.underLoop, false)
       this.footLoop.setDesired(false)
     } else if (movingOnGround) {
@@ -332,7 +435,7 @@ export class SoundEffects {
     this.lastY = position.y
     this.lastZ = position.z
     this.lastGrounded = grounded
-    this.lastTouchingWater = touchingWater
+    this.lastTouchingWaterSurface = touchingWaterSurface
   }
 
   // Compute and set ocean loop volume based on proximity to sea
@@ -444,8 +547,7 @@ export class SoundEffects {
   dispose() {
     // Stop and release references
     try { this.footLoop.stopImmediate() } catch { /* Ignore stop errors */ }
-    try { this.waterStepClip?.pause() } catch { /* Ignore stop errors */ }
-    this.waterStepClip = null
+    this.stopWaterStepImmediately()
     try { this.underLoop.pause() } catch { /* Ignore pause errors */ }
     try { this.oceanLoop.pause() } catch { /* Ignore pause errors */ }
   }
