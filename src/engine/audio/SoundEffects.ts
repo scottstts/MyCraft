@@ -142,10 +142,15 @@ export class SoundEffects {
   private underLoop = makeLoopingAudio(underwaterUrl, this.sfxVolume * 0.8)
   private oceanLoop = makeLoopingAudio(oceanUrl, this.sfxVolume * 0.6)
 
-  private waterStepClip: HTMLAudioElement | null = null
+  private waterStepAudioContext: AudioContext | null = null
+  private waterStepBuffer: AudioBuffer | null = null
+  private waterStepBufferPromise: Promise<AudioBuffer | null> | null = null
+  private waterStepSource: AudioBufferSourceNode | null = null
+  private waterStepGain: GainNode | null = null
+  private waterStepStartedAtContextTime = 0
+  private waterStepScheduledStopContextTime: number | null = null
+  private waterStepScheduledStopOffsetSeconds: number | null = null
   private waterStepTriggerActive = false
-  private waterStepCutoffTimer: ReturnType<typeof setTimeout> | null = null
-  private waterStepCutoffTargetSeconds: number | null = null
 
   // Ocean proximity sampling (to control ocean volume by distance to sea)
   private oceanSampleTimer = 0
@@ -168,7 +173,7 @@ export class SoundEffects {
     const vol = Math.max(0, Math.min(1, v))
     this.sfxVolume = vol
     this.footLoop.setVolume(vol)
-    if (this.waterStepClip) this.waterStepClip.volume = vol
+    this.applyWaterStepGainVolume()
     this.underLoop.volume = Math.max(0, Math.min(1, vol * 0.8))
     // Base ocean loudness scales with SFX volume; proximity is applied per-frame
     this.oceanLoop.volume = Math.max(0, Math.min(1, vol * 0.6))
@@ -192,7 +197,9 @@ export class SoundEffects {
       } catch { /* ignore */ }
     }
     attemptSrc(footstepUrl)
-    attemptSrc(waterStepUrl)
+    // Water-step uses Web Audio so its authored gulp boundaries can be stopped on
+    // the audio render clock instead of through HTMLAudioElement timers/pause().
+    this.primeWaterStepWebAudio()
     // Prime underwater and ocean using temporary elements so we don't reset live loops
     attemptSrc(underwaterUrl)
     attemptSrc(oceanUrl)
@@ -223,34 +230,109 @@ export class SoundEffects {
    * the gulp that is currently in progress, then stop at its authored boundary.
    * If inactivity begins after the final authored boundary, let the clip reach
    * its natural end.
+   *
+   * Unlike the other SFX, water-step playback uses Web Audio. This keeps the
+   * authored stop points on AudioContext.currentTime instead of relying on the
+   * JS event loop + HTMLAudioElement.currentTime + pause(), which can leave an
+   * audible buffered tail.
    */
-  private startWaterStepIfIdle(): void {
-    const current = this.waterStepClip
-    if (current && !current.paused && !current.ended) return
+  private getWaterStepAudioContext(): AudioContext | null {
+    if (this.waterStepAudioContext) return this.waterStepAudioContext
 
     try {
-      const audio = new Audio(waterStepUrl)
-      audio.preload = 'auto'
-      audio.loop = false
-      audio.volume = this.sfxVolume
-      audio.ontimeupdate = () => this.stopWaterStepAtInactivityBoundary(audio)
-      audio.onended = () => {
-        if (this.waterStepClip !== audio) return
-        this.clearWaterStepCutoffTimer()
-        this.waterStepCutoffTargetSeconds = null
-        this.waterStepClip = null
-        if (this.waterStepTriggerActive) this.startWaterStepIfIdle()
+      const scope = globalThis as typeof globalThis & {
+        webkitAudioContext?: typeof AudioContext
       }
-      this.waterStepClip = audio
-      void audio.play().catch(() => {
-        if (this.waterStepClip === audio) {
-          this.clearWaterStepCutoffTimer()
-          this.waterStepCutoffTargetSeconds = null
-          this.waterStepClip = null
+      const AudioContextCtor = globalThis.AudioContext ?? scope.webkitAudioContext
+      if (!AudioContextCtor) return null
+      this.waterStepAudioContext = new AudioContextCtor()
+      return this.waterStepAudioContext
+    } catch {
+      return null
+    }
+  }
+
+  private primeWaterStepWebAudio(): void {
+    const context = this.getWaterStepAudioContext()
+    if (!context) return
+    if (context.state === 'suspended') void context.resume().catch(() => {})
+    void this.ensureWaterStepBuffer()
+  }
+
+  private ensureWaterStepBuffer(): Promise<AudioBuffer | null> {
+    if (this.waterStepBuffer) return Promise.resolve(this.waterStepBuffer)
+    if (this.waterStepBufferPromise) return this.waterStepBufferPromise
+
+    const context = this.getWaterStepAudioContext()
+    if (!context) return Promise.resolve(null)
+
+    this.waterStepBufferPromise = fetch(waterStepUrl)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Failed to load water-step audio: ${response.status}`)
+        return response.arrayBuffer()
+      })
+      .then((bytes) => context.decodeAudioData(bytes))
+      .then((buffer) => {
+        this.waterStepBuffer = buffer
+        return buffer
+      })
+      .catch(() => null)
+      .finally(() => {
+        this.waterStepBufferPromise = null
+      })
+
+    return this.waterStepBufferPromise
+  }
+
+  private startWaterStepIfIdle(): void {
+    if (this.waterStepSource) return
+
+    const context = this.getWaterStepAudioContext()
+    if (!context) return
+    if (context.state === 'suspended') void context.resume().catch(() => {})
+
+    const buffer = this.waterStepBuffer
+    if (!buffer) {
+      void this.ensureWaterStepBuffer().then((loaded) => {
+        if (loaded && this.waterStepTriggerActive && !this.waterStepSource) {
+          this.startWaterStepIfIdle()
         }
       })
+      return
+    }
+
+    try {
+      const gain = context.createGain()
+      gain.gain.setValueAtTime(this.sfxVolume, context.currentTime)
+      gain.connect(context.destination)
+
+      const source = context.createBufferSource()
+      source.buffer = buffer
+      source.connect(gain)
+
+      const startedAt = context.currentTime
+      source.onended = () => {
+        if (this.waterStepSource !== source) return
+        this.waterStepSource = null
+        this.waterStepGain = null
+        this.waterStepScheduledStopContextTime = null
+        this.waterStepScheduledStopOffsetSeconds = null
+        try { source.disconnect() } catch { /* Ignore disconnect errors */ }
+        try { gain.disconnect() } catch { /* Ignore disconnect errors */ }
+        if (this.waterStepTriggerActive) this.startWaterStepIfIdle()
+      }
+
+      this.waterStepSource = source
+      this.waterStepGain = gain
+      this.waterStepStartedAtContextTime = startedAt
+      this.waterStepScheduledStopContextTime = null
+      this.waterStepScheduledStopOffsetSeconds = null
+      source.start(startedAt)
     } catch {
-      // Ignore unavailable audio devices and autoplay failures.
+      this.waterStepSource = null
+      this.waterStepGain = null
+      this.waterStepScheduledStopContextTime = null
+      this.waterStepScheduledStopOffsetSeconds = null
     }
   }
 
@@ -259,77 +341,146 @@ export class SoundEffects {
     this.waterStepTriggerActive = active
 
     if (active) {
-      // Reactivation during a gulp's inactivity grace period resumes ownership
-      // of the same clip. Never restart/reset a clip that is already playing.
-      this.clearWaterStepCutoffTimer()
-      this.waterStepCutoffTargetSeconds = null
-      if (!wasActive || !this.waterStepClip) this.startWaterStepIfIdle()
+      // Reactivation during a gulp's inactivity grace period keeps the current
+      // source. Replace any previously scheduled early stop with the clip's
+      // natural end and cancel its tiny anti-click fade.
+      if (this.waterStepSource) this.cancelWaterStepScheduledBoundaryStop()
+      if (!wasActive || !this.waterStepSource) this.startWaterStepIfIdle()
       return
     }
 
-    // Snapshot the next authored gulp boundary only on the active -> inactive
-    // edge. Repeated inactive frames must not advance the target to a later gulp.
+    // Snapshot/schedule the next authored gulp boundary only on the active ->
+    // inactive edge. Repeated inactive frames must not advance the target.
     if (wasActive) this.armWaterStepInactivityBoundary()
   }
 
-  private armWaterStepInactivityBoundary(): void {
-    this.clearWaterStepCutoffTimer()
-    const audio = this.waterStepClip
-    if (!audio) {
-      this.waterStepCutoffTargetSeconds = null
-      return
-    }
+  private getWaterStepPlaybackOffsetSeconds(): number {
+    const context = this.waterStepAudioContext
+    if (!context || !this.waterStepSource) return 0
+    return Math.max(0, context.currentTime - this.waterStepStartedAtContextTime)
+  }
 
-    this.waterStepCutoffTargetSeconds = null
+  private armWaterStepInactivityBoundary(): void {
+    const context = this.waterStepAudioContext
+    const source = this.waterStepSource
+    const gain = this.waterStepGain
+    const buffer = this.waterStepBuffer
+    if (!context || !source || !gain || !buffer) return
+
+    const offset = this.getWaterStepPlaybackOffsetSeconds()
+    let stopOffset: number | null = null
     for (const stopPoint of WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS) {
-      if (audio.currentTime <= stopPoint) {
-        this.waterStepCutoffTargetSeconds = stopPoint
+      if (offset <= stopPoint) {
+        stopOffset = stopPoint
         break
       }
     }
 
     // Past 5.25 s, the next valid stopping point is the file's natural end.
-    if (this.waterStepCutoffTargetSeconds === null) return
-    this.stopWaterStepAtInactivityBoundary(audio)
-  }
-
-  private stopWaterStepAtInactivityBoundary(audio = this.waterStepClip): void {
-    if (!audio || this.waterStepTriggerActive) return
-    if (this.waterStepClip !== audio) return
-
-    const stopAt = this.waterStepCutoffTargetSeconds
-    if (stopAt === null) return
-
-    if (audio.currentTime >= stopAt) {
-      this.stopWaterStepImmediately()
+    // Do not add an artificial stop/fade there; the decoded sample already owns
+    // its natural tail and onended will simply not chain while inactive.
+    if (stopOffset === null || stopOffset >= buffer.duration) {
+      this.waterStepScheduledStopContextTime = null
+      this.waterStepScheduledStopOffsetSeconds = null
       return
     }
 
-    if (this.waterStepCutoffTimer !== null) return
-    const remainingMs = Math.max(1, (stopAt - audio.currentTime) * 1000)
-    this.waterStepCutoffTimer = setTimeout(() => {
-      this.waterStepCutoffTimer = null
-      this.stopWaterStepAtInactivityBoundary(audio)
-    }, remainingMs)
+    const stopTime = this.waterStepStartedAtContextTime + stopOffset
+    this.waterStepScheduledStopContextTime = stopTime
+    this.waterStepScheduledStopOffsetSeconds = stopOffset
+
+    // 4 ms is short enough to be inaudible as a fade but prevents a discontinuity
+    // if the authored boundary is not exactly at a zero crossing.
+    const fadeSeconds = 0.004
+    const now = context.currentTime
+    const fadeStart = Math.max(now, stopTime - fadeSeconds)
+    try {
+      gain.gain.cancelScheduledValues(now)
+      gain.gain.setValueAtTime(this.sfxVolume, now)
+      gain.gain.setValueAtTime(this.sfxVolume, fadeStart)
+      gain.gain.linearRampToValueAtTime(0, stopTime)
+      source.stop(Math.max(now, stopTime))
+    } catch {
+      // If the source ended between state evaluation and scheduling, onended owns cleanup.
+    }
   }
 
-  private clearWaterStepCutoffTimer(): void {
-    if (this.waterStepCutoffTimer === null) return
-    clearTimeout(this.waterStepCutoffTimer)
-    this.waterStepCutoffTimer = null
+  private cancelWaterStepScheduledBoundaryStop(): void {
+    const context = this.waterStepAudioContext
+    const source = this.waterStepSource
+    const gain = this.waterStepGain
+    const buffer = this.waterStepBuffer
+    if (!context || !source || !gain || !buffer) {
+      this.waterStepScheduledStopContextTime = null
+      this.waterStepScheduledStopOffsetSeconds = null
+      return
+    }
+
+    const now = context.currentTime
+    try {
+      gain.gain.cancelScheduledValues(now)
+      gain.gain.setValueAtTime(this.sfxVolume, now)
+
+      // AudioBufferSourceNode.stop() may be called again before the source ends;
+      // the latest scheduled time replaces the previous one. Move an early gulp
+      // stop back to the natural end when the action becomes active again.
+      if (this.waterStepScheduledStopContextTime !== null) {
+        const naturalEnd = this.waterStepStartedAtContextTime + buffer.duration
+        if (naturalEnd > now) source.stop(naturalEnd)
+      }
+    } catch {
+      // Source may already have ended on this audio quantum.
+    }
+
+    this.waterStepScheduledStopContextTime = null
+    this.waterStepScheduledStopOffsetSeconds = null
+  }
+
+  private applyWaterStepGainVolume(): void {
+    const context = this.waterStepAudioContext
+    const gain = this.waterStepGain
+    if (!context || !gain) return
+
+    const now = context.currentTime
+    try {
+      gain.gain.cancelScheduledValues(now)
+      gain.gain.setValueAtTime(this.sfxVolume, now)
+
+      const stopTime = this.waterStepScheduledStopContextTime
+      if (stopTime !== null && stopTime > now) {
+        const fadeStart = Math.max(now, stopTime - 0.004)
+        gain.gain.setValueAtTime(this.sfxVolume, fadeStart)
+        gain.gain.linearRampToValueAtTime(0, stopTime)
+      }
+    } catch {
+      // Ignore gain automation failures on a source that is ending.
+    }
   }
 
   private stopWaterStepImmediately(): void {
-    const current = this.waterStepClip
-    this.clearWaterStepCutoffTimer()
-    this.waterStepCutoffTargetSeconds = null
-    this.waterStepClip = null
-    if (!current) return
-    current.onended = null
-    current.ontimeupdate = null
+    const context = this.waterStepAudioContext
+    const source = this.waterStepSource
+    const gain = this.waterStepGain
+
+    this.waterStepSource = null
+    this.waterStepGain = null
+    this.waterStepScheduledStopContextTime = null
+    this.waterStepScheduledStopOffsetSeconds = null
+    if (!source) return
+
+    source.onended = null
     try {
-      current.pause()
+      if (context && gain) {
+        const now = context.currentTime
+        gain.gain.cancelScheduledValues(now)
+        gain.gain.setValueAtTime(0, now)
+        source.stop(now)
+      } else {
+        source.stop()
+      }
     } catch { /* Ignore stop errors */ }
+    try { source.disconnect() } catch { /* Ignore disconnect errors */ }
+    try { gain?.disconnect() } catch { /* Ignore disconnect errors */ }
   }
 
   // Public one-shots for interactions (both use the same block sound)
@@ -550,5 +701,9 @@ export class SoundEffects {
     this.stopWaterStepImmediately()
     try { this.underLoop.pause() } catch { /* Ignore pause errors */ }
     try { this.oceanLoop.pause() } catch { /* Ignore pause errors */ }
+    if (this.waterStepAudioContext) {
+      try { void this.waterStepAudioContext.close() } catch { /* Ignore close errors */ }
+      this.waterStepAudioContext = null
+    }
   }
 }

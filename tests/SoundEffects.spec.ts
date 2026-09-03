@@ -35,24 +35,26 @@ describe('camera underwater audio threshold', () => {
 });
 
 describe('water-step trigger', () => {
-  it('serializes surface actions, finishes the current gulp on inactivity, and does not false-retrigger from dy', () => {
-    const originalAudio = (globalThis as unknown as { Audio?: unknown }).Audio;
-    const sources: string[] = [];
-    const audioInstances: FakeAudio[] = [];
+  it('uses Web Audio clock scheduling for gulp boundaries and does not false-retrigger from dy', async () => {
+    const globals = globalThis as unknown as {
+      Audio?: unknown;
+      AudioContext?: unknown;
+      fetch?: unknown;
+    };
+    const originalAudio = globals.Audio;
+    const originalAudioContext = globals.AudioContext;
+    const originalFetch = globals.fetch;
 
+    const htmlAudioSources: string[] = [];
     class FakeAudio {
       paused = true;
-      ended = false;
       loop = false;
       volume = 1;
       preload = 'auto';
-      currentTime = 0;
-      onended: (() => void) | null = null;
-      ontimeupdate: (() => void) | null = null;
+      muted = false;
 
       constructor(public readonly src: string) {
-        sources.push(src);
-        audioInstances.push(this);
+        htmlAudioSources.push(src);
       }
 
       play(): Promise<void> {
@@ -65,14 +67,96 @@ describe('water-step trigger', () => {
       }
     }
 
-    const waterSteps = () => audioInstances.filter((audio) => audio.src.includes('water_step'));
-    const waterStepCount = () => waterSteps().length;
-    const tickAudioAt = (audio: FakeAudio, time: number) => {
-      audio.currentTime = time;
-      audio.ontimeupdate?.();
-    };
+    class FakeAudioParam {
+      value = 1;
+      readonly events: Array<{ type: string; value?: number; time: number }> = [];
 
-    (globalThis as unknown as { Audio: typeof FakeAudio }).Audio = FakeAudio;
+      cancelScheduledValues(time: number): void {
+        this.events.push({ type: 'cancel', time });
+      }
+
+      setValueAtTime(value: number, time: number): void {
+        this.value = value;
+        this.events.push({ type: 'set', value, time });
+      }
+
+      linearRampToValueAtTime(value: number, time: number): void {
+        this.value = value;
+        this.events.push({ type: 'ramp', value, time });
+      }
+    }
+
+    class FakeGainNode {
+      gain = new FakeAudioParam();
+      connect(): void {}
+      disconnect(): void {}
+    }
+
+    class FakeBufferSourceNode {
+      buffer: { duration: number } | null = null;
+      onended: (() => void) | null = null;
+      startedAt: number | null = null;
+      readonly stopCalls: number[] = [];
+
+      connect(): void {}
+      disconnect(): void {}
+
+      start(when = 0): void {
+        this.startedAt = when;
+      }
+
+      stop(when = 0): void {
+        this.stopCalls.push(when);
+      }
+    }
+
+    const contexts: FakeAudioContext[] = [];
+    class FakeAudioContext {
+      currentTime = 0;
+      state: AudioContextState = 'running';
+      destination = {};
+      readonly sources: FakeBufferSourceNode[] = [];
+      readonly gains: FakeGainNode[] = [];
+
+      constructor() {
+        contexts.push(this);
+      }
+
+      createBufferSource(): FakeBufferSourceNode {
+        const source = new FakeBufferSourceNode();
+        this.sources.push(source);
+        return source;
+      }
+
+      createGain(): FakeGainNode {
+        const gain = new FakeGainNode();
+        this.gains.push(gain);
+        return gain;
+      }
+
+      decodeAudioData(): Promise<{ duration: number }> {
+        return Promise.resolve({ duration: 7 });
+      }
+
+      resume(): Promise<void> {
+        this.state = 'running';
+        return Promise.resolve();
+      }
+
+      close(): Promise<void> {
+        this.state = 'closed';
+        return Promise.resolve();
+      }
+    }
+
+    globals.Audio = FakeAudio;
+    globals.AudioContext = FakeAudioContext;
+    globals.fetch = (() => Promise.resolve({
+      ok: true,
+      status: 200,
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+    })) as unknown;
+
     try {
       let inWater = false;
       let moving = false;
@@ -95,152 +179,162 @@ describe('water-step trigger', () => {
       camera.position.y = 100;
       const effects = new SoundEffects(world, input, player, camera);
 
-      // Merely standing in surface water must stay silent.
+      effects.tryUnlockOnUserGesture();
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      const context = contexts[0]!;
+      expect(context).toBeDefined();
+
+      const sourceCount = () => context.sources.length;
+      const currentSource = () => context.sources[context.sources.length - 1]!;
+      const setPlaybackOffset = (source: FakeBufferSourceNode, seconds: number) => {
+        context.currentTime = source.startedAt! + seconds;
+      };
+      const endSource = (source: FakeBufferSourceNode) => source.onended?.();
+
+      // Water-step must no longer use HTMLAudioElement at all.
+      expect(htmlAudioSources.some((source) => source.includes('water_step'))).toBe(false);
+
+      // Merely standing in surface water stays silent.
       effects.update(1 / 60, false, true);
       inWater = true;
       effects.update(1 / 60, false, true);
-      expect(waterStepCount()).toBe(0);
+      expect(sourceCount()).toBe(0);
 
-      // Intentional walking while touching the surface starts exactly one clip.
+      // Walking starts one Web Audio source; repeated valid frames do not restart it.
       moving = true;
       position.x = 0.2;
       effects.update(1 / 60, false, true);
-      expect(waterStepCount()).toBe(1);
-      const firstWaterStep = waterSteps()[0]!;
-
+      expect(sourceCount()).toBe(1);
+      const first = currentSource();
       position.x = 0.4;
       effects.update(1 / 60, false, true);
-      expect(waterStepCount()).toBe(1);
-      expect(firstWaterStep.paused).toBe(false);
+      expect(sourceCount()).toBe(1);
 
-      // Inactivity during gulp 1 snapshots 1.28 s as the stop point.
-      tickAudioAt(firstWaterStep, 0.9);
+      // Inactivity during gulp 1 schedules an audio-clock stop exactly at 1.28 s.
+      setPlaybackOffset(first, 0.9);
       moving = false;
       effects.update(1 / 60, false, true);
-      tickAudioAt(firstWaterStep, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[0] - 0.001);
-      expect(firstWaterStep.paused).toBe(false);
-      tickAudioAt(firstWaterStep, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[0]);
-      expect(firstWaterStep.paused).toBe(true);
+      expect(first.stopCalls.at(-1)).toBeCloseTo(first.startedAt! + WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[0]);
 
-      // Start again. Inactivity after 1.28 s must finish gulp 2 at 2.73 s,
-      // not fall back to the old hard-coded 1.28 s gate.
+      // Repeated inactive frames must not move that stop to a later gulp.
+      const stopCallCount = first.stopCalls.length;
+      setPlaybackOffset(first, 1.1);
+      effects.update(1 / 60, false, true);
+      expect(first.stopCalls).toHaveLength(stopCallCount);
+
+      // Simulate the scheduled stop completing. Inactive means no chaining.
+      setPlaybackOffset(first, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[0]);
+      endSource(first);
+      expect(sourceCount()).toBe(1);
+
+      // Inactivity after 1.28 s schedules 2.73, proving 1.28 is not a binary gate.
       moving = true;
       effects.update(1 / 60, false, true);
-      expect(waterStepCount()).toBe(2);
-      const secondWaterStep = waterSteps()[1]!;
-      tickAudioAt(secondWaterStep, 1.8);
+      expect(sourceCount()).toBe(2);
+      const second = currentSource();
+      setPlaybackOffset(second, 1.8);
       moving = false;
       effects.update(1 / 60, false, true);
-      tickAudioAt(secondWaterStep, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[1] - 0.001);
-      expect(secondWaterStep.paused).toBe(false);
-      tickAudioAt(secondWaterStep, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[1]);
-      expect(secondWaterStep.paused).toBe(true);
+      expect(second.stopCalls.at(-1)).toBeCloseTo(second.startedAt! + WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[1]);
+      endSource(second);
 
-      // Same rule for gulp 3 and gulp 4 boundaries.
-      for (const [startTime, stopAt] of [
+      // Gulp 3 and 4 use their authored boundaries as well.
+      for (const [offset, boundary] of [
         [3.2, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[2]],
         [4.5, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[3]],
       ] as const) {
         moving = true;
         effects.update(1 / 60, false, true);
-        const loopWaterSteps = waterSteps();
-        const audio = loopWaterSteps[loopWaterSteps.length - 1]!;
-        tickAudioAt(audio, startTime);
+        const source = currentSource();
+        setPlaybackOffset(source, offset);
         moving = false;
         effects.update(1 / 60, false, true);
-        tickAudioAt(audio, stopAt - 0.001);
-        expect(audio.paused).toBe(false);
-        tickAudioAt(audio, stopAt);
-        expect(audio.paused).toBe(true);
+        expect(source.stopCalls.at(-1)).toBeCloseTo(source.startedAt! + boundary);
+        endSource(source);
       }
 
-      // If inactivity begins after the final authored boundary, do not cut the
-      // tail at 5.25 s. The next legal stop is the file's natural end.
+      // After 5.25 s there is no artificial stop: natural file end owns the tail.
       moving = true;
       effects.update(1 / 60, false, true);
-      const finalGulpSteps = waterSteps();
-      const finalGulpWaterStep = finalGulpSteps[finalGulpSteps.length - 1]!;
-      tickAudioAt(finalGulpWaterStep, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[3] + 0.1);
+      const finalGulp = currentSource();
+      setPlaybackOffset(finalGulp, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[3] + 0.1);
       moving = false;
       effects.update(1 / 60, false, true);
-      tickAudioAt(finalGulpWaterStep, 6.5);
-      expect(finalGulpWaterStep.paused).toBe(false);
-      const countBeforeNaturalEnd = waterStepCount();
-      finalGulpWaterStep.ended = true;
-      finalGulpWaterStep.onended?.();
-      expect(waterStepCount()).toBe(countBeforeNaturalEnd);
+      expect(finalGulp.stopCalls).toHaveLength(0);
+      const beforeNaturalEnd = sourceCount();
+      endSource(finalGulp);
+      expect(sourceCount()).toBe(beforeNaturalEnd);
 
-      // Reactivating before a snapshotted boundary keeps ownership of the same
-      // clip and cancels the pending stop; it must never restart from time zero.
+      // Reactivation before a scheduled boundary keeps the same source and replaces
+      // its early stop with the natural 7 s end rather than restarting from zero.
       moving = true;
       effects.update(1 / 60, false, true);
-      const reactivationSteps = waterSteps();
-      const reactivatedWaterStep = reactivationSteps[reactivationSteps.length - 1]!;
-      tickAudioAt(reactivatedWaterStep, 1.9);
+      const reactivated = currentSource();
+      setPlaybackOffset(reactivated, 1.9);
       moving = false;
-      effects.update(1 / 60, false, true); // arms 2.73 s
-      expect(reactivatedWaterStep.paused).toBe(false);
-      const countBeforeReactivation = waterStepCount();
+      effects.update(1 / 60, false, true);
+      expect(reactivated.stopCalls.at(-1)).toBeCloseTo(reactivated.startedAt! + 2.73);
+      const beforeReactivation = sourceCount();
+      setPlaybackOffset(reactivated, 2.0);
       moving = true;
       effects.update(1 / 60, false, true);
-      expect(waterStepCount()).toBe(countBeforeReactivation);
-      tickAudioAt(reactivatedWaterStep, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[1] + 0.1);
-      expect(reactivatedWaterStep.paused).toBe(false);
+      expect(sourceCount()).toBe(beforeReactivation);
+      expect(reactivated.stopCalls.at(-1)).toBeCloseTo(reactivated.startedAt! + 7);
 
-      // Continuous valid action still chains naturally at the real file end.
-      const countBeforeChain = waterStepCount();
-      reactivatedWaterStep.ended = true;
-      reactivatedWaterStep.onended?.();
-      expect(waterStepCount()).toBe(countBeforeChain + 1);
-      const chainedSteps = waterSteps();
-      const chainedWaterStep = chainedSteps[chainedSteps.length - 1]!;
+      // Continuous valid action still chains at the real file end.
+      endSource(reactivated);
+      expect(sourceCount()).toBe(beforeReactivation + 1);
+      const chained = currentSource();
 
-      // Regression: vertical frame-to-frame motion while still touching water
-      // must not act as an independent trigger. Once movement input stops, dy
-      // corrections cannot start a new water-step clip/tail.
-      tickAudioAt(chainedWaterStep, 0.7);
+      // Regression: dy/collision corrections while still touching the surface do
+      // not create a fresh action/source after movement input stops.
+      setPlaybackOffset(chained, 0.7);
       moving = false;
       position.y = 43.15;
       effects.update(1 / 60, false, true);
-      const countAfterInactivity = waterStepCount();
+      const afterInactivity = sourceCount();
+      const scheduledStops = chained.stopCalls.length;
       position.y = 43.30;
       effects.update(1 / 60, false, true);
       position.y = 43.20;
       effects.update(1 / 60, false, true);
-      expect(waterStepCount()).toBe(countAfterInactivity);
-      tickAudioAt(chainedWaterStep, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[0]);
-      expect(chainedWaterStep.paused).toBe(true);
+      expect(sourceCount()).toBe(afterInactivity);
+      expect(chained.stopCalls).toHaveLength(scheduledStops);
+      endSource(chained);
 
-      // A discrete takeoff from the water surface is still a valid action even
-      // without walking input, but it should create only one serialized clip.
+      // Discrete takeoff and landing remain valid one-frame water actions.
       position.y = 43;
-      effects.update(1 / 60, false, true); // restore surface-contact baseline
-      const countBeforeJump = waterStepCount();
+      effects.update(1 / 60, false, true);
+      const beforeJump = sourceCount();
       position.y = 45.2;
       effects.update(1 / 60, false, true);
-      expect(waterStepCount()).toBe(countBeforeJump + 1);
-      const jumpSteps = waterSteps();
-      const jumpWaterStep = jumpSteps[jumpSteps.length - 1]!;
-      effects.update(1 / 60, false, true); // event is one frame only -> inactivity
-      expect(waterStepCount()).toBe(countBeforeJump + 1);
-      tickAudioAt(jumpWaterStep, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[0]);
-      expect(jumpWaterStep.paused).toBe(true);
+      expect(sourceCount()).toBe(beforeJump + 1);
+      const jump = currentSource();
+      effects.update(1 / 60, false, true);
+      expect(jump.stopCalls.at(-1)).toBeCloseTo(jump.startedAt! + 1.28);
+      endSource(jump);
 
-      // Falling back into the surface is another discrete contact action.
-      const countBeforeLanding = waterStepCount();
+      const beforeLanding = sourceCount();
       position.y = 43;
       effects.update(1 / 60, false, true);
-      expect(waterStepCount()).toBe(countBeforeLanding + 1);
-      const landingSteps = waterSteps();
-      const landingWaterStep = landingSteps[landingSteps.length - 1]!;
+      expect(sourceCount()).toBe(beforeLanding + 1);
+      const landing = currentSource();
       effects.update(1 / 60, false, true);
-      tickAudioAt(landingWaterStep, WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[0]);
-      expect(landingWaterStep.paused).toBe(true);
+      expect(landing.stopCalls.at(-1)).toBeCloseTo(landing.startedAt! + 1.28);
+
+      // The anti-click fade is scheduled on the same audio clock as the stop.
+      const landingGain = context.gains[context.gains.length - 1]!;
+      const zeroRamp = landingGain.gain.events.find((event) => event.type === 'ramp' && event.value === 0);
+      expect(zeroRamp?.time).toBeCloseTo(landing.startedAt! + 1.28);
 
       effects.dispose();
     } finally {
-      if (originalAudio === undefined) delete (globalThis as unknown as { Audio?: unknown }).Audio;
-      else (globalThis as unknown as { Audio: unknown }).Audio = originalAudio;
+      if (originalAudio === undefined) delete globals.Audio;
+      else globals.Audio = originalAudio;
+      if (originalAudioContext === undefined) delete globals.AudioContext;
+      else globals.AudioContext = originalAudioContext;
+      if (originalFetch === undefined) delete globals.fetch;
+      else globals.fetch = originalFetch;
     }
   });
 });
