@@ -460,10 +460,6 @@ function update(dtSeconds: number) {
       interactionSystem.update();
     }
   }
-  // Update sound effects after movement/collision updates
-  if (sfx) {
-    sfx.update(dtSeconds, paused, inGame);
-  }
   // Keep diagnostic camera poses authoritative while still drawing the full
   // character rig at the corresponding player position.
   if (playerBody && inGame && !paused && diagnosticMode) {
@@ -605,6 +601,12 @@ function update(dtSeconds: number) {
       );
       composer.setUnderwaterTime(waterSystem.getTime());
     }
+  }
+
+  // Update sound effects after the water system has resolved this frame's
+  // camera position against the live displaced ocean surface.
+  if (sfx) {
+    sfx.update(dtSeconds, paused, inGame);
   }
 
   // Update subsystems here (physics, input, etc.)
@@ -1092,8 +1094,15 @@ async function startInternal(canvas: HTMLCanvasElement, options: EngineStartOpti
     if (composer) grassSystem.setVoxelShadowDepthTexture(composer.getDepthTexture(), camera.near, camera.far);
   }
   
-  // Sound effects
-  sfx = new SoundEffects(world, inputSystem, playerController, camera);
+  // Sound effects. The water system owns the live displaced surface used by
+  // the renderer, so audio can use the exact same camera waterline.
+  sfx = new SoundEffects(
+    world,
+    inputSystem,
+    playerController,
+    camera,
+    () => waterSystem?.getCameraSurfaceY(),
+  );
   
   // Connect world events to chunk renderer
   world.chunkPipeline.on('CHUNK_READY', () => {

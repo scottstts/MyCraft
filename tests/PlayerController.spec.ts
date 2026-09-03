@@ -97,6 +97,31 @@ describe('player controller feet collision', () => {
     expect(controller.getFeetPosition().y).toBeCloseTo(seabedTop, 4);
   });
 
+  it('enters swimming mode below an ocean surface represented by one water layer', () => {
+    const camera = new THREE.PerspectiveCamera();
+    // Fully below the surface, where the generated ocean column is air even
+    // though its surface block at WATER_LEVEL represents the water volume.
+    camera.position.set(12.5, 35, 12.5);
+    const input = {
+      getMoveInput: () => ({ x: 0, z: 0 }),
+      getOrientation: () => ({ yaw: 0, pitch: 0 }),
+      isSprinting: () => false,
+      consumeJumpRequested: () => false,
+      isJumpHeld: () => false,
+    } as unknown as InputSystem;
+    const world = {
+      getBlock: (_x: number, y: number) => y === 42 ? 5 : 0,
+      isAirFlooded: () => false,
+      isBlockSolid: (_x: number, y: number) => y <= 20,
+    } as unknown as World;
+    const controller = new PlayerController(camera, world, input);
+
+    controller.update(1 / 60);
+
+    expect(controller.isUnderwater()).toBe(true);
+    expect(controller.getMovementState().isUnderwater).toBe(true);
+  });
+
   it('keeps the leading head clear of a side wall while swimming', () => {
     const camera = new THREE.PerspectiveCamera();
     camera.position.set(12.5, 35, 12.5);

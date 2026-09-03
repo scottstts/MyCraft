@@ -7,6 +7,7 @@ import {
   OCEAN_AUDIO_MAX_DISTANCE,
   OCEAN_AUDIO_REFERENCE_DISTANCE,
   getCameraWaterSubmersion,
+  isCameraMoreThanHalfSubmerged,
   SoundEffects,
   WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS,
 } from '../src/engine/audio/SoundEffects';
@@ -18,6 +19,11 @@ describe('camera underwater audio threshold', () => {
     expect(getCameraWaterSubmersion(surfaceY + CAMERA_AUDIO_SAMPLE_HEIGHT, surfaceY)).toBe(0);
     expect(getCameraWaterSubmersion(surfaceY, surfaceY)).toBeCloseTo(CAMERA_AUDIO_SUBMERSION_THRESHOLD);
     expect(getCameraWaterSubmersion(surfaceY - CAMERA_AUDIO_SAMPLE_HEIGHT, surfaceY)).toBe(1);
+  });
+
+  it('does not enable underwater audio at exactly 50% submersion', () => {
+    expect(isCameraMoreThanHalfSubmerged(surfaceY, surfaceY)).toBe(false);
+    expect(isCameraMoreThanHalfSubmerged(surfaceY - 0.001, surfaceY)).toBe(true);
   });
 
   it('clamps the camera envelope outside the water range', () => {
@@ -180,12 +186,20 @@ describe('water-step trigger', () => {
       const effects = new SoundEffects(world, input, player, camera);
 
       effects.tryUnlockOnUserGesture();
-      for (let i = 0; i < 6; i++) await Promise.resolve();
       const context = contexts[0]!;
       expect(context).toBeDefined();
 
       const sourceCount = () => context.sources.length;
       const currentSource = () => context.sources[context.sources.length - 1]!;
+      const waitForSourceCount = async (expected: number): Promise<void> => {
+        // Buffer fetch/decode and the callback that starts the first source are
+        // asynchronous. Do not couple the test to an arbitrary microtask count.
+        for (let attempt = 0; attempt < 50; attempt++) {
+          if (sourceCount() === expected) return;
+          await Promise.resolve();
+        }
+        expect(sourceCount()).toBe(expected);
+      };
       const setPlaybackOffset = (source: FakeBufferSourceNode, seconds: number) => {
         context.currentTime = source.startedAt! + seconds;
       };
@@ -204,7 +218,7 @@ describe('water-step trigger', () => {
       moving = true;
       position.x = 0.2;
       effects.update(1 / 60, false, true);
-      expect(sourceCount()).toBe(1);
+      await waitForSourceCount(1);
       const first = currentSource();
       position.x = 0.4;
       effects.update(1 / 60, false, true);

@@ -19,6 +19,8 @@ export const WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS = [1.28, 2.73, 4.07, 5.25
 // Kept for compatibility with callers/tests that reference the old first-cutoff constant.
 export const WATER_STEP_INACTIVITY_CUTOFF_SECONDS = WATER_STEP_INACTIVITY_STOP_POINTS_SECONDS[0]
 
+export type CameraWaterSurfaceYProvider = () => number | null | undefined
+
 /**
  * Treat a small vertical camera envelope as the audio listener volume. At the
  * 50% threshold, the waterline passes through the envelope midpoint, so the
@@ -34,6 +36,14 @@ export function getCameraWaterSubmersion(
     0,
     Math.min(1, (upperEdge - cameraY) / CAMERA_AUDIO_SAMPLE_HEIGHT),
   )
+}
+
+/** True only when more than half of the camera audio envelope is submerged. */
+export function isCameraMoreThanHalfSubmerged(
+  cameraY: number,
+  surfaceY: number = WATER_LEVEL + 1.0,
+): boolean {
+  return getCameraWaterSubmersion(cameraY, surfaceY) > CAMERA_AUDIO_SUBMERSION_THRESHOLD
 }
 
 /**
@@ -128,6 +138,7 @@ export class SoundEffects {
   private world: World
   private input: InputSystem
   private player: PlayerController
+  private readonly cameraWaterSurfaceY: CameraWaterSurfaceYProvider | undefined
   private camera: THREE.PerspectiveCamera
 
   private lastX: number
@@ -149,7 +160,6 @@ export class SoundEffects {
   private waterStepGain: GainNode | null = null
   private waterStepStartedAtContextTime = 0
   private waterStepScheduledStopContextTime: number | null = null
-  private waterStepScheduledStopOffsetSeconds: number | null = null
   private waterStepTriggerActive = false
 
   // Ocean proximity sampling (to control ocean volume by distance to sea)
@@ -158,11 +168,18 @@ export class SoundEffects {
   private oceanVolCurrent = 0 // smoothed volume
   private readonly waterId: number = getBlockIdByName('water') ?? 5
 
-  constructor(world: World, input: InputSystem, player: PlayerController, camera: THREE.PerspectiveCamera) {
+  constructor(
+    world: World,
+    input: InputSystem,
+    player: PlayerController,
+    camera: THREE.PerspectiveCamera,
+    cameraWaterSurfaceY?: CameraWaterSurfaceYProvider,
+  ) {
     this.world = world
     this.input = input
     this.player = player
     this.camera = camera
+    this.cameraWaterSurfaceY = cameraWaterSurfaceY
     const position = player.getEyePosition()
     this.lastX = position.x
     this.lastY = position.y
@@ -316,7 +333,6 @@ export class SoundEffects {
         this.waterStepSource = null
         this.waterStepGain = null
         this.waterStepScheduledStopContextTime = null
-        this.waterStepScheduledStopOffsetSeconds = null
         try { source.disconnect() } catch { /* Ignore disconnect errors */ }
         try { gain.disconnect() } catch { /* Ignore disconnect errors */ }
         if (this.waterStepTriggerActive) this.startWaterStepIfIdle()
@@ -326,13 +342,11 @@ export class SoundEffects {
       this.waterStepGain = gain
       this.waterStepStartedAtContextTime = startedAt
       this.waterStepScheduledStopContextTime = null
-      this.waterStepScheduledStopOffsetSeconds = null
       source.start(startedAt)
     } catch {
       this.waterStepSource = null
       this.waterStepGain = null
       this.waterStepScheduledStopContextTime = null
-      this.waterStepScheduledStopOffsetSeconds = null
     }
   }
 
@@ -381,13 +395,11 @@ export class SoundEffects {
     // its natural tail and onended will simply not chain while inactive.
     if (stopOffset === null || stopOffset >= buffer.duration) {
       this.waterStepScheduledStopContextTime = null
-      this.waterStepScheduledStopOffsetSeconds = null
       return
     }
 
     const stopTime = this.waterStepStartedAtContextTime + stopOffset
     this.waterStepScheduledStopContextTime = stopTime
-    this.waterStepScheduledStopOffsetSeconds = stopOffset
 
     // 4 ms is short enough to be inaudible as a fade but prevents a discontinuity
     // if the authored boundary is not exactly at a zero crossing.
@@ -412,7 +424,6 @@ export class SoundEffects {
     const buffer = this.waterStepBuffer
     if (!context || !source || !gain || !buffer) {
       this.waterStepScheduledStopContextTime = null
-      this.waterStepScheduledStopOffsetSeconds = null
       return
     }
 
@@ -433,7 +444,6 @@ export class SoundEffects {
     }
 
     this.waterStepScheduledStopContextTime = null
-    this.waterStepScheduledStopOffsetSeconds = null
   }
 
   private applyWaterStepGainVolume(): void {
@@ -465,7 +475,6 @@ export class SoundEffects {
     this.waterStepSource = null
     this.waterStepGain = null
     this.waterStepScheduledStopContextTime = null
-    this.waterStepScheduledStopOffsetSeconds = null
     if (!source) return
 
     source.onended = null
@@ -692,7 +701,11 @@ export class SoundEffects {
   }
 
   private isCameraUnderwater(): boolean {
-    return getCameraWaterSubmersion(this.camera.position.y) >= CAMERA_AUDIO_SUBMERSION_THRESHOLD
+    const liveSurfaceY = this.cameraWaterSurfaceY?.()
+    const surfaceY = typeof liveSurfaceY === 'number' && Number.isFinite(liveSurfaceY)
+      ? liveSurfaceY
+      : WATER_LEVEL + 1.0
+    return isCameraMoreThanHalfSubmerged(this.camera.position.y, surfaceY)
   }
 
   dispose() {

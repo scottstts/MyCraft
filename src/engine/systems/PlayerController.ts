@@ -812,7 +812,14 @@ export class PlayerController {
     }
   }
 
-  /** True if any sample point at player's head lies inside a water block */
+  /**
+   * True if the head is in a water block or below a water-surface column.
+   *
+   * Generated open-ocean columns intentionally contain one water block at
+   * WATER_LEVEL and air below it. That single block represents the surface
+   * and the continuous ocean volume for gameplay; checking only the head's
+   * current voxel therefore misses a player who is already fully submerged.
+   */
   private isHeadInsideWater(): boolean {
     const pos = this.position;
     // Head Y: top of AABB (camera base + (height - eyeHeight)).
@@ -833,6 +840,10 @@ export class PlayerController {
     for (const [ox, oz] of samples) {
       const sx = Math.floor(pos.x + ox);
       const sz = Math.floor(pos.z + oz);
+      // Open-ocean water is represented by its surface column rather than by
+      // filling every voxel below the surface.
+      if (this.world.getBlock(sx, WATER_LEVEL, sz) === this.waterId) return true;
+      // Keep supporting literal water blocks in player-created/enclosed areas.
       if (this.world.getBlock(sx, y, sz) === this.waterId) return true;
     }
     return false;
@@ -871,6 +882,9 @@ export class PlayerController {
       const sx = Math.floor(pos.x + ox);
       const sz = Math.floor(pos.z + oz);
       if (this.world.isAirFlooded(sx, y, sz)) return true;
+      // The generated ocean stores water at the surface layer only, so a
+      // submerged base must also recognize the water column above it.
+      if (baseY < WATER_LEVEL + 1.0 && this.world.getBlock(sx, WATER_LEVEL, sz) === this.waterId) return true;
       if (this.world.getBlock(sx, y, sz) === this.waterId) return true;
     }
     return false;
